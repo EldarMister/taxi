@@ -1,0 +1,22 @@
+{
+  "name": "taxi-go",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Taxi GO — React Native / NestJS / PostgreSQL",
+  "scripts": {
+    "install:all": "npm --prefix server install && npm --prefix mobile install",
+    "dev:server": "npm --prefix server run dev",
+    "dev:mobile": "npm --prefix mobile start",
+    "check": "npm --prefix server run build && npm --prefix mobile run typecheck",
+    "test:integration": "npm --prefix server run test:integration",
+    "db:local": "node scripts/local-postgres.mjs",
+    "setup:local": "node scripts/setup-local.mjs",
+    "test:local": "node scripts/test-local.mjs"
+  },
+  "engines": {
+    "node": ">=22.13"
+  },
+  "devDependencies": {
+    "embedded-postgres": "18.4.0-beta.17"
+  }
+}

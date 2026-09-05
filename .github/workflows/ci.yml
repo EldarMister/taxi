@@ -1,0 +1,59 @@
+name: Server and application checks
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: taxi
+          POSTGRES_PASSWORD: taxi_ci_only
+          POSTGRES_DB: taxi_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U taxi -d taxi_test"
+          --health-interval 5s --health-timeout 3s --health-retries 20
+    env:
+      NODE_ENV: development
+      DATABASE_URL: postgresql://taxi:taxi_ci_only@127.0.0.1:5432/taxi_test?schema=public
+      JWT_SECRET: ci-only-jwt-secret-at-least-32-characters
+      OTP_SECRET: ci-only-otp-secret-at-least-32-characters
+      DEV_AUTH_ENABLED: 'true'
+      DEV_OTP_CODE: '123456'
+      SMS_PROVIDER: development
+      ROUTING_PROVIDER: approximation
+      PUSH_PROVIDER: development
+      TEST_DATABASE_RESET: 'true'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            server/package-lock.json
+            mobile/package-lock.json
+      - run: npm ci
+        working-directory: server
+      - run: npm run db:migrate
+        working-directory: server
+      - run: npm run build
+        working-directory: server
+      - run: npm test
+        working-directory: server
+      - run: npm run test:integration
+        working-directory: server
+      - run: npm ci
+        working-directory: mobile
+      - run: npm run typecheck
+        working-directory: mobile
+      - run: npm run test:native
+        working-directory: mobile
+      - run: npm run test:api
+        working-directory: mobile
+      - run: npm run test:ui
+        working-directory: mobile

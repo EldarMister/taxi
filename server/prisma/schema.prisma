@@ -1,0 +1,220 @@
+generator client {
+  provider = "prisma-client-js"
+}
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+enum Role {
+  CLIENT
+  DRIVER
+  ADMIN
+}
+enum OrderStatus {
+  SEARCHING
+  ASSIGNED
+  ARRIVED
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+  NO_DRIVER
+}
+enum LedgerKind {
+  TOPUP
+  COMMISSION
+}
+model User {
+  id String @id @default(uuid()) @db.Uuid
+  phone String @unique
+  name String @default("")
+  photoUrl String?
+  role Role @default(CLIENT)
+  notifications Boolean @default(true)
+  language String @default("ru")
+  createdAt DateTime @default(now())
+  driverProfile DriverProfile?
+  sessions RefreshSession[]
+  quotes Quote[]
+  clientOrders Order[] @relation("ClientOrders")
+  driverOrders Order[] @relation("DriverOrders")
+  sentMessages Message[]
+  pushTokens PushToken[]
+}
+model DriverProfile {
+  userId String @id @db.Uuid
+  user User @relation(fields:[userId],references:[id])
+  verified Boolean @default(false)
+  online Boolean @default(false)
+  deposit Int @default(0)
+  vehicle Vehicle?
+  ledger LedgerEntry[]
+  offers OrderOffer[]
+}
+model Vehicle {
+  id String @id @default(uuid()) @db.Uuid
+  driverId String @unique @db.Uuid
+  driver DriverProfile @relation(fields:[driverId],references:[userId])
+  make String
+  color String
+  plate String @unique
+}
+model Tariff {
+  id String @id
+  name String
+  description String
+  basePrice Int
+  pricePerKm Int
+  pricePerMinute Int
+  minimumPrice Int
+  commissionBps Int
+  active Boolean @default(true)
+  quotes Quote[]
+}
+model Quote {
+  id String @id @default(uuid()) @db.Uuid
+  userId String @db.Uuid
+  user User @relation(fields:[userId],references:[id])
+  tariffId String
+  tariff Tariff @relation(fields:[tariffId],references:[id])
+  pickup Json
+  dropoff Json
+  geometry Json
+  distanceMeters Int
+  durationSeconds Int
+  price Int
+  commission Int
+  routeProvider String
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+  order Order?
+  @@index([userId,createdAt])
+}
+model Order {
+  id String @id @default(uuid()) @db.Uuid
+  clientId String @db.Uuid
+  client User @relation("ClientOrders",fields:[clientId],references:[id])
+  driverId String? @db.Uuid
+  driver User? @relation("DriverOrders",fields:[driverId],references:[id])
+  quoteId String @unique @db.Uuid
+  quote Quote @relation(fields:[quoteId],references:[id])
+  idempotencyKey String
+  status OrderStatus @default(SEARCHING)
+  pickup Json
+  dropoff Json
+  geometry Json
+  distanceMeters Int
+  durationSeconds Int
+  price Int
+  commission Int
+  comment String @default("")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  searchExpiresAt DateTime
+  completedAt DateTime?
+  history StatusHistory[]
+  messages Message[]
+  rating Rating?
+  ledger LedgerEntry[]
+  offers OrderOffer[]
+  @@unique([clientId,idempotencyKey])
+  @@index([status,searchExpiresAt])
+  @@index([driverId,createdAt])
+  @@index([clientId,createdAt])
+}
+model StatusHistory {
+  id String @id @default(uuid()) @db.Uuid
+  orderId String @db.Uuid
+  order Order @relation(fields:[orderId],references:[id])
+  status OrderStatus
+  actorId String? @db.Uuid
+  reason String?
+  createdAt DateTime @default(now())
+}
+model OrderOffer {
+  id String @id @default(uuid()) @db.Uuid
+  orderId String @db.Uuid
+  order Order @relation(fields:[orderId],references:[id])
+  driverId String @db.Uuid
+  driver DriverProfile @relation(fields:[driverId],references:[userId])
+  skipped Boolean @default(false)
+  createdAt DateTime @default(now())
+  @@unique([orderId,driverId])
+  @@index([driverId,skipped])
+}
+model Message {
+  id String @id @default(uuid()) @db.Uuid
+  orderId String @db.Uuid
+  order Order @relation(fields:[orderId],references:[id])
+  senderId String @db.Uuid
+  sender User @relation(fields:[senderId],references:[id])
+  clientMessageId String
+  text String
+  createdAt DateTime @default(now())
+  @@unique([senderId,clientMessageId])
+  @@index([orderId,createdAt])
+}
+model Rating {
+  id String @id @default(uuid()) @db.Uuid
+  orderId String @unique @db.Uuid
+  order Order @relation(fields:[orderId],references:[id])
+  score Int
+  createdAt DateTime @default(now())
+}
+model LedgerEntry {
+  id String @id @default(uuid()) @db.Uuid
+  driverId String @db.Uuid
+  driver DriverProfile @relation(fields:[driverId],references:[userId])
+  orderId String? @unique @db.Uuid
+  order Order? @relation(fields:[orderId],references:[id])
+  kind LedgerKind
+  amount Int
+  balanceAfter Int
+  idempotencyKey String @unique
+  actorId String? @db.Uuid
+  note String
+  createdAt DateTime @default(now())
+  @@index([driverId,createdAt])
+}
+model RefreshSession {
+  id String @id @default(uuid()) @db.Uuid
+  userId String @db.Uuid
+  user User @relation(fields:[userId],references:[id])
+  tokenHash String @unique
+  familyId String @db.Uuid
+  expiresAt DateTime
+  revokedAt DateTime?
+  createdAt DateTime @default(now())
+  @@index([userId,familyId])
+}
+model SmsChallenge {
+  phone String @id
+  codeHash String
+  attempts Int @default(0)
+  expiresAt DateTime
+  consumedAt DateTime?
+  requestedAt DateTime @default(now())
+}
+model RateLimit {
+  key String @id
+  count Int
+  expiresAt DateTime
+}
+model PushToken {
+  id String @id @default(uuid()) @db.Uuid
+  userId String @db.Uuid
+  user User @relation(fields:[userId],references:[id])
+  token String @unique
+  platform String
+  updatedAt DateTime @updatedAt
+}
+model PushJob {
+  id String @id @default(uuid()) @db.Uuid
+  userId String @db.Uuid
+  event String
+  orderId String @db.Uuid
+  attempts Int @default(0)
+  availableAt DateTime @default(now())
+  sentAt DateTime?
+  createdAt DateTime @default(now())
+  @@index([sentAt,availableAt])
+}
