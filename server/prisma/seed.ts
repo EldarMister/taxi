@@ -13,7 +13,7 @@ async function main() {
       await tx.driverProfile.upsert({where:{userId:user.id},create:{userId:user.id,verified:true,deposit:1000},update:{}});
       await tx.vehicle.upsert({where:{driverId:user.id},create:{driverId:user.id,make:data.make,color:data.color,plate:data.plate},update:{}});
       await tx.ledgerEntry.upsert({where:{idempotencyKey:`seed:${user.id}`},create:{driverId:user.id,kind:'TOPUP',amount:1000,balanceAfter:1000,idempotencyKey:`seed:${user.id}`,note:'Тестовое пополнение депозита'},update:{}});
-    });
+    }, {timeout: 15000});
   }
   console.log('Demo data ready. Client +996700123456; drivers +996700111111 / +996700222222; admin +996700999999. Use DEV_OTP_CODE after requesting SMS.');
 }
