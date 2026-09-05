@@ -146,3 +146,5 @@ npm --prefix mobile run test:ui
 ## Railway
 
 Репозиторий содержит `Dockerfile.railway` и `railway.json`. Для API создайте сервис из корня репозитория, подключите PostgreSQL и задайте `DATABASE_URL=${{Postgres.DATABASE_URL}}`. Миграции выполняются автоматически перед запуском, а Railway проверяет `/api/health`. Секреты и ключи задаются только в Railway Variables.
+
+Текущий демонстрационный API опубликован по адресу `https://api-production-3839.up.railway.app/api`. В `mobile/.env.example` уже указан этот адрес. Пока не подключён настоящий SMS-шлюз, Railway использует development-вход с кодом `123456`; перед рабочим запуском его необходимо отключить.
