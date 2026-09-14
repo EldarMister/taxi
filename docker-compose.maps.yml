@@ -1,0 +1,55 @@
+# Standalone services for server-side routing and address search.
+# Download .local/maps/kyrgyzstan.osm.pbf first; see server/MAPS.md.
+name: taxi-maps
+
+x-osrm: &osrm
+  image: ghcr.io/project-osrm/osrm-backend:26.9.0-debian@sha256:8a1b1bc938412f15f9b5b32d794c4ec6bf4a85dfbbabfa0a014b70b187edb53b
+  volumes:
+    - ./.local/maps:/data
+
+services:
+  osrm-extract:
+    <<: *osrm
+    profiles: [init]
+    command: [osrm-extract, -p, /opt/car.lua, /data/kyrgyzstan.osm.pbf]
+  osrm-partition:
+    <<: *osrm
+    profiles: [init]
+    command: [osrm-partition, /data/kyrgyzstan.osrm]
+  osrm-customize:
+    <<: *osrm
+    profiles: [init]
+    command: [osrm-customize, /data/kyrgyzstan.osrm]
+  osrm:
+    <<: *osrm
+    command: [osrm-routed, --algorithm, mld, --max-viaroute-size, '10', /data/kyrgyzstan.osrm]
+    restart: unless-stopped
+    ports:
+      - '127.0.0.1:5000:5000'
+    volumes:
+      - ./.local/maps:/data:ro
+  nominatim:
+    build: ./deploy/nominatim
+    restart: unless-stopped
+    shm_size: 1gb
+    environment:
+      PBF_URL: ''
+      PBF_PATH: /data/kyrgyzstan.osm.pbf
+      NOMINATIM_PASSWORD: ${NOMINATIM_PASSWORD:?Set NOMINATIM_PASSWORD in the root .env or process environment}
+      IMPORT_WIKIPEDIA: 'false'
+      IMPORT_STYLE: full
+      THREADS: '2'
+      POSTGRES_SHARED_BUFFERS: 512MB
+      POSTGRES_MAINTENANCE_WORK_MEM: 1GB
+      POSTGRES_AUTOVACUUM_WORK_MEM: 256MB
+      POSTGRES_EFFECTIVE_CACHE_SIZE: 2GB
+      POSTGRES_WORK_MEM: 16MB
+      GUNICORN_WORKERS: '2'
+    ports:
+      - '127.0.0.1:8088:8080'
+    volumes:
+      - ./.local/maps:/data:ro
+      - nominatim-data:/var/lib/postgresql/16/main
+
+volumes:
+  nominatim-data:

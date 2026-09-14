@@ -31,6 +31,8 @@ export type Tariff = {
   name: string;
   description: string;
   basePrice: number;
+  pricePerKm?: number;
+  pricePerMinute?: number;
   minimumPrice: number;
 };
 export type Quote = {
@@ -52,7 +54,10 @@ export type OrderStatus =
   | "COMPLETED"
   | "CANCELLED"
   | "NO_DRIVER";
+export type DriverLocation = Coordinate & { driverId: string; timestamp: number; receivedAt: number; accuracy: number; heading?: number; speed?: number;
+  tripId?: string; trackingSessionId?: string; trackingStartedAt?: number; sequence?: number; measuredAt?: number; accuracyM?: number; speedMps?: number; bearingDeg?: number };
 export type Order = {
+  driverLocation?: DriverLocation | null;
   id: string;
   status: OrderStatus;
   pickup: Point;
@@ -62,6 +67,7 @@ export type Order = {
   durationSeconds: number;
   geometry: Coordinate[];
   comment?: string;
+  passenger?: { name: string; phone?: string } | null;
   createdAt: string;
   updatedAt?: string;
   driver?: User | null;
@@ -69,6 +75,8 @@ export type Order = {
   searchExpiresAt?: string;
   tariff?: Tariff;
   rating?: number | null;
+  clientRating?: number | null;
+  driverRating?: number | null;
   routeProvider?: string;
 };
 export const normalizePoint = ({

@@ -1,0 +1,70 @@
+{
+  "cli": {
+    "version": ">= 18.0.0",
+    "appVersionSource": "local"
+  },
+  "build": {
+    "preview": {
+      "env": {
+        "APP_VARIANT": "client",
+        "APP_ENV": "development"
+      },
+      "distribution": "internal",
+      "android": {
+        "buildType": "apk"
+      }
+    },
+    "preview-client": {
+      "extends": "preview"
+    },
+    "preview-driver": {
+      "extends": "preview",
+      "env": {
+        "APP_VARIANT": "driver",
+        "APP_ENV": "development"
+      }
+    },
+    "apk-client": {
+      "environment": "production",
+      "env": {
+        "APP_VARIANT": "client",
+        "APP_ENV": "production"
+      },
+      "distribution": "internal",
+      "android": {
+        "buildType": "apk"
+      }
+    },
+    "apk-driver": {
+      "environment": "production",
+      "env": {
+        "APP_VARIANT": "driver",
+        "APP_ENV": "production",
+        "EXPO_PUBLIC_TRACKING_DIAGNOSTICS": "1"
+      },
+      "distribution": "internal",
+      "android": {
+        "buildType": "apk"
+      }
+    },
+    "production": {
+      "env": {
+        "APP_VARIANT": "client",
+        "APP_ENV": "production"
+      },
+      "android": {
+        "buildType": "app-bundle"
+      }
+    },
+    "production-client": {
+      "extends": "production"
+    },
+    "production-driver": {
+      "extends": "production",
+      "env": {
+        "APP_VARIANT": "driver",
+        "APP_ENV": "production"
+      }
+    }
+  }
+}

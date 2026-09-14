@@ -1,0 +1,1 @@
+ALTER TABLE "Rating" ADD COLUMN "comment" TEXT NOT NULL DEFAULT '';

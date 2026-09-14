@@ -1,0 +1,202 @@
+[
+  {
+    "file": "homepage-car.png",
+    "source": "designe/еда/главный экран.png",
+    "crop": {
+      "x": 129,
+      "y": 559,
+      "width": 332,
+      "height": 287
+    }
+  },
+  {
+    "file": "homepage-burger.png",
+    "source": "designe/еда/главный экран.png",
+    "crop": {
+      "x": 480,
+      "y": 559,
+      "width": 334,
+      "height": 287
+    }
+  },
+  {
+    "file": "home-promo.png",
+    "source": "designe/еда/главный экран.png",
+    "crop": {
+      "x": 129,
+      "y": 1072,
+      "width": 685,
+      "height": 446
+    }
+  },
+  {
+    "file": "restaurant-sushi.png",
+    "source": "designe/еда/каталог доступных ресторанов.png",
+    "crop": {
+      "x": 117,
+      "y": 501,
+      "width": 252,
+      "height": 244
+    }
+  },
+  {
+    "file": "restaurant-kfc.png",
+    "source": "designe/еда/каталог доступных ресторанов.png",
+    "crop": {
+      "x": 117,
+      "y": 792,
+      "width": 252,
+      "height": 242
+    }
+  },
+  {
+    "file": "restaurant-halva.png",
+    "source": "designe/еда/каталог доступных ресторанов.png",
+    "crop": {
+      "x": 117,
+      "y": 1079,
+      "width": 252,
+      "height": 235
+    }
+  },
+  {
+    "file": "restaurant-burger.png",
+    "source": "designe/еда/каталог доступных ресторанов.png",
+    "crop": {
+      "x": 117,
+      "y": 1357,
+      "width": 252,
+      "height": 234
+    }
+  },
+  {
+    "file": "sushi-hero.png",
+    "source": "designe/еда/каталог кафешки.png",
+    "crop": {
+      "x": 88,
+      "y": 199,
+      "width": 764,
+      "height": 222
+    }
+  },
+  {
+    "file": "philadelphia.png",
+    "source": "designe/еда/каталог кафешки.png",
+    "crop": {
+      "x": 128,
+      "y": 801,
+      "width": 181,
+      "height": 170
+    }
+  },
+  {
+    "file": "california.png",
+    "source": "designe/еда/каталог кафешки.png",
+    "crop": {
+      "x": 128,
+      "y": 1012,
+      "width": 181,
+      "height": 173
+    }
+  },
+  {
+    "file": "tempura.png",
+    "source": "designe/еда/каталог кафешки.png",
+    "crop": {
+      "x": 128,
+      "y": 1226,
+      "width": 181,
+      "height": 172
+    }
+  },
+  {
+    "file": "salmon.png",
+    "source": "designe/еда/каталог кафешки.png",
+    "crop": {
+      "x": 128,
+      "y": 1440,
+      "width": 181,
+      "height": 169
+    }
+  },
+  {
+    "file": "philadelphia-hero.png",
+    "source": "designe/еда/подробная карточка блюда.png",
+    "crop": {
+      "x": 102,
+      "y": 270,
+      "width": 736,
+      "height": 351
+    }
+  },
+  {
+    "file": "philadelphia-cart.png",
+    "source": "designe/еда/корзина.png",
+    "crop": {
+      "x": 114,
+      "y": 269,
+      "width": 174,
+      "height": 167
+    }
+  },
+  {
+    "file": "california-cart.png",
+    "source": "designe/еда/корзина.png",
+    "crop": {
+      "x": 114,
+      "y": 492,
+      "width": 174,
+      "height": 170
+    }
+  },
+  {
+    "file": "soy.png",
+    "source": "designe/еда/корзина.png",
+    "crop": {
+      "x": 114,
+      "y": 709,
+      "width": 174,
+      "height": 164
+    }
+  },
+  {
+    "file": "ginger.png",
+    "source": "designe/еда/корзина.png",
+    "crop": {
+      "x": 114,
+      "y": 897,
+      "width": 174,
+      "height": 165
+    }
+  },
+  {
+    "file": "restaurant-order.png",
+    "source": "designe/еда/заказ отправлен.png",
+    "crop": {
+      "x": 110,
+      "y": 1214,
+      "width": 165,
+      "height": 165
+    }
+  },
+  {
+    "file": "sushi-hero-reference.png",
+    "source": "designe/еда/каталог кафешки.png",
+    "crop": {
+      "x": 88,
+      "y": 7,
+      "width": 764,
+      "height": 414
+    }
+  },
+  {
+    "file": "philadelphia-hero-reference.png",
+    "source": "designe/еда/подробная карточка блюда.png",
+    "crop": {
+      "x": 102,
+      "y": 86,
+      "width": 736,
+      "height": 535
+    }
+  }
+]

@@ -1,6 +1,8 @@
 import { readTokens, writeTokens, clearTokens } from './native/sessionStore';
 import type { Tokens } from './types';
 
+const { resolveApiUrl } = require('../config/api.cjs') as { resolveApiUrl: (value?: string) => string };
+
 export class ApiError extends Error {
   constructor(public status: number, message: string) { super(message); this.name = 'ApiError'; }
 }
@@ -11,30 +13,46 @@ let sessionGeneration = 0;
 let authEpoch = 0;
 const listeners = new Set<Listener>();
 const emit = (event: Parameters<Listener>[0]) => listeners.forEach(listener => listener(event));
-const baseUrl = (process.env.EXPO_PUBLIC_API_URL || 'http://localhost:3000/api').replace(/\/$/, '');
+// Expo replaces this public variable when bundling. A clean checkout also works
+// on a physical phone, without depending on a local development server.
+const baseUrl = resolveApiUrl(process.env.EXPO_PUBLIC_API_URL);
 
 async function raw<T>(path: string, init: RequestInit, accessToken?: string): Promise<T> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 18000);
+  const cancel = () => controller.abort();
+  if (init.signal?.aborted) cancel();
+  else init.signal?.addEventListener('abort', cancel, { once: true });
   try {
+    const formData = typeof FormData !== 'undefined' && init.body instanceof FormData;
     const response = await fetch(`${baseUrl}${path}`, {
       ...init, signal: controller.signal,
-      headers: { 'Content-Type': 'application/json', ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}), ...init.headers },
+      headers: { ...(!formData && init.body !== undefined ? { 'Content-Type': 'application/json' } : {}), ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}), ...init.headers },
     });
-    emit('online');
     const text = await response.text();
+    emit('online');
     let body: any;
-    try { body = text ? JSON.parse(text) : undefined; } catch { body = undefined; }
+    try { body = text ? JSON.parse(text) : undefined; }
+    catch {
+      if (response.ok) throw new ApiError(502, 'Сервер вернул некорректный ответ. Попробуйте ещё раз.');
+    }
     if (!response.ok) {
       const message = Array.isArray(body?.message) ? body.message.join('\n') : body?.message;
-      throw new ApiError(response.status, message || `Ошибка сервера (${response.status})`);
+      const routeMissing = response.status === 404 && (typeof message !== 'string' || /^Cannot (GET|POST|PATCH|PUT|DELETE)\s/i.test(message));
+      const safeMessage = routeMissing
+        ? 'Этот раздел временно недоступен. Попробуйте обновить его немного позже.'
+        : typeof message === 'string' && !/<(?:html|body|!doctype)/i.test(message) ? message : undefined;
+      throw new ApiError(response.status, safeMessage || 'Сервис временно недоступен. Попробуйте ещё раз немного позже.');
     }
     return body as T;
   } catch (error) {
+    if (init.signal?.aborted) { const cancelled = new Error('Запрос отменён.'); cancelled.name = 'AbortError'; throw cancelled; }
     if (error instanceof ApiError) throw error;
     emit('offline');
-    throw new ApiError(0, 'Нет связи с сервером. Проверьте интернет и повторите попытку.');
-  } finally { clearTimeout(timeout); }
+    throw new ApiError(0, controller.signal.aborted
+      ? 'Сервер долго не отвечает. Повторите попытку через несколько секунд.'
+      : 'Не удалось подключиться к серверу. Проверьте интернет и повторите попытку.');
+  } finally { clearTimeout(timeout); init.signal?.removeEventListener('abort', cancel); }
 }
 
 export const api = {
@@ -82,6 +100,7 @@ export const api = {
     }
   },
   post<T>(path: string, body: unknown = {}) { return api.request<T>(path, { method: 'POST', body: JSON.stringify(body) }); },
+  upload<T>(path: string, body: FormData) { return api.request<T>(path, { method: 'POST', body }); },
   patch<T>(path: string, body: unknown) { return api.request<T>(path, { method: 'PATCH', body: JSON.stringify(body) }); },
 };
 

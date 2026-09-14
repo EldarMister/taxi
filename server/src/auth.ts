@@ -4,6 +4,7 @@ import { createHash, createHmac, randomBytes, randomInt, randomUUID, timingSafeE
 import { Prisma, Role } from '@prisma/client';
 import { PrismaService } from './prisma.service';
 import { AppConfig } from './config';
+import { RealtimeEvents } from './events';
 export interface Actor { id:string; role:Role; sessionId:string; familyId:string; expiresAt:number }
 const hash = (value:string) => createHash('sha256').update(value).digest('hex');
 @Injectable()
@@ -22,12 +23,13 @@ export class RateLimits {
 }
 @Injectable()
 export class AuthService {
-  constructor(private readonly db:PrismaService,private readonly jwt:JwtService,private readonly config:AppConfig,private readonly limits:RateLimits) {}
+  constructor(private readonly db:PrismaService,private readonly jwt:JwtService,private readonly config:AppConfig,private readonly limits:RateLimits,private readonly events:RealtimeEvents) {}
   private otpHash(phone:string, code:string) {return createHmac('sha256',this.config.otpSecret).update(`${phone}:${code}`).digest('hex');}
   async requestCode(phone:string, ip:string) {
     await this.limits.take(`sms:ip:${ip}`,20,3600);
     await this.limits.take(`sms:phone-hour:${phone}`,5,3600);
     await this.limits.take(`sms:phone-minute:${phone}`,1,60);
+    if((await this.db.user.findUnique({where:{phone},select:{role:true}}))?.role==='ADMIN')throw new UnauthorizedException('Используйте вход в панель управления');
     const code = this.config.devAuth ? this.config.devCode : randomInt(100000,1000000).toString();
     if (this.config.smsProvider === 'development' && !this.config.devAuth) throw new ServiceUnavailableException('Включите DEV_AUTH_ENABLED в development или настройте SMS');
     const codeHash = this.otpHash(phone,code);
@@ -57,14 +59,16 @@ export class AuthService {
       }
       await tx.smsChallenge.update({where:{phone},data:{consumedAt:new Date()}});
       const user = await tx.user.upsert({where:{phone},create:{phone},update:{}});
+      // Administrator accounts never use SMS, including development OTP codes.
+      if(user.role==='ADMIN')return null;
       return this.createSession(tx,user.id,randomUUID());
     });
     if (!result) throw new UnauthorizedException('Неверный или просроченный код');
     return {...result,user:await this.user(result.userId)};
   }
-  private async createSession(tx:Prisma.TransactionClient,userId:string,familyId:string) {
+  private async createSession(tx:Prisma.TransactionClient,userId:string,familyId:string,adminAuthenticated=false) {
     const refreshToken = randomBytes(48).toString('base64url');
-    const session = await tx.refreshSession.create({data:{userId,familyId,tokenHash:hash(refreshToken),expiresAt:new Date(Date.now()+this.config.refreshDays*86400000)}});
+    const session = await tx.refreshSession.create({data:{userId,familyId,tokenHash:hash(refreshToken),adminAuthenticated,expiresAt:new Date(Date.now()+this.config.refreshDays*86400000)}});
     const accessToken = await this.jwt.signAsync({sub:userId,sid:session.id,fid:familyId},{secret:this.config.jwtSecret,expiresIn:this.config.accessSeconds,issuer:'taxi-api',audience:'taxi-mobile'});
     return {accessToken,refreshToken,userId,expiresIn:this.config.accessSeconds};
   }
@@ -80,8 +84,16 @@ export class AuthService {
       if (session.revokedAt || session.expiresAt.getTime() <= Date.now()) {
         await tx.refreshSession.updateMany({where:{familyId:session.familyId,revokedAt:null},data:{revokedAt:new Date()}}); return null;
       }
+      const user=await tx.user.findUniqueOrThrow({where:{id:session.userId},select:{role:true,adminCredential:{select:{disabled:true}}}});
+      if(user.role==='ADMIN') {
+        // Coordinate password resets with token rotation so a reset cannot be bypassed by an in-flight refresh.
+        await tx.$queryRaw`SELECT "userId" FROM "AdminCredential" WHERE "userId"=${session.userId}::uuid FOR UPDATE`;
+        const currentCredential=await tx.adminCredential.findUnique({where:{userId:session.userId}});
+        const currentSession=await tx.refreshSession.findUnique({where:{id:session.id}});
+        if(!session.adminAuthenticated||!currentCredential||currentCredential.disabled||!currentSession||currentSession.revokedAt)return null;
+      }
       await tx.refreshSession.update({where:{id:session.id},data:{revokedAt:new Date()}});
-      return this.createSession(tx,session.userId,session.familyId);
+      return this.createSession(tx,session.userId,session.familyId,session.adminAuthenticated);
     });
     if (!result) throw new UnauthorizedException('Сессия истекла. Войдите снова.');
     return {...result,user:await this.user(result.userId)};
@@ -94,6 +106,7 @@ export class AuthService {
       await tx.refreshSession.updateMany({where:{userId:actor.id,familyId:actor.familyId},data:{revokedAt:new Date()}});
       await tx.driverProfile.updateMany({where:{userId:actor.id},data:{online:false}});
     });
+    if(actor.role==='DRIVER')this.events.adminChanged('drivers',actor.id);
     return {ok:true};
   }
   async authenticate(token:string):Promise<Actor> {
@@ -102,14 +115,23 @@ export class AuthService {
       payload = await this.jwt.verifyAsync<{sub:string;sid:string;fid:string;exp:number}>(token,{secret:this.config.jwtSecret,issuer:'taxi-api',audience:'taxi-mobile',algorithms:['HS256']});
     } catch {throw new UnauthorizedException('Сессия истекла. Войдите снова.');}
     // A temporary database outage is a server error, not an instruction to erase a valid session.
-    const session = await this.db.refreshSession.findUnique({where:{id:payload.sid},include:{user:true}});
+    const session = await this.db.refreshSession.findUnique({where:{id:payload.sid},select:{id:true,userId:true,familyId:true,revokedAt:true,expiresAt:true,adminAuthenticated:true,user:{select:{role:true,adminCredential:{select:{disabled:true}}}}}});
     if (!session || session.userId !== payload.sub || session.familyId !== payload.fid || session.revokedAt || session.expiresAt.getTime() <= Date.now()) throw new UnauthorizedException('Сессия истекла. Войдите снова.');
+    if(session.user.role==='ADMIN'&&(!session.adminAuthenticated||!session.user.adminCredential||session.user.adminCredential.disabled))throw new UnauthorizedException('Используйте вход в панель управления');
     return {id:session.userId,role:session.user.role,sessionId:session.id,familyId:session.familyId,expiresAt:payload.exp};
   }
   async user(id:string) {
-    const user = await this.db.user.findUniqueOrThrow({where:{id},include:{driverProfile:{include:{vehicle:true}}}});
+    // Do not load the avatar bytea on ordinary profile/order reads. The public
+    // avatar endpoint streams it only when an image is actually requested.
+    const user = await this.db.user.findUniqueOrThrow({where:{id},select:{
+      id:true,phone:true,name:true,role:true,notifications:true,language:true,avatarMime:true,avatarUpdatedAt:true,
+      driverProfile:{select:{verified:true,online:true,vehicle:{select:{make:true,color:true,plate:true}}}},
+    }});
     const rating = user.role === 'DRIVER' ? await this.db.rating.aggregate({where:{order:{driverId:id}},_avg:{score:true}}) : null;
-    return {id:user.id,phone:user.phone,name:user.name,photoUrl:user.photoUrl,role:user.role,notifications:user.notifications,language:user.language,
+    const storedAvatar = user.role === 'DRIVER' && user.avatarMime && user.avatarUpdatedAt
+      ? `/avatars/${user.id}?v=${user.avatarUpdatedAt.getTime()}`
+      : null;
+    return {id:user.id,phone:user.phone,name:user.name,photoUrl:storedAvatar,role:user.role,notifications:user.notifications,language:user.language,
       ...(user.driverProfile?{driverProfile:{verified:user.driverProfile.verified,online:user.driverProfile.online,carMake:user.driverProfile.vehicle?.make??'',carColor:user.driverProfile.vehicle?.color??'',carPlate:user.driverProfile.vehicle?.plate??'',rating:rating?._avg.score??null}}:{})};
   }
 }

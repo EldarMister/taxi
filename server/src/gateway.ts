@@ -21,7 +21,7 @@ export class TaxiGateway implements OnGatewayConnection, OnModuleInit, OnModuleD
     return this.auth.authenticate(token);
   }
   async handleConnection(socket:Socket) {
-    try {const actor=await this.actor(socket);socket.data.userId=actor.id;socket.emit('session:ready',{userId:actor.id});}
+    try {const actor=await this.actor(socket);socket.data.userId=actor.id;socket.data.role=actor.role;socket.emit('session:ready',{userId:actor.id});}
     catch {socket.emit('session:expired',{message:'Войдите снова'});socket.disconnect(true);}
   }
   private async audit() {
@@ -33,9 +33,12 @@ export class TaxiGateway implements OnGatewayConnection, OnModuleInit, OnModuleD
   private async send(event:RealtimeEvent) {
     if(!this.server)return;
     for(const socket of this.server.sockets.sockets.values()) {
-      if(!event.userIds.includes(socket.data.userId))continue;
+      if(event.audience==='admin'&&socket.data.role!=='ADMIN')continue;
+      if(!event.audience&&!event.userIds.includes(socket.data.userId))continue;
       try {
-        await this.actor(socket);
+        const actor=await this.actor(socket);
+        socket.data.role=actor.role;
+        if(event.audience==='admin'&&actor.role!=='ADMIN')continue;
         socket.emit(event.name,event.payload);
       }catch{socket.disconnect(true);}
     }

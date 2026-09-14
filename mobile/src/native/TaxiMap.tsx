@@ -1,108 +1,547 @@
-import React, { useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, Alert, Linking, Pressable, StyleSheet, Text, View } from 'react-native';
-import YaMap, { Marker, Polyline } from 'react-native-yamap';
-import { BISHKEK, initializeMapKit, MapPoint } from './mapkit';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { ActivityIndicator, Image, Linking, Pressable, StyleSheet, Text, View } from 'react-native';
+import * as Device from 'expo-device';
+import { Camera, MapView, MarkerView, PointAnnotation, ShapeSource, LineLayer, SymbolLayer, UserLocation, addCustomHeader, type CameraRef, type MapViewRef } from '@maplibre/maplibre-react-native';
+import { Button, Icon, PickupIcon, colors, shortAddress } from '../ui';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { api } from '../api';
+import { BISHKEK, MapPoint, reverseGeocode } from './mapkit';
+import { getCurrentPosition } from './location';
+import { isMapPoint, routeFrame } from './routeFrame';
+import { darkRasterMapFallback, mapStyleForLanguage, rasterMapFallback } from './taxiMapStyle';
+import type { Language } from '../types';
 
 export { searchAddresses, reverseGeocode } from './mapkit';
 export type { MapPoint } from './mapkit';
 
 export interface TaxiMapProps {
+  theme?: 'light' | 'dark';
+  language?: Language;
+  passengerView?: boolean;
+  cameraSession?: string;
   pickup?: MapPoint | null;
   dropoff?: MapPoint | null;
+  dropoffRouteLabel?: string;
   geometry?: MapPoint[] | null;
+  approachGeometry?: MapPoint[] | null;
+  routeOverview?: boolean;
   onSelectPoint?: (point: MapPoint) => void;
+  onEditPoint?: (field: 'pickup' | 'dropoff') => void;
+  onSearchPoint?: () => void;
+  onPanelHeight?: (height: number) => void;
+  focusPoint?: MapPoint | null;
+  browsePickup?: boolean;
+  onPickupChange?: (point: MapPoint & { address: string }) => void;
   selectionMode?: boolean | string | null;
   recenterKey?: number;
   showUserPosition?: boolean;
+  contentTopInset?: number;
+  contentBottomInset?: number;
+  selecting?: boolean;
+  driverPosition?: (MapPoint & { heading?: number; accuracy?: number }) | null;
+  navigationActive?: boolean;
+  followDriver?: boolean;
+  onFollowDriverChange?: (follow: boolean) => void;
 }
-type NativeRoute = { status: string; routes: { sections: { points: { lat: number; lon: number }[] }[] }[] };
-const toNative = (point: MapPoint) => ({ lat: point.latitude, lon: point.longitude });
 
-export default function TaxiMap({ pickup, dropoff, geometry, onSelectPoint, selectionMode, recenterKey, showUserPosition = false }: TaxiMapProps) {
-  const map = useRef<YaMap>(null);
-  const [ready, setReady] = useState(false);
-  const [loaded, setLoaded] = useState(false);
-  const [error, setError] = useState('');
-  const [routeError, setRouteError] = useState(false);
-  const [nativeGeometry, setNativeGeometry] = useState<MapPoint[]>([]);
-  const center = pickup ?? BISHKEK;
+const toCoordinate = (point: MapPoint) => [point.longitude, point.latitude];
+const routeEndpoint = (point: MapPoint) => ({
+  latitude: point.latitude, longitude: point.longitude,
+  address: point.address && point.address.trim().length > 1 ? point.address.trim().slice(0, 250) : 'Точка на карте',
+});
+// Identify the app to tile services. Native MapLibre honours tile HTTP cache
+// headers; no prefetching or offline bulk downloads are requested here.
+addCustomHeader('User-Agent', 'Atlas/1.0 (' + api.baseUrl + ')');
 
+function pointFromFeature(feature: GeoJSON.Feature): MapPoint | null {
+  if (feature.geometry?.type !== 'Point') return null;
+  const point = { latitude: feature.geometry.coordinates[1], longitude: feature.geometry.coordinates[0] };
+  return isMapPoint(point) ? point : null;
+}
+
+type DriverPoint = MapPoint & { heading?: number; accuracy?: number };
+
+function metresBetween(a: MapPoint, b: MapPoint) {
+  return Math.hypot(
+    (b.latitude - a.latitude) * 111320,
+    (b.longitude - a.longitude) * 111320 * Math.cos(a.latitude * Math.PI / 180),
+  );
+}
+
+// Animate only between actual driver fixes. A nearby route can fold back at an
+// intersection, so projecting each fix to its nearest segment can make the car
+// jump to a different street even when GPS is stable.
+function useAnimatedCarPosition(point?: DriverPoint | null, session = ''): DriverPoint | null {
+  const [rendered, setRendered] = useState<DriverPoint | null>(point && isMapPoint(point) ? point : null);
+  const renderedRef = useRef(rendered);
+  const sessionRef = useRef(session);
+  const arrivalRef = useRef(Date.now());
   useEffect(() => {
-    let mounted = true;
-    initializeMapKit().then(() => { if (mounted) setReady(true); }).catch((e: Error) => { if (mounted) setError(e.message); });
-    return () => { mounted = false; };
-  }, []);
+    const arrivedAt = Date.now();
+    const fixInterval = arrivedAt - arrivalRef.current;
+    arrivalRef.current = arrivedAt;
+    const changedSession = sessionRef.current !== session;
+    sessionRef.current = session;
+    if (!point || !isMapPoint(point)) { renderedRef.current = null; setRendered(null); return; }
+    const from = renderedRef.current;
+    const metres = from ? metresBetween(from, point) : Infinity;
+    // A delayed fix is a new known point, not evidence that the car travelled
+    // along the straight line between two widely separated observations.
+    if (!from || changedSession || fixInterval > 3000 || metres > 120 || typeof requestAnimationFrame !== 'function') {
+      renderedRef.current = point; setRendered(point); return;
+    }
+    const start = Date.now();
+    const duration = metres < 2 ? 350 : Math.max(350, Math.min(1000, fixInterval * .8));
+    const movementHeading = metres > 2 ? (Math.atan2(
+      (point.longitude - from.longitude) * Math.cos(point.latitude * Math.PI / 180),
+      point.latitude - from.latitude,
+    ) * 180 / Math.PI + 360) % 360 : 0;
+    const fromHeading = Number.isFinite(from.heading) && from.heading! >= 0 ? from.heading! : movementHeading;
+    const toHeading = Number.isFinite(point.heading) && point.heading! >= 0 ? point.heading! : metres >= 8 ? movementHeading : fromHeading;
+    const headingDelta = ((toHeading - fromHeading + 540) % 360) - 180;
+    let frame = 0;
+    let lastPaint = 0;
+    const step = () => {
+      const elapsed = Date.now() - start;
+      const fraction = Math.min(1, elapsed / duration);
+      if (elapsed - lastPaint >= 40 || fraction === 1) {
+        const ease = fraction * fraction * (3 - 2 * fraction);
+        const coordinate = {
+          latitude: from.latitude + (point.latitude - from.latitude) * ease,
+          longitude: from.longitude + (point.longitude - from.longitude) * ease,
+        };
+        const next = {
+          ...point,
+          ...coordinate,
+          heading: (fromHeading + headingDelta * ease + 360) % 360,
+        };
+        renderedRef.current = next; setRendered(next); lastPaint = elapsed;
+      }
+      if (fraction < 1) frame = requestAnimationFrame(step);
+    };
+    frame = requestAnimationFrame(step);
+    return () => { if (typeof cancelAnimationFrame === 'function') cancelAnimationFrame(frame); };
+  }, [point?.latitude, point?.longitude, point?.heading, session]);
+  return rendered;
+}
 
-  useEffect(() => {
-    if (!loaded) return;
-    if (pickup && dropoff) map.current?.fitMarkers([toNative(pickup), toNative(dropoff)]);
-    else map.current?.setCenter(toNative(center), 15, 0, 0, 0.4);
-  }, [loaded, pickup?.latitude, pickup?.longitude, dropoff?.latitude, dropoff?.longitude, recenterKey]);
-
-  useEffect(() => {
-    setNativeGeometry([]);
-    setRouteError(false);
-    if (!loaded || !pickup || !dropoff || (geometry && geometry.length > 1)) return;
-    let active = true;
-    const timeout = setTimeout(() => { if (active) setRouteError(true); }, 18000);
-    map.current?.findDrivingRoutes([toNative(pickup), toNative(dropoff)], (raw) => {
-      if (!active) return;
-      clearTimeout(timeout);
-      // Upstream removes nativeEvent before invoking its callback, despite its typings.
-      const result = ((raw as unknown as { nativeEvent?: NativeRoute }).nativeEvent ?? raw) as unknown as NativeRoute;
-      const points = result.routes?.[0]?.sections?.flatMap((section) => section.points ?? []) ?? [];
-      if (result.status !== 'success' || points.length < 2) { setRouteError(true); return; }
-      setNativeGeometry(points.map(({ lat, lon }) => ({ latitude: lat, longitude: lon })));
-    });
-    return () => { active = false; clearTimeout(timeout); };
-  }, [loaded, pickup?.latitude, pickup?.longitude, dropoff?.latitude, dropoff?.longitude, geometry]);
-
-  if (!ready) return <View style={styles.unavailable} accessibilityRole="text">
-    {error ? <><Text style={styles.unavailableTitle}>Карта недоступна</Text><Text style={styles.unavailableText}>{error}</Text></> : <ActivityIndicator size="large" color="#246BFD" />}
+function CarMarker({ heading }: { heading: number }) {
+  return <View style={styles.carMarker}>
+    <View style={[styles.carHeading, { transform: [{ rotate: `${heading}deg` }] }]}>
+      <Image source={require('../../assets/tracking-car-white.png')} resizeMode="contain" style={styles.carImage}/>
+    </View>
   </View>;
+}
 
-  const route = geometry && geometry.length > 1 ? geometry : nativeGeometry;
+function useStableDriverHeading(point?: DriverPoint | null, session = ''): number {
+  const last = useRef<{ point: MapPoint; heading: number; session: string } | null>(null);
+  if (!point || !isMapPoint(point)) return last.current?.heading ?? 0;
+  const previous = last.current;
+  if (!previous || previous.session !== session || metresBetween(previous.point, point) >= 8) {
+    const heading = Number.isFinite(point.heading) && point.heading! >= 0 ? point.heading! : previous?.session === session ? previous.heading : 0;
+    last.current = { point, heading, session };
+  }
+  return last.current?.heading ?? 0;
+}
+
+export default function TaxiMap({
+  theme = 'light',
+  language = 'ru',
+  pickup, dropoff, dropoffRouteLabel, geometry, approachGeometry, routeOverview = false, onSelectPoint, onEditPoint, onSearchPoint, onPanelHeight,
+  focusPoint, browsePickup = false, onPickupChange, selectionMode, recenterKey,
+  showUserPosition = false, contentTopInset = 0, contentBottomInset = 0, selecting = false, driverPosition, passengerView = false, cameraSession = '',
+  navigationActive = false, followDriver = false, onFollowDriverChange,
+}: TaxiMapProps) {
+  const dark = theme === 'dark';
+  const insets = useSafeAreaInsets();
+  const camera = useRef<CameraRef>(null);
+  const mapView = useRef<MapViewRef>(null);
+  const [attached, setAttached] = useState(false);
+  const [mapReadyRevision, setMapReadyRevision] = useState(0);
+  const [viewport, setViewport] = useState({ width: 0, height: 0 });
+  const [routeError, setRouteError] = useState(false);
+  const [serverRoute, setServerRoute] = useState<{ key: string; points: MapPoint[] } | null>(null);
+  const [attempt, setAttempt] = useState(0);
+  const [loadTimeout, setLoadTimeout] = useState(false);
+  const [rasterFallback, setRasterFallback] = useState(false);
+  const [candidate, setCandidate] = useState<MapPoint>(pickup ?? BISHKEK);
+  const [candidateAddress, setCandidateAddress] = useState('');
+  const [moving, setMoving] = useState(false);
+  const [panelHeight, setPanelHeight] = useState(180);
+  const [mapHeading, setMapHeading] = useState(0);
+  const [locationError, setLocationError] = useState('');
+  const [locating, setLocating] = useState(false);
+  const center = pickup ?? BISHKEK;
+  const initialCamera = useRef({ centerCoordinate: toCoordinate(driverPosition ?? center), zoomLevel: 14 });
+  const zoomLevel = useRef(initialCamera.current.zoomLevel);
+  const cameraCenter = useRef<GeoJSON.Position>(initialCamera.current.centerCoordinate);
+  const cameraHeading = useRef(0);
+  const cameraPadding = useRef({ paddingTop: 0, paddingBottom: 0, paddingLeft: 0, paddingRight: 0 });
+  const zoomRequest = useRef(0);
+  const locatingRef = useRef(false);
+  const picking = !!selectionMode || browsePickup;
+  const pickupChange = useRef(onPickupChange);
+  const followPaused = useRef(false);
+  const manualCamera = useRef(false);
+  const followCameraKey = useRef('');
+  const lastFollowCamera = useRef<{ point: MapPoint; top: number; height: number } | null>(null);
+  useEffect(() => {
+    // Changing order stage must not cancel a driver's deliberate free view.
+    if (passengerView || followDriver) { manualCamera.current = false; followPaused.current = false; }
+  }, [cameraSession, recenterKey]);
+  pickupChange.current = onPickupChange;
+  const suppliedRoute = useMemo(() => geometry && geometry.length > 1 && geometry.every(isMapPoint) ? geometry : [], [geometry]);
+  const approachRoute = useMemo(() => approachGeometry && approachGeometry.length > 1 && approachGeometry.every(isMapPoint) ? approachGeometry : [], [approachGeometry]);
+  const routeKey = pickup && dropoff ? [pickup.latitude, pickup.longitude, dropoff.latitude, dropoff.longitude].join(',') : '';
+  const route = suppliedRoute.length > 1 ? suppliedRoute : serverRoute?.key === routeKey && (!navigationActive || routeOverview) ? serverRoute.points : [];
+  const driverHeading = useStableDriverHeading(driverPosition, cameraSession);
+  const animatedDriverPosition = useAnimatedCarPosition(passengerView && driverPosition ? { ...driverPosition, heading: driverHeading } : null, cameraSession);
+  const markerPosition = passengerView ? animatedDriverPosition : driverPosition;
+  const driverMarkerShape = useMemo<GeoJSON.Point | null>(() => driverPosition && isMapPoint(driverPosition) ? { type: 'Point', coordinates: toCoordinate(driverPosition) } : null, [driverPosition?.latitude, driverPosition?.longitude]);
+  const routeShape = useMemo<GeoJSON.LineString>(() => ({ type: 'LineString', coordinates: route.map(toCoordinate) }), [route]);
+  const approachShape = useMemo<GeoJSON.LineString>(() => ({ type: 'LineString', coordinates: approachRoute.map(toCoordinate) }), [approachRoute]);
+  const moveTo = (point: MapPoint, zoom = 16) => {
+    zoomLevel.current = zoom;
+    cameraCenter.current = toCoordinate(point);
+    cameraPadding.current = { paddingTop: 0, paddingBottom: 0, paddingLeft: 0, paddingRight: 0 };
+    camera.current?.setCamera({
+      centerCoordinate: toCoordinate(point), zoomLevel: zoom,
+      padding: cameraPadding.current,
+      animationDuration: 300, animationMode: 'easeTo',
+    });
+  };
+  const changeZoom = async (step: number) => {
+    if (!attached) return;
+    const next = Math.max(2, Math.min(19, zoomLevel.current + step));
+    if (next === zoomLevel.current) return;
+    zoomLevel.current = next;
+    if (!followDriver) manualCamera.current = true;
+    const request = ++zoomRequest.current;
+    const observedCenter = mapView.current ? await mapView.current.getCenter().catch(() => null) : null;
+    if (request !== zoomRequest.current) return;
+    if (followDriver && driverPosition && isMapPoint(driverPosition)) cameraCenter.current = toCoordinate(driverPosition);
+    else if (observedCenter && isMapPoint({ latitude: observedCenter[1], longitude: observedCenter[0] })) cameraCenter.current = observedCenter;
+    camera.current?.setCamera({
+      centerCoordinate: cameraCenter.current, heading: cameraHeading.current, zoomLevel: next,
+      padding: cameraPadding.current,
+      animationDuration: 250, animationMode: 'easeTo',
+    });
+  };
+  const locateOnMap = async () => {
+    if (!attached || locatingRef.current) return;
+    setLocationError('');
+    if (!passengerView && driverPosition && isMapPoint(driverPosition)) {
+      followPaused.current = false;
+      manualCamera.current = false;
+      onFollowDriverChange?.(true);
+      moveTo(driverPosition, navigationActive ? 17 : 16);
+      return;
+    }
+    locatingRef.current = true;
+    setLocating(true);
+    try {
+      const point = await getCurrentPosition();
+      if (!passengerView) {
+        followPaused.current = false;
+        manualCamera.current = false;
+        onFollowDriverChange?.(true);
+      } else manualCamera.current = true;
+      moveTo(point);
+      if (picking) setCandidate(point);
+    } catch (error) {
+      setLocationError(error && typeof error === 'object' && 'message' in error && typeof error.message === 'string'
+        ? error.message : 'Не удалось определить местоположение. Попробуйте ещё раз.');
+    } finally {
+      locatingRef.current = false;
+      setLocating(false);
+    }
+  };
+
+  useEffect(() => {
+    setCandidateAddress('');
+    if (!picking || moving) return;
+    let live = true;
+    const timer = setTimeout(() => {
+      reverseGeocode(candidate, language).then(point => {
+        if (!live) return;
+        setCandidateAddress(shortAddress(point.address));
+        if (browsePickup) pickupChange.current?.(point);
+      }).catch(() => {
+        if (!live) return;
+        setCandidateAddress('Точка на карте');
+        if (browsePickup) pickupChange.current?.({ ...candidate, address: 'Точка на карте' });
+      });
+    }, 350);
+    return () => { live = false; clearTimeout(timer); };
+  }, [picking, browsePickup, moving, candidate.latitude, candidate.longitude, language]);
+
+  useEffect(() => {
+    if (attached) return;
+    const timeout = setTimeout(() => setLoadTimeout(true), 20000);
+    return () => clearTimeout(timeout);
+  }, [attached, attempt]);
+
+  useEffect(() => {
+    if (!attached || !selectionMode) return;
+    const point = selectionMode === 'dropoff' ? dropoff ?? pickup ?? BISHKEK : pickup ?? BISHKEK;
+    setCandidate(point);
+    moveTo(point);
+  }, [selectionMode, attached, recenterKey]);
+
+  useEffect(() => {
+    if (!attached || !browsePickup) return;
+    moveTo(center);
+    setCandidate(center);
+  }, [attached, browsePickup, recenterKey]);
+
+  useEffect(() => {
+    if (!attached || !focusPoint) return;
+    if (picking) setCandidate(focusPoint);
+    moveTo(focusPoint);
+  }, [focusPoint, attached]);
+
+  useEffect(() => {
+    if (!attached || picking || navigationActive && !routeOverview || followDriver || manualCamera.current) return;
+    if ((pickup && dropoff) || route.length > 1 || approachRoute.length > 1) {
+      const frame = routeFrame([
+        ...route, ...approachRoute,
+        ...(pickup ? [pickup] : []), ...(dropoff ? [dropoff] : []),
+      ], viewport.width, viewport.height, contentTopInset, contentBottomInset);
+      if (frame) {
+        cameraHeading.current = 0;
+        cameraPadding.current = { paddingTop: frame.padding[0], paddingRight: frame.padding[1], paddingBottom: frame.padding[2], paddingLeft: frame.padding[3] };
+        camera.current?.setCamera({ heading: 0, pitch: 0, animationDuration: 0 });
+        camera.current?.fitBounds(frame.ne, frame.sw, frame.padding, 400);
+      }
+    } else moveTo(center, 15);
+  }, [attached, picking, navigationActive, routeOverview, followDriver, routeKey, suppliedRoute, approachRoute, serverRoute, recenterKey, viewport.width, viewport.height, contentTopInset, contentBottomInset, cameraSession]);
+
+  useEffect(() => { if (followDriver) { followPaused.current = false; manualCamera.current = false; } }, [followDriver, recenterKey]);
+  useEffect(() => {
+    if (!attached || picking || !followDriver || followPaused.current || !driverPosition || !isMapPoint(driverPosition)) return;
+    const key = `${cameraSession}:${recenterKey}:${navigationActive}`;
+    const resetView = followCameraKey.current !== key;
+    followCameraKey.current = key;
+    const previousCamera = lastFollowCamera.current;
+    if (!resetView && previousCamera && metresBetween(previousCamera.point, driverPosition) < 4
+      && previousCamera.top === contentTopInset && previousCamera.height === viewport.height) return;
+    lastFollowCamera.current = { point: driverPosition, top: contentTopInset, height: viewport.height };
+    cameraCenter.current = toCoordinate(driverPosition);
+    cameraHeading.current = navigationActive ? driverHeading : 0;
+    cameraPadding.current = { paddingTop: Math.min(contentTopInset + 48, viewport.height * .4), paddingBottom: 70, paddingLeft: 0, paddingRight: 0 };
+    camera.current?.setCamera({
+      centerCoordinate: toCoordinate(driverPosition), heading: navigationActive ? driverHeading : 0, pitch: navigationActive ? 35 : 0,
+      ...(resetView ? { zoomLevel: navigationActive ? 17 : 16 } : {}),
+      padding: cameraPadding.current,
+      animationDuration: resetView ? 350 : 650, animationMode: 'easeTo',
+    });
+  }, [attached, mapReadyRevision, picking, followDriver, navigationActive, driverPosition?.latitude, driverPosition?.longitude, driverHeading, recenterKey, contentTopInset, viewport.height, cameraSession]);
+
+  useEffect(() => {
+    setRouteError(false);
+    if (!pickup || !dropoff || suppliedRoute.length > 1 || picking || navigationActive && !routeOverview) return;
+    let active = true;
+    api.request<{ geometry: MapPoint[] }>('/routes', {
+      method: 'POST', body: JSON.stringify({ pickup: routeEndpoint(pickup), dropoff: routeEndpoint(dropoff) }),
+    }).then(result => {
+      if (!active) return;
+      if (!Array.isArray(result.geometry) || result.geometry.length < 2 || !result.geometry.every(isMapPoint)) throw new Error('Invalid route');
+      setServerRoute({ key: routeKey, points: result.geometry });
+    }).catch(() => { if (active) { setServerRoute(null); setRouteError(true); } });
+    return () => { active = false; };
+  }, [routeKey, suppliedRoute, picking, navigationActive, routeOverview]);
+
+  const selectFeature = (feature: GeoJSON.Feature) => {
+    if (!picking) return;
+    const point = pointFromFeature(feature);
+    if (point) { setCandidate(point); moveTo(point); }
+  };
+  const onRegionChanging = (feature: GeoJSON.Feature<GeoJSON.Point, { isUserInteraction?: boolean; heading?: number; zoomLevel?: number }>) => {
+    if (picking) setMoving(true);
+    const regionCenter = pointFromFeature(feature);
+    if (regionCenter) cameraCenter.current = toCoordinate(regionCenter);
+    if (Number.isFinite(feature.properties?.heading)) { cameraHeading.current = feature.properties.heading!; setMapHeading(feature.properties.heading!); }
+    if (Number.isFinite(feature.properties?.zoomLevel)) zoomLevel.current = feature.properties.zoomLevel!;
+    if (feature.properties?.isUserInteraction) manualCamera.current = true;
+    if (feature.properties?.isUserInteraction && followDriver && !followPaused.current) {
+      followPaused.current = true;
+      onFollowDriverChange?.(false);
+    }
+  };
+  const retry = () => { setLoadTimeout(false); setAttached(false); setRasterFallback(false); setAttempt(value => value + 1); };
+  const dropoffRouteParts = dropoffRouteLabel?.split(' · ');
+  // A driver offer can leave a short map above its detail card. Keep all three
+  // targets visible by laying the same controls in one row on short viewports.
+  const controlsBottomGap = passengerView ? (selectionMode ? panelHeight + 24 : 100) : 92;
+  const compactControls = viewport.height > 0 && viewport.height - contentTopInset < (passengerView ? 216 : 297);
+  const controlsHeight = compactControls ? 60 : 193;
+  const controlsTop = viewport.height > 0
+    ? Math.min(
+      Math.max(insets.top + 54, contentTopInset + 10, viewport.height - controlsHeight - controlsBottomGap),
+      Math.max(insets.top + 54, viewport.height - controlsHeight - 12),
+    )
+    : contentTopInset + 56;
+
   return <View style={styles.root}>
-    <YaMap
-      ref={map}
-      style={StyleSheet.absoluteFill}
-      initialRegion={{ ...toNative(center), zoom: 14 }}
-      showUserPosition={showUserPosition}
-      followUser={false}
-      nightMode={false}
-      tiltGesturesEnabled={false}
-      rotateGesturesEnabled={false}
-      logoPosition={{ horizontal: 'left', vertical: 'top' }}
-      logoPadding={{ horizontal: 14, vertical: 104 }}
-      onMapLoaded={() => setLoaded(true)}
-      onMapPress={(event) => { if (selectionMode && onSelectPoint) onSelectPoint({ latitude: event.nativeEvent.lat, longitude: event.nativeEvent.lon }); }}
-      onMapLongPress={(event) => onSelectPoint?.({ latitude: event.nativeEvent.lat, longitude: event.nativeEvent.lon })}
-    >
-      {route.length > 1 && <Polyline points={route.map(toNative)} strokeColor="#246BFD" strokeWidth={5} outlineColor="#FFFFFF" outlineWidth={2} />}
-      {pickup && <Marker point={toNative(pickup)} anchor={{ x: 0.5, y: 0.5 }} zIndex={3}><View style={styles.pickup}><View style={styles.dot} /></View></Marker>}
-      {dropoff && <Marker point={toNative(dropoff)} anchor={{ x: 0.5, y: 0.5 }} zIndex={3}><View style={styles.destination}><Text style={styles.destinationText}>Б</Text></View></Marker>}
-    </YaMap>
-    <Pressable accessibilityRole="link" accessibilityLabel="Открыть в Яндекс Картах" style={styles.openMaps} onPress={() => {
-      void Linking.openURL(`https://yandex.ru/maps/?ll=${center.longitude}%2C${center.latitude}&z=15`).catch(() => Alert.alert('Не удалось открыть Карты', 'Повторите попытку после подключения к интернету.'));
-    }}><Text style={styles.openMapsText}>Открыть в Картах ↗</Text></Pressable>
-    {selectionMode && <View pointerEvents="none" style={styles.hint}><Text style={styles.hintText}>Нажмите на карте, чтобы выбрать адрес</Text></View>}
-    {routeError && <View pointerEvents="none" style={styles.notice}><Text style={styles.noticeText}>Маршрут временно недоступен</Text></View>}
+    <View testID="map-viewport" onLayout={({ nativeEvent: { layout } }) => setViewport(previous => previous.width === layout.width && previous.height === layout.height ? previous : { width: layout.width, height: layout.height })} style={[StyleSheet.absoluteFill, { bottom: selectionMode ? panelHeight : 0 }]}>
+      <MapView
+        ref={mapView}
+        preferredFramesPerSecond={Device.isDevice ? undefined : 30}
+        key={`${attempt}:${rasterFallback ? 'raster' : 'vector'}`}
+        style={StyleSheet.absoluteFill}
+        mapStyle={rasterFallback ? dark ? darkRasterMapFallback : rasterMapFallback : mapStyleForLanguage(language, dark)}
+        pitchEnabled={navigationActive}
+        rotateEnabled
+        logoEnabled={false}
+        attributionEnabled={false}
+        compassEnabled={false}
+        onDidFinishLoadingStyle={() => { followCameraKey.current = ''; setMapReadyRevision(value => value + 1); setAttached(true); setLoadTimeout(false); }}
+        onDidFinishLoadingMap={() => { setAttached(true); setLoadTimeout(false); }}
+        onDidFailLoadingMap={() => { if (!rasterFallback) { setAttached(false); setRasterFallback(true); } else setLoadTimeout(true); }}
+        regionWillChangeDebounceTime={0}
+        regionDidChangeDebounceTime={80}
+        onRegionWillChange={onRegionChanging}
+        onRegionIsChanging={onRegionChanging}
+        onRegionDidChange={feature => {
+          const regionCenter = pointFromFeature(feature);
+          if (regionCenter) cameraCenter.current = toCoordinate(regionCenter);
+          if (Number.isFinite(feature.properties.heading)) { cameraHeading.current = feature.properties.heading; setMapHeading(feature.properties.heading); }
+          if (Number.isFinite(feature.properties.zoomLevel)) zoomLevel.current = feature.properties.zoomLevel;
+          if (picking) { setMoving(false); const point = pointFromFeature(feature); if (point) setCandidate(point); }
+        }}
+        onPress={selectFeature}
+        onLongPress={selectFeature}
+      >
+        <Camera ref={camera} defaultSettings={initialCamera.current} maxZoomLevel={19} />
+        {route.length > 1 && <ShapeSource id="route" shape={routeShape}>
+          <LineLayer id="route-halo" style={{ lineColor: dark ? '#101010' : '#FFFFFF', lineWidth: 15, lineOpacity: .94, lineCap: 'round', lineJoin: 'round' }} />
+          <LineLayer id="route-outline" style={{ lineColor: dark ? '#858585' : '#0B55C5', lineWidth: 9, lineCap: 'round', lineJoin: 'round' }} />
+          <LineLayer id="route-line" style={{ lineColor: dark ? '#F0F0F0' : '#57AAFF', lineWidth: 5.5, lineCap: 'round', lineJoin: 'round' }} />
+        </ShapeSource>}
+        {approachRoute.length > 1 && <ShapeSource id="approach-route" shape={approachShape}>
+          <LineLayer id="approach-route-halo" style={{ lineColor: dark ? '#101010' : '#FFFFFF', lineWidth: 13, lineOpacity: .95, lineCap: 'round', lineJoin: 'round' }} />
+          <LineLayer id="approach-route-outline" style={{ lineColor: dark ? '#555555' : '#B77908', lineWidth: 9, lineCap: 'round', lineJoin: 'round' }} />
+          <LineLayer id="approach-route-line" style={{ lineColor: dark ? '#BEBEBE' : '#FFD54A', lineWidth: 6, lineCap: 'round', lineJoin: 'round' }} />
+        </ShapeSource>}
+        {showUserPosition && !driverPosition && !navigationActive && <UserLocation renderMode="native" androidPreferredFramesPerSecond={Device.isDevice ? undefined : 15} />}
+        {pickup && !browsePickup && selectionMode !== 'pickup' && <PointAnnotation id="pickup" coordinate={toCoordinate(pickup)} onSelected={() => onEditPoint?.('pickup')} anchor={{ x: .5, y: 1 }}>
+          <View collapsable={false} style={{ width: 48, height: 67, alignItems: 'center' }}><View style={[styles.pinBody, dark && styles.darkPinBody]}><PickupIcon color={dark ? '#101010' : 'white'} size={24}/></View><View style={[styles.stem, dark && styles.darkStem]}/></View>
+        </PointAnnotation>}
+        {dropoff && selectionMode !== 'dropoff' && <PointAnnotation id="dropoff" coordinate={toCoordinate(dropoff)} onSelected={() => onEditPoint?.('dropoff')} anchor={{ x: .5, y: dropoffRouteLabel ? .81 : .5 }}>
+          <View collapsable={false} style={dropoffRouteLabel ? styles.destinationWithRoute : styles.destination}>
+            {!!dropoffRouteLabel && <View style={[styles.dropoffRouteBadge, dark && styles.darkDropoffRouteBadge]} accessible accessibilityLabel={`Пункт назначения Б, ${dropoffRouteLabel}`}>
+              <View style={[styles.dropoffRouteLetter, dark && styles.darkDropoffRouteLetter]}><Text style={[styles.dropoffRouteLetterText, dark && styles.darkDropoffRouteLetterText]}>Б</Text></View>
+              <View style={styles.dropoffRouteMetrics}>
+                <Text numberOfLines={1} adjustsFontSizeToFit style={[styles.dropoffRouteDistance, dark && styles.darkDropoffRouteText]}>{dropoffRouteParts?.[0]}</Text>
+                {dropoffRouteParts && dropoffRouteParts.length > 1 && <Text numberOfLines={1} adjustsFontSizeToFit style={[styles.dropoffRouteDuration, dark && styles.darkDropoffRouteText]}>{dropoffRouteParts.slice(1).join(' · ')}</Text>}
+              </View>
+            </View>}
+            <View style={[styles.destination, dark && styles.darkDestination]}><Icon name="flag" color={dark ? '#101010' : 'white'} size={19}/></View>
+          </View>
+        </PointAnnotation>}
+        {passengerView && markerPosition && isMapPoint(markerPosition) && <MarkerView coordinate={toCoordinate(markerPosition)} anchor={{ x: .5, y: .5 }} allowOverlap>
+          <View collapsable={false} accessible accessibilityLabel="Ваш водитель">
+            <CarMarker heading={(Number.isFinite(markerPosition.heading) && markerPosition.heading! >= 0 ? markerPosition.heading! : 0) - mapHeading}/>
+          </View>
+        </MarkerView>}
+        {!passengerView && driverMarkerShape && <ShapeSource id="driver-navigation-position" shape={driverMarkerShape}>
+          <SymbolLayer id="driver-navigation-arrow" style={{ iconImage: require('../../assets/driver-navigation-arrow.png'), iconSize: .42, iconRotate: driverHeading, iconRotationAlignment: 'map', iconPitchAlignment: 'map', iconAllowOverlap: true, iconIgnorePlacement: true }}/>
+        </ShapeSource>}
+      </MapView>
+      {picking && <View pointerEvents="none" accessibilityLabel={selectionMode !== 'dropoff' ? 'Метка места подачи' : 'Метка пункта назначения'} style={[styles.centerPin, moving && { transform: [{ translateY: -8 }] }]}><View style={[styles.pinBody, dark && styles.darkPinBody]}>{selectionMode !== 'dropoff' ? <PickupIcon color={dark ? '#101010' : 'white'} size={24}/> : <Icon name="flag" color={dark ? '#101010' : 'white'} size={24}/>}</View><View style={[styles.stem, dark && styles.darkStem]}/></View>}
+      <View style={styles.attribution}>
+        <Pressable accessibilityRole="link" accessibilityLabel="Стиль OpenMapTiles Bright" onPress={() => { void Linking.openURL('https://github.com/hyperknot/openfreemap-styles/blob/main/LICENSE.md'); }}><Text style={[styles.attributionText, dark && styles.darkAttributionText]}>© OpenMapTiles Bright</Text></Pressable>
+        <Text style={[styles.attributionText, dark && styles.darkAttributionText]}> · </Text>
+        <Pressable accessibilityRole="link" accessibilityLabel="© OpenStreetMap contributors" onPress={() => { void Linking.openURL('https://www.openstreetmap.org/copyright'); }}><Text style={[styles.attributionText, dark && styles.darkAttributionText]}>© OpenStreetMap</Text></Pressable>
+      </View>
+    </View>
+    <View testID="map-controls" style={[styles.mapControls, compactControls && styles.compactMapControls, { top: controlsTop }]}>
+      <View testID="map-zoom-controls" style={[styles.zoomControls, compactControls && styles.compactZoomControls, dark && styles.darkControl]}>
+        <Pressable accessibilityRole="button" accessibilityLabel="Приблизить карту" hitSlop={5} onPress={() => { void changeZoom(1); }} style={({ pressed }) => [styles.zoomButton, compactControls && styles.compactZoomButton, pressed && styles.controlPressed]}>
+          <Icon name="add" size={30} color={dark ? '#FFFFFF' : '#111827'}/>
+        </Pressable>
+        <View style={[styles.zoomDivider, compactControls && styles.compactZoomDivider, dark && styles.darkZoomDivider]}/>
+        <Pressable accessibilityRole="button" accessibilityLabel="Отдалить карту" hitSlop={5} onPress={() => { void changeZoom(-1); }} style={({ pressed }) => [styles.zoomButton, compactControls && styles.compactZoomButton, pressed && styles.controlPressed]}>
+          <Icon name="remove" size={30} color={dark ? '#FFFFFF' : '#111827'}/>
+        </Pressable>
+      </View>
+      <Pressable accessibilityRole="button" accessibilityLabel={passengerView ? 'Моё местоположение' : 'Показать водителя'} accessibilityState={{ busy: locating }} hitSlop={5} onPress={() => { void locateOnMap(); }} style={({ pressed }) => [styles.locationControl, dark && styles.darkControl, pressed && styles.controlPressed]}>
+        {locating ? <ActivityIndicator color={dark ? '#FFFFFF' : '#111827'}/> : <Icon name="navigate" size={27} color={dark ? '#FFFFFF' : '#111827'}/>}
+      </Pressable>
+    </View>
+    {!!locationError && <Pressable accessibilityRole="alert" onPress={() => setLocationError('')} style={[styles.locationNotice, { top: Math.max(insets.top + 54, controlsTop - 72), right: 16 }]}><Text style={styles.locationNoticeText}>{locationError}</Text></Pressable>}
+    {selectionMode && <View onLayout={event => { setPanelHeight(event.nativeEvent.layout.height); onPanelHeight?.(event.nativeEvent.layout.height); }} style={[styles.confirm, dark && styles.darkConfirm, { paddingBottom: Math.max(insets.bottom, 12) }]}>
+      <Text style={{ fontSize: 22, fontWeight: '700', color: dark ? '#FFFFFF' : colors.ink }}>{selectionMode === 'pickup' ? 'Точка посадки' : 'Точка назначения'}</Text>
+      <Pressable accessibilityRole="button" accessibilityLabel="Найти адрес" onPress={onSearchPoint} style={styles.addressSearch}>
+        {selectionMode === 'pickup' ? <PickupIcon size={22} color={dark ? '#FFFFFF' : colors.blue}/> : <Icon name="flag" size={22} color={dark ? '#FFFFFF' : colors.blue}/>}
+        <Text numberOfLines={2} style={[styles.hintText, dark && styles.darkHintText, { flex: 1 }]}>{moving ? 'Выбираем точку…' : candidateAddress || 'Определяем адрес…'}</Text><Icon name="chevron-forward" color={dark ? '#FFFFFF' : undefined} size={18}/>
+      </Pressable>
+      <Button label="Готово" disabled={!attached || moving} busy={selecting} onPress={() => onSelectPoint?.(candidate)}/>
+    </View>}
+    {(!attached || loadTimeout) && <View style={[styles.loading, dark && styles.darkLoading, { top: contentTopInset + 55 }]}>{loadTimeout ? <><Text style={[styles.noticeText, dark && styles.darkNoticeText]}>Не удалось открыть карту. Повторите попытку.</Text><Pressable accessibilityRole="button" onPress={retry} style={[styles.retry, dark && styles.darkRetry]}><Text style={{ color: dark ? '#FFFFFF' : colors.blue }}>Повторить загрузку</Text></Pressable></> : <ActivityIndicator color={dark ? '#FFFFFF' : colors.blue}/>}</View>}
+    {routeError && !navigationActive && <View pointerEvents="none" style={[styles.notice, dark && styles.darkNotice, { top: contentTopInset + 58 }]}><Text style={[styles.noticeText, dark && styles.darkNoticeText]}>Маршрут временно недоступен</Text></View>}
   </View>;
 }
 
 const styles = StyleSheet.create({
+  carMarker: { width: 28, height: 40, alignItems: 'center', justifyContent: 'center' },
+  carHeading: { width: 28, height: 40, alignItems: 'center', justifyContent: 'center' },
+  carImage: { width: 26, height: 38 },
+  attribution: { position: 'absolute', right: 8, bottom: 6, paddingHorizontal: 4, paddingVertical: 2, flexDirection: 'row' },
+  attributionText: { fontSize: 10, color: '#475569', textShadowColor: '#FFFFFF', textShadowRadius: 3, textShadowOffset: { width: 0, height: 0 } },
+  darkAttributionText: { color: '#E6E6E6', textShadowColor: '#101010' },
   root: { flex: 1 },
-  openMaps: { position: 'absolute', top: 106, right: 12, backgroundColor: '#FFFFFF', paddingVertical: 7, paddingHorizontal: 10, borderRadius: 10 },
-  openMapsText: { color: '#435574', fontSize: 11 },
+  mapControls: { position: 'absolute', right: 16, alignItems: 'center', gap: 14 },
+  compactMapControls: { flexDirection: 'row', gap: 12 },
+  zoomControls: { width: 58, borderRadius: 30, overflow: 'hidden', backgroundColor: '#FFFFFF', elevation: 5, shadowColor: '#000000', shadowOpacity: .2, shadowRadius: 8, shadowOffset: { width: 0, height: 3 } },
+  darkControl: { backgroundColor: '#101010', borderWidth: 1, borderColor: '#505050' },
+  compactZoomControls: { width: 117, height: 58, flexDirection: 'row' },
+  zoomButton: { width: 58, height: 59, alignItems: 'center', justifyContent: 'center' },
+  compactZoomButton: { height: 58 },
+  zoomDivider: { height: 1, marginHorizontal: 10, backgroundColor: '#E5E7EB' },
+  darkZoomDivider: { backgroundColor: '#505050' },
+  compactZoomDivider: { width: 1, height: 38, marginHorizontal: 0, alignSelf: 'center' },
+  locationControl: { width: 60, height: 60, borderRadius: 30, alignItems: 'center', justifyContent: 'center', backgroundColor: '#FFFFFF', elevation: 5, shadowColor: '#000000', shadowOpacity: .2, shadowRadius: 8, shadowOffset: { width: 0, height: 3 } },
+  controlPressed: { opacity: .72 },
+  locationNotice: { position: 'absolute', right: 84, maxWidth: 230, paddingHorizontal: 13, paddingVertical: 10, borderRadius: 12, backgroundColor: '#202126', elevation: 4 },
+  locationNoticeText: { color: '#FFFFFF', fontSize: 13, lineHeight: 18 },
+  retry: { padding: 14, marginTop: 10, borderRadius: 15, backgroundColor: '#FFFFFF' },
+  darkRetry: { backgroundColor: '#292929' },
+  loading: { position: 'absolute', alignSelf: 'center', padding: 16, borderRadius: 18, backgroundColor: '#FFFFFF' },
+  darkLoading: { backgroundColor: '#202020' },
+  pinBody: { width: 48, height: 48, borderRadius: 17, borderWidth: 4, borderColor: 'white', backgroundColor: colors.blue, alignItems: 'center', justifyContent: 'center', elevation: 4 },
+  darkPinBody: { borderColor: '#101010', backgroundColor: '#FFFFFF' },
+  stem: { width: 3, height: 19, backgroundColor: colors.ink, alignSelf: 'center' },
+  darkStem: { backgroundColor: '#FFFFFF' },
+  centerPin: { position: 'absolute', top: '50%', left: '50%', marginLeft: -24, marginTop: -67 },
+  confirm: { position: 'absolute', bottom: 0, left: 0, right: 0, padding: 16, paddingTop: 18, gap: 12, backgroundColor: 'white', borderTopLeftRadius: 26, borderTopRightRadius: 26 },
+  darkConfirm: { backgroundColor: '#101010' },
+  addressSearch: { minHeight: 48, flexDirection: 'row', alignItems: 'center', gap: 12 },
+  instruction: { fontSize: 12, color: colors.muted, marginTop: -8 },
   unavailable: { flex: 1, backgroundColor: '#EAF1FB', justifyContent: 'center', alignItems: 'center', padding: 34 },
   unavailableTitle: { fontSize: 20, fontWeight: '700', color: '#192A48', marginBottom: 10 },
   unavailableText: { color: '#65738B', fontSize: 14, lineHeight: 21, textAlign: 'center' },
   pickup: { width: 27, height: 27, borderRadius: 14, backgroundColor: '#FFFFFF', alignItems: 'center', justifyContent: 'center', borderWidth: 3, borderColor: '#246BFD' },
   dot: { width: 9, height: 9, borderRadius: 5, backgroundColor: '#246BFD' },
   destination: { width: 34, height: 34, borderRadius: 17, backgroundColor: '#246BFD', borderWidth: 3, borderColor: '#FFF', alignItems: 'center', justifyContent: 'center' },
+  darkDestination: { backgroundColor: '#FFFFFF', borderColor: '#101010' },
+  destinationWithRoute: { width: 174, height: 88, alignItems: 'center', justifyContent: 'flex-end' },
+  dropoffRouteBadge: { position: 'absolute', top: 0, width: 174, height: 48, borderRadius: 16, padding: 4, backgroundColor: '#FFFFFF', flexDirection: 'row', alignItems: 'center', gap: 7, borderWidth: 1, borderColor: '#E3E7F0', elevation: 5, shadowColor: '#13213A', shadowOpacity: .18, shadowRadius: 9, shadowOffset: { width: 0, height: 3 } },
+  darkDropoffRouteBadge: { backgroundColor: '#101010', borderColor: '#505050', shadowColor: '#000000' },
+  dropoffRouteLetter: { width: 39, height: 39, borderRadius: 12, backgroundColor: '#246BFD', alignItems: 'center', justifyContent: 'center' },
+  darkDropoffRouteLetter: { backgroundColor: '#FFFFFF' },
+  dropoffRouteLetterText: { color: '#FFFFFF', fontSize: 22, fontWeight: '800' },
+  darkDropoffRouteLetterText: { color: '#101010' },
+  dropoffRouteMetrics: { flex: 1, paddingRight: 5, justifyContent: 'center' },
+  dropoffRouteDistance: { color: '#202330', fontSize: 16, lineHeight: 20, fontWeight: '800' },
+  dropoffRouteDuration: { color: '#202330', fontSize: 13, lineHeight: 17, fontWeight: '600' },
+  darkDropoffRouteText: { color: '#FFFFFF' },
   destinationText: { color: '#FFFFFF', fontSize: 17, fontWeight: '700' },
   hint: { position: 'absolute', top: 146, alignSelf: 'center', paddingVertical: 11, paddingHorizontal: 16, borderRadius: 20, backgroundColor: '#FFFFFF' },
-  hintText: { color: '#192A48', fontSize: 13 },
+  hintText: { color: '#192A48', fontSize: 16, lineHeight: 21 },
+  darkHintText: { color: '#FFFFFF' },
   notice: { position: 'absolute', top: 192, alignSelf: 'center', backgroundColor: '#FFF8E9', borderRadius: 12, padding: 10 },
+  darkNotice: { backgroundColor: '#292929' },
   noticeText: { color: '#956315', fontSize: 12 },
+  darkNoticeText: { color: '#FFFFFF' },
 });

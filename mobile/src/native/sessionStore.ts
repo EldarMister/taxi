@@ -43,10 +43,24 @@ export async function clearTokens(): Promise<void> {
 }
 
 export async function readLastOrderId(): Promise<string | null> {
+  await storageQueue;
   return SecureStore.getItemAsync('taxi.lastOrderId', options);
 }
 
 export async function writeLastOrderId(id: string | null): Promise<void> {
-  if (id) await SecureStore.setItemAsync('taxi.lastOrderId', id, options);
-  else await SecureStore.deleteItemAsync('taxi.lastOrderId', options);
+  await serializeStorage(() => id
+    ? SecureStore.setItemAsync('taxi.lastOrderId', id, options)
+    : SecureStore.deleteItemAsync('taxi.lastOrderId', options));
+}
+
+export type PermissionIntroState = 'location' | 'notifications' | 'done';
+const permissionIntroKey = (userId: string) => `taxi.permissionIntro.v1.${userId}`;
+
+export async function readPermissionIntro(userId: string): Promise<PermissionIntroState> {
+  const value = await SecureStore.getItemAsync(permissionIntroKey(userId), options);
+  return value === 'notifications' || value === 'done' ? value : 'location';
+}
+
+export async function writePermissionIntro(userId: string, value: PermissionIntroState): Promise<void> {
+  await SecureStore.setItemAsync(permissionIntroKey(userId), value, options);
 }

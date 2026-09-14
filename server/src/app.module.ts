@@ -12,5 +12,14 @@ import { OrdersService } from './orders';
 import { PrismaService } from './prisma.service';
 import { PushService, RoutingService } from './providers';
 import { PlacesController, PlacesService } from './places';
-@Module({imports:[JwtModule.register({}),ScheduleModule.forRoot()],controllers:[AuthController,UsersController,OrdersController,DriverController,AdminController,PublicController,PlacesController],providers:[PrismaService,AppConfig,AuthService,AuthGuard,RateLimits,RoutingService,PushService,RealtimeEvents,OrdersService,DriverService,TaxiGateway,BackgroundJobs,PlacesService]})
+import { RoutesController } from './routes';
+import { TrackingController, TrackingService } from './tracking';
+import { FoodService } from './food';
+import { AdminFoodController, FoodCatalogController, FoodOrdersController } from './food.http';
+import { AdminAuditService, AdminGuard } from './admin.security';
+import { AdminAuthController, AdminAuthService } from './admin.auth';
+import { AdminService } from './admin';
+import { AdminOperationsController } from './admin.http';
+import { AdminCatalogController, ContentController, ContentService } from './content';
+@Module({imports:[JwtModule.register({}),ScheduleModule.forRoot()],controllers:[TrackingController,AuthController,UsersController,OrdersController,DriverController,AdminController,PublicController,PlacesController,RoutesController,FoodCatalogController,FoodOrdersController,AdminFoodController,AdminAuthController,AdminOperationsController,ContentController,AdminCatalogController],providers:[TrackingService,PrismaService,AppConfig,AuthService,AuthGuard,RateLimits,RoutingService,PushService,RealtimeEvents,OrdersService,DriverService,TaxiGateway,BackgroundJobs,PlacesService,FoodService,AdminAuditService,AdminGuard,AdminAuthService,AdminService,ContentService]})
 export class AppModule {}

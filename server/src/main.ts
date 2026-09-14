@@ -3,12 +3,15 @@ import 'dotenv/config';
 import { NestFactory } from '@nestjs/core';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import helmet from 'helmet';
+import { json, urlencoded } from 'express';
 import { AppModule } from './app.module';
 import { AppConfig } from './config';
 import { ApiExceptionFilter, apiValidation } from './http';
 
 async function bootstrap() {
-  const app=await NestFactory.create(AppModule,{bodyParser:true});
+  const app=await NestFactory.create(AppModule,{bodyParser:false});
+  app.use(json({limit:'2mb'}));
+  app.use(urlencoded({extended:false,limit:'64kb'}));
   const config=app.get(AppConfig);
   app.setGlobalPrefix('api');
   app.use(helmet());

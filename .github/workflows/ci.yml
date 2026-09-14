@@ -25,7 +25,7 @@ jobs:
       DEV_AUTH_ENABLED: 'true'
       DEV_OTP_CODE: '123456'
       SMS_PROVIDER: development
-      ROUTING_PROVIDER: approximation
+      ROUTING_PROVIDER: osrm
       PUSH_PROVIDER: development
       TEST_DATABASE_RESET: 'true'
     steps:
@@ -52,6 +52,8 @@ jobs:
       - run: npm run typecheck
         working-directory: mobile
       - run: npm run test:native
+        working-directory: mobile
+      - run: npm run test:navigation
         working-directory: mobile
       - run: npm run test:api
         working-directory: mobile

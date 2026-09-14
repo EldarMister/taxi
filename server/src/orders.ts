@@ -7,6 +7,7 @@ import { CreateOrderDto, MessageDto, QuoteDto } from './dto';
 import { RealtimeEvents } from './events';
 import { PrismaService } from './prisma.service';
 import { RoutingService } from './providers';
+import { visibleDriverLocation } from './tracking';
 
 @Injectable()
 export class OrdersService {
@@ -25,19 +26,23 @@ export class OrdersService {
   async create(actor:Actor,dto:CreateOrderDto) {
     if(actor.role !== 'CLIENT') throw new ForbiddenException('Заказ доступен клиенту');
     await this.limits.take(`orders:${actor.id}`,15,60);
+    const passenger=dto.passenger?{name:dto.passenger.name.trim(),phone:dto.passenger.phone.replace(/[\s()-]/g,'')}:null;
+    if(passenger&&passenger.name.length<2)throw new BadRequestException('Укажите имя пассажира');
     const order = await this.db.$transaction(async tx=>{
       await tx.$queryRaw`SELECT "id" FROM "User" WHERE "id"=${actor.id}::uuid FOR UPDATE`;
+      const currentUser=await tx.user.findUnique({where:{id:actor.id},select:{role:true}});
+      if(currentUser?.role!=='CLIENT')throw new ForbiddenException('Заказ доступен клиенту');
       const existing = await tx.order.findUnique({where:{clientId_idempotencyKey:{clientId:actor.id,idempotencyKey:dto.idempotencyKey}}});
       if(existing) {
-        if(existing.quoteId !== dto.quoteId || existing.comment !== (dto.comment?.trim()??'')) throw new ConflictException('Ключ повтора уже использован с другими данными');
+        if(existing.quoteId !== dto.quoteId || existing.comment !== (dto.comment?.trim()??'') || existing.passengerName !== (passenger?.name??null) || existing.passengerPhone !== (passenger?.phone??null)) throw new ConflictException('Ключ повтора уже использован с другими данными');
         return existing;
       }
       if(await tx.order.findFirst({where:{clientId:actor.id,status:{in:ACTIVE_STATUSES}}})) throw new ConflictException('У вас уже есть активный заказ');
       const quote = await tx.quote.findFirst({where:{id:dto.quoteId,userId:actor.id,expiresAt:{gt:new Date()}},include:{order:true}});
       if(!quote) throw new BadRequestException('Расчёт стоимости истёк. Постройте маршрут ещё раз.');
       if(quote.order) throw new ConflictException('Этот расчёт уже использован');
-      const created = await tx.order.create({data:{clientId:actor.id,quoteId:quote.id,idempotencyKey:dto.idempotencyKey,pickup:quote.pickup as Prisma.InputJsonValue,dropoff:quote.dropoff as Prisma.InputJsonValue,geometry:quote.geometry as Prisma.InputJsonValue,distanceMeters:quote.distanceMeters,durationSeconds:quote.durationSeconds,price:quote.price,commission:quote.commission,comment:dto.comment?.trim()??'',searchExpiresAt:new Date(Date.now()+this.config.searchSeconds*1000),history:{create:{status:'SEARCHING',actorId:actor.id}}}});
-      await this.push(tx,[actor.id],'order:updated',created.id); return created;
+      const created = await tx.order.create({data:{clientId:actor.id,quoteId:quote.id,idempotencyKey:dto.idempotencyKey,pickup:quote.pickup as Prisma.InputJsonValue,dropoff:quote.dropoff as Prisma.InputJsonValue,geometry:quote.geometry as Prisma.InputJsonValue,distanceMeters:quote.distanceMeters,durationSeconds:quote.durationSeconds,price:quote.price,commission:quote.commission,comment:dto.comment?.trim()??'',passengerName:passenger?.name,passengerPhone:passenger?.phone,searchExpiresAt:new Date(Date.now()+this.config.searchSeconds*1000),history:{create:{status:'SEARCHING',actorId:actor.id}}}});
+      await this.push(tx,[actor.id],'order:created',created.id); return created;
     });
     await this.dispatchOrder(order.id); await this.publish(order.id); return this.serialize(order.id,false,actor.id);
   }
@@ -65,12 +70,13 @@ export class OrdersService {
     if(order.clientId !== actor.id && order.driverId !== actor.id) throw new ForbiddenException('Нет доступа к заказу'); return order;
   }
   async serialize(id:string,offer=false,viewerId?:string) {
-    const order = await this.db.order.findUniqueOrThrow({where:{id},include:{rating:true,quote:{include:{tariff:true}}}});
+    const order = await this.db.order.findUniqueOrThrow({where:{id},include:{rating:true,clientRating:true,quote:{include:{tariff:true}}}});
     if(viewerId&&order.clientId!==viewerId&&order.driverId!==viewerId)throw new ForbiddenException('Нет доступа к заказу');
     const driver = !offer&&order.driverId?await this.auth.user(order.driverId):null;
     const client = offer?undefined:await this.auth.user(order.clientId);
+    const clientRating = await this.db.clientRating.aggregate({where:{order:{clientId:order.clientId,passengerName:null}},_avg:{score:true}});
     const safeClient = client?{id:client.id,name:client.name,phone:client.phone,photoUrl:client.photoUrl,role:client.role}:undefined;
-    return {id:order.id,status:order.status,pickup:order.pickup,dropoff:order.dropoff,geometry:order.geometry,distanceMeters:order.distanceMeters,durationSeconds:order.durationSeconds,price:order.price,currency:'KGS',paymentMethod:'CASH',comment:order.comment,createdAt:order.createdAt,updatedAt:order.updatedAt,searchExpiresAt:order.searchExpiresAt,completedAt:order.completedAt,driver,client:safeClient,rating:order.rating?.score??null,tariff:order.quote.tariff,routeProvider:order.quote.routeProvider};
+    return {driverLocation:offer?null:visibleDriverLocation(order),id:order.id,status:order.status,pickup:order.pickup,dropoff:order.dropoff,geometry:order.geometry,distanceMeters:order.distanceMeters,durationSeconds:order.durationSeconds,price:order.price,currency:'KGS',paymentMethod:'CASH',comment:order.comment,passenger:order.passengerName?{name:order.passengerName,phone:offer?undefined:order.passengerPhone}:null,createdAt:order.createdAt,updatedAt:order.updatedAt,searchExpiresAt:order.searchExpiresAt,completedAt:order.completedAt,driver,client:safeClient,rating:order.rating?.score??null,clientRating:clientRating._avg.score??null,driverRating:order.clientRating?.score??null,tariff:order.quote.tariff,routeProvider:order.quote.routeProvider};
   }
   async publish(id:string,additionalUsers:string[]=[]) {
     const snapshot=await this.serialize(id);
@@ -129,8 +135,8 @@ export class OrdersService {
       const offer = await tx.orderOffer.findUnique({where:{orderId_driverId:{orderId:id,driverId:actor.id}}});
       if(!offer||offer.skipped) throw new ForbiddenException('Заказ не был предложен вам');
       if(await tx.order.findFirst({where:{driverId:actor.id,status:{in:ACTIVE_STATUSES}}})) throw new ConflictException('У вас уже есть активный заказ');
-      await tx.order.update({where:{id},data:{status:'ASSIGNED',driverId:actor.id,history:{create:{status:'ASSIGNED',actorId:actor.id}}}});
-      await this.push(tx,[order.clientId,actor.id],'order:updated',id);
+      await tx.order.update({where:{id},data:{status:'ASSIGNED',driverId:actor.id,driverLocation:Prisma.DbNull,history:{create:{status:'ASSIGNED',actorId:actor.id}}}});
+      await this.push(tx,[order.clientId],'order:assigned',id);
     });
     await this.publish(id);return this.serialize(id,false,actor.id);
   }
@@ -153,8 +159,9 @@ export class OrdersService {
         await tx.driverProfile.update({where:{userId:actor.id},data:{deposit:balanceAfter,...(balanceAfter<this.config.minimumDeposit?{online:false}:{})}});
         await tx.ledgerEntry.create({data:{driverId:actor.id,orderId:id,kind:'COMMISSION',amount:-order.commission,balanceAfter,idempotencyKey:`commission:${id}`,note:'Комиссия за поездку'}});
       }
-      await tx.order.update({where:{id},data:{status,...(status==='COMPLETED'?{completedAt:new Date()}:{}),history:{create:{status,actorId:actor.id}}}});
-      await this.push(tx,this.participants(order),'order:updated',id);
+      await tx.order.update({where:{id},data:{status,...(status==='COMPLETED'?{completedAt:new Date(),driverLocation:Prisma.DbNull}:{}),history:{create:{status,actorId:actor.id}}}});
+      if(status==='ARRIVED') await this.push(tx,[order.clientId],'trip:arrived',id);
+      else await this.push(tx,this.participants(order),status==='COMPLETED'?'trip:completed':'order:updated',id);
     });
     await this.publish(id);return this.serialize(id,false,actor.id);
   }
@@ -175,7 +182,7 @@ export class OrdersService {
         await tx.orderOffer.deleteMany({where:{orderId:id,driverId:{not:actor.id},skipped:false}});
       }
       const status = byDriver?'SEARCHING':'CANCELLED';
-      await tx.order.update({where:{id},data:{status,...(byDriver?{driverId:null,searchExpiresAt:new Date(Date.now()+this.config.searchSeconds*1000)}:{}),history:{create:{status,actorId:actor.id,reason:byDriver?'DRIVER_CANCELLED':'CLIENT_CANCELLED'}}}});
+      await tx.order.update({where:{id},data:{status,driverLocation:Prisma.DbNull,...(byDriver?{driverId:null,searchExpiresAt:new Date(Date.now()+this.config.searchSeconds*1000)}:{}),history:{create:{status,actorId:actor.id,reason:byDriver?'DRIVER_CANCELLED':'CLIENT_CANCELLED'}}}});
       await this.push(tx,this.participants(order),'order:updated',id);
     });
     await this.publish(id,previousDriver?[previousDriver]:[]);await this.dispatchOrder(id);
@@ -216,14 +223,26 @@ export class OrdersService {
     const order = await this.db.order.findUniqueOrThrow({where:{id}});
     this.events.publish(this.participants(order),'chat:message',message);return message;
   }
-  async rate(actor:Actor,id:string,score:number) {
+  async rate(actor:Actor,id:string,score:number,comment?:string) {
+    const normalizedComment=comment?.trim()??'';
     return this.db.$transaction(async tx=>{
       const order = await this.lockOrder(tx,id);
       if(order.clientId !== actor.id) throw new ForbiddenException();
       if(order.status!=='COMPLETED') throw new BadRequestException('Оценка доступна после завершения поездки');
       const rating = await tx.rating.findUnique({where:{orderId:id}});
-      if(rating) {if(rating.score!==score) throw new ConflictException('Поездка уже оценена');return rating;}
-      return tx.rating.create({data:{orderId:id,score}});
+      if(rating) {if(rating.score!==score||rating.comment!==normalizedComment) throw new ConflictException('Поездка уже оценена');return rating;}
+      return tx.rating.create({data:{orderId:id,score,comment:normalizedComment}});
+    });
+  }
+  async rateClient(actor:Actor,id:string,score:number,comment?:string) {
+    const normalizedComment=comment?.trim()??'';
+    return this.db.$transaction(async tx=>{
+      const order = await this.lockOrder(tx,id);
+      if(actor.role!=='DRIVER'||order.driverId!==actor.id) throw new ForbiddenException();
+      if(order.status!=='COMPLETED') throw new BadRequestException('Оценка доступна после завершения поездки');
+      const rating = await tx.clientRating.findUnique({where:{orderId:id}});
+      if(rating) {if(rating.score!==score||rating.comment!==normalizedComment) throw new ConflictException('Пассажир уже оценён');return rating;}
+      return tx.clientRating.create({data:{orderId:id,score,comment:normalizedComment}});
     });
   }
 }

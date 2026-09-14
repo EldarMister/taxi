@@ -1,36 +1,44 @@
-import { Injectable, Logger, ServiceUnavailableException } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { applicationDefault, initializeApp, getApps } from 'firebase-admin/app';
 import { getMessaging } from 'firebase-admin/messaging';
 import { PrismaService } from './prisma.service';
 import { AppConfig } from './config';
-import { haversine, Point } from './domain';
+export { RoutingService } from './routing';
+import { pushPresentation } from './pushPresentation';
 
-@Injectable()
-export class RoutingService {
-  constructor(private readonly config:AppConfig) {}
-  async route(pickup:Point, dropoff:Point, timeoutMs=12000) {
-    if (this.config.routingProvider === 'approximation') {
-      const distanceMeters = Math.max(100,Math.round(haversine(pickup,dropoff)*1.3));
-      return {distanceMeters,durationSeconds:Math.ceil(distanceMeters/7),geometry:[{latitude:pickup.latitude,longitude:pickup.longitude},{latitude:dropoff.latitude,longitude:dropoff.longitude}],provider:'server-approximation'};
-    }
-    try {
-      const url = new URL('https://api.routing.yandex.net/v2/route');
-      url.searchParams.set('apikey',this.config.require('YANDEX_ROUTER_API_KEY'));
-      url.searchParams.set('waypoints',`${pickup.latitude},${pickup.longitude}|${dropoff.latitude},${dropoff.longitude}`);
-      url.searchParams.set('mode','driving');
-      const response = await fetch(url,{signal:AbortSignal.timeout(timeoutMs)});
-      if (!response.ok) throw new Error('Routing unavailable');
-      const payload = await response.json() as {route?:{legs?:{status:string;steps:{length:number;duration:number;polyline:{points:number[][]}}[]}[]}};
-      const legs = payload.route?.legs;
-      if (!legs?.length || legs.some(leg=>leg.status !== 'OK')) throw new Error('No route');
-      const steps = legs.flatMap(leg=>leg.steps);
-      if (!steps.length || steps.some(s=>!Number.isFinite(s.length)||s.length<0||!Number.isFinite(s.duration)||s.duration<0||!s.polyline?.points?.length)) throw new Error('Invalid route response');
-      const geometry = steps.flatMap(s=>s.polyline.points.map(pair=>({latitude:pair[0],longitude:pair[1]})));
-      if (geometry.length<2||geometry.some(p=>!Number.isFinite(p.latitude)||Math.abs(p.latitude)>90||!Number.isFinite(p.longitude)||Math.abs(p.longitude)>180)) throw new Error('Invalid geometry');
-      if (haversine(pickup,geometry[0])>1000 || haversine(dropoff,geometry[geometry.length-1])>1000) throw new Error('Route endpoints too far');
-      return {distanceMeters:Math.round(steps.reduce((sum,s)=>sum+s.length,0)),durationSeconds:Math.ceil(steps.reduce((sum,s)=>sum+s.duration,0)),geometry,provider:'yandex'};
-    } catch {throw new ServiceUnavailableException('Не удалось построить маршрут. Уточните точки и попробуйте снова.');}
+const PUSH_TTL = {
+  chat: 6 * 60 * 60,
+  state: 30 * 60,
+  durable: 24 * 60 * 60,
+} as const;
+
+export function pushTtlSeconds(event: string, offerExpiresAt?: Date, now = Date.now()) {
+  if (event === 'order:offer') {
+    if (!offerExpiresAt) return 1;
+    return Math.max(1, Math.floor((offerExpiresAt.getTime() - now) / 1000));
   }
+  if (event === 'chat:message') return PUSH_TTL.chat;
+  if (['order:created','trip:completed'].includes(event)) return PUSH_TTL.durable;
+  return PUSH_TTL.state;
+}
+
+class PushDeliveryError extends Error {
+  constructor(readonly reason: string) { super(reason); this.name = 'PushDeliveryError'; }
+}
+
+function safeProviderCode(value: unknown, fallback: string) {
+  return typeof value === 'string' && /^[a-z0-9][a-z0-9._\/-]{0,100}$/i.test(value) ? value : fallback;
+}
+
+export function safePushFailureReason(error: unknown) {
+  if (error instanceof PushDeliveryError) return error.reason;
+  if (error && typeof error === 'object') {
+    const name = typeof Reflect.get(error, 'name') === 'string' ? Reflect.get(error, 'name') as string : 'Error';
+    const code = Reflect.get(error, 'code');
+    if (typeof code === 'string' && /^[a-z0-9][a-z0-9._\/-]{0,100}$/i.test(code)) return `${name}:${code}`;
+    return name;
+  }
+  return 'UnknownError';
 }
 
 @Injectable()
@@ -45,36 +53,47 @@ export class PushService {
       const claimed = await this.db.pushJob.updateMany({where:{id:job.id,sentAt:null,availableAt:{lte:new Date()}},data:{availableAt:new Date(Date.now()+60000),attempts:{increment:1}}});
       if (!claimed.count) continue;
       try {
-        const user = await this.db.user.findUnique({where:{id:job.userId},include:{pushTokens:true}});
+        const user = await this.db.user.findUnique({where:{id:job.userId},select:{
+          notifications:true,
+          role:true,
+          pushTokens:{select:{id:true,token:true}},
+        }});
         if (user?.notifications && user.pushTokens.length && this.config.pushProvider !== 'development') {
-          const title = job.event === 'order:offer' ? 'Новый заказ' : 'Ваша поездка';
-          const body = job.event === 'order:offer' ? 'Откройте приложение, чтобы принять заказ' : job.event === 'rider:coming' ? 'Клиент выходит' : job.event === 'chat:message' ? 'Новое сообщение в чате' : 'Статус поездки изменился';
+          const { title, body, sound, channelId } = pushPresentation(job.event, user.role);
+          let ttl = pushTtlSeconds(job.event);
+          if (job.event === 'order:offer') {
+            const offer = await this.db.orderOffer.findFirst({where:{orderId:job.orderId,driverId:job.userId,skipped:false,driver:{online:true,verified:true},order:{status:'SEARCHING',searchExpiresAt:{gt:new Date()}}},include:{order:true}});
+            if (!offer) { await this.db.pushJob.update({where:{id:job.id},data:{sentAt:new Date()}}); continue; }
+            ttl = pushTtlSeconds(job.event, offer.order.searchExpiresAt);
+          }
           if (this.config.pushProvider === 'expo') {
-            const response = await fetch('https://exp.host/--/api/v2/push/send',{method:'POST',headers:{'Content-Type':'application/json',Authorization:`Bearer ${this.config.require('EXPO_ACCESS_TOKEN')}`},body:JSON.stringify(user.pushTokens.map(t=>({to:t.token,title,body,sound:'default',data:{event:job.event,orderId:job.orderId}}))),signal:AbortSignal.timeout(10000)});
-            if (!response.ok) throw new Error('Push provider unavailable');
+            const headers: Record<string,string> = {'Content-Type':'application/json'};
+            if (this.config.expoAccessToken) headers.Authorization = `Bearer ${this.config.expoAccessToken}`;
+            const response = await fetch('https://exp.host/--/api/v2/push/send',{method:'POST',headers,body:JSON.stringify(user.pushTokens.map(t=>({to:t.token,title,body,sound,channelId,ttl,priority:'high',data:{event:job.event,orderId:job.orderId,eventId:job.id}}))),signal:AbortSignal.timeout(10000)});
+            if (!response.ok) throw new PushDeliveryError(`expo-http-${response.status}`);
             const result = await response.json() as {data?:{status:string;details?:{error:string}}[]};
-            if (!Array.isArray(result.data) || result.data.length !== user.pushTokens.length) throw new Error('Invalid Expo ticket response');
-            let temporaryFailure = false;
+            if (!Array.isArray(result.data) || result.data.length !== user.pushTokens.length) throw new PushDeliveryError('expo-invalid-ticket-response');
+            const temporaryFailures = new Set<string>();
             for (let i=0;i<result.data.length;i++) {
               if (result.data[i].status !== 'error') continue;
               if (result.data[i].details?.error === 'DeviceNotRegistered') await this.db.pushToken.deleteMany({where:{id:user.pushTokens[i].id}});
-              else temporaryFailure = true;
+              else temporaryFailures.add(safeProviderCode(result.data[i].details?.error, 'unknown-ticket-error'));
             }
-            if (temporaryFailure) throw new Error('Expo rejected push');
+            if (temporaryFailures.size) throw new PushDeliveryError(`expo-ticket-${[...temporaryFailures].sort().join(',')}`);
           } else {
-            const result = await getMessaging().sendEachForMulticast({tokens:user.pushTokens.map(t=>t.token),notification:{title,body},data:{event:job.event,orderId:job.orderId},android:{priority:'high'},apns:{payload:{aps:{sound:'default'}}}});
-            let temporaryFailure = false;
+            const result = await getMessaging().sendEachForMulticast({tokens:user.pushTokens.map(t=>t.token),notification:{title,body},data:{event:job.event,orderId:job.orderId,eventId:job.id},android:{priority:'high',ttl:ttl*1000,notification:{channelId,sound:sound.replace(/\.wav$/,'')}},apns:{headers:{'apns-expiration':String(Math.floor(Date.now()/1000)+ttl)},payload:{aps:{sound}}}});
+            const temporaryFailures = new Set<string>();
             for (let i=0;i<result.responses.length;i++) {
               const error = result.responses[i].error;
               if (error?.code === 'messaging/registration-token-not-registered'||error?.code==='messaging/invalid-registration-token') await this.db.pushToken.deleteMany({where:{id:user.pushTokens[i].id}});
-              else if(error) temporaryFailure = true;
+              else if(error) temporaryFailures.add(safeProviderCode(error.code, 'unknown-message-error'));
             }
-            if (temporaryFailure) throw new Error('Firebase rejected push');
+            if (temporaryFailures.size) throw new PushDeliveryError(`firebase-message-${[...temporaryFailures].sort().join(',')}`);
           }
         }
         await this.db.pushJob.update({where:{id:job.id},data:{sentAt:new Date()}});
-      } catch {
-        this.logger.warn(`Push job ${job.id} delivery failed; queued for retry`);
+      } catch (error) {
+        this.logger.warn(`Push job ${job.id} event=${job.event} provider=${this.config.pushProvider} attempt=${job.attempts+1} failed reason=${safePushFailureReason(error)}; queued for retry`);
         await this.db.pushJob.update({where:{id:job.id},data:{availableAt:new Date(Date.now()+Math.min(3600,2**job.attempts*15)*1000)}});
       }
     }

@@ -4,10 +4,13 @@ import { AppConfig } from './config';
 import { ACTIVE_STATUSES } from './domain';
 import { TopupDto, VerifyDriverDto } from './dto';
 import { PrismaService } from './prisma.service';
+import { AdminAuditService } from './admin.security';
+import { RealtimeEvents } from './events';
+import { ACTIVE_FOOD_STATUSES } from './food-domain';
 
 @Injectable()
 export class DriverService {
-  constructor(private readonly db:PrismaService,private readonly config:AppConfig,private readonly auth:AuthService) {}
+  constructor(private readonly db:PrismaService,private readonly config:AppConfig,private readonly auth:AuthService,private readonly audit:AdminAuditService,private readonly events:RealtimeEvents) {}
   private assertDriver(actor:Actor) {if(actor.role!=='DRIVER') throw new ForbiddenException('Действие доступно водителю');}
   async online(actor:Actor,online:boolean) {
     this.assertDriver(actor);
@@ -19,7 +22,7 @@ export class DriverService {
       if(!online&&await tx.order.findFirst({where:{driverId:actor.id,status:{in:ACTIVE_STATUSES}}})) throw new ConflictException('Сначала завершите или отмените активный заказ');
       await tx.driverProfile.update({where:{userId:actor.id},data:{online}});
     });
-    return this.auth.user(actor.id);
+    this.events.adminChanged('drivers',actor.id);return this.auth.user(actor.id);
   }
   async balance(actor:Actor) {
     this.assertDriver(actor);
@@ -33,7 +36,7 @@ export class DriverService {
   }
   async topup(actor:Actor,driverId:string,dto:TopupDto) {
     if(actor.role!=='ADMIN') throw new ForbiddenException('Действие доступно администратору');
-    return this.db.$transaction(async tx=>{
+    const result=await this.db.$transaction(async tx=>{
       await tx.$queryRaw`SELECT "userId" FROM "DriverProfile" WHERE "userId"=${driverId}::uuid FOR UPDATE`;
       const driver=await tx.driverProfile.findUnique({where:{userId:driverId}});
       if(!driver) throw new NotFoundException('Водитель не найден');
@@ -45,19 +48,24 @@ export class DriverService {
       const balanceAfter=driver.deposit+dto.amount;
       if(balanceAfter>2000000000) throw new BadRequestException('Превышен лимит депозита');
       await tx.driverProfile.update({where:{userId:driverId},data:{deposit:balanceAfter}});
-      return tx.ledgerEntry.create({data:{driverId,kind:'TOPUP',amount:dto.amount,balanceAfter,idempotencyKey:key,actorId:actor.id,note:dto.note}});
+      const entry=await tx.ledgerEntry.create({data:{driverId,kind:'TOPUP',amount:dto.amount,balanceAfter,idempotencyKey:key,actorId:actor.id,note:dto.note}});
+      await this.audit.record(tx,actor,'driver.topup','drivers',driverId,{amount:dto.amount,balanceAfter,note:dto.note,ledgerId:entry.id});return entry;
     });
+    this.events.adminChanged('drivers',driverId);return result;
   }
   async verify(actor:Actor,userId:string,dto:VerifyDriverDto) {
     if(actor.role!=='ADMIN') throw new ForbiddenException();
     await this.db.$transaction(async tx=>{
       await tx.$queryRaw`SELECT "id" FROM "User" WHERE "id"=${userId}::uuid FOR UPDATE`;
-      const user=await tx.user.findUnique({where:{id:userId}});
+      await tx.$queryRaw`SELECT "userId" FROM "DriverProfile" WHERE "userId"=${userId}::uuid FOR UPDATE`;
+      const user=await tx.user.findUnique({where:{id:userId},select:{role:true}});
       if(!user||user.role==='ADMIN') throw new BadRequestException('Нельзя изменить этот профиль');
       if(await tx.order.findFirst({where:{OR:[{clientId:userId},{driverId:userId}],status:{in:ACTIVE_STATUSES}}})) throw new ConflictException('У пользователя активный заказ');
+      if(user.role==='CLIENT'&&await tx.foodOrder.findFirst({where:{clientId:userId,status:{in:ACTIVE_FOOD_STATUSES}}}))throw new ConflictException('У пользователя активный заказ еды');
       await tx.user.update({where:{id:userId},data:{role:'DRIVER'}});
       await tx.driverProfile.upsert({where:{userId},create:{userId,verified:dto.verified},update:{verified:dto.verified,online:false}});
       await tx.vehicle.upsert({where:{driverId:userId},create:{driverId:userId,make:dto.carMake,color:dto.carColor,plate:dto.carPlate},update:{make:dto.carMake,color:dto.carColor,plate:dto.carPlate}});
-    });return this.auth.user(userId);
+      await this.audit.record(tx,actor,'driver.verify','drivers',userId,{verified:dto.verified,carMake:dto.carMake,carColor:dto.carColor,carPlate:dto.carPlate});
+    });this.events.adminChanged('drivers',userId);return this.auth.user(userId);
   }
 }

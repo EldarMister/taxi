@@ -3,6 +3,71 @@ apply plugin: "org.jetbrains.kotlin.android"
 apply plugin: "com.facebook.react"
 
 def projectRoot = rootDir.getAbsoluteFile().getParentFile().getAbsolutePath()
+def taxiAppVariant = (System.getenv("APP_VARIANT") ?: "client").trim().toLowerCase()
+if (!(taxiAppVariant in ["client", "driver"])) {
+    throw new GradleException("APP_VARIANT must be client or driver")
+}
+def taxiApplicationId = taxiAppVariant == "driver" ? "kg.taxigo.driver" : "kg.taxigo.app"
+def taxiAppName = taxiAppVariant == "driver" ? "Atlas pro" : "Atlas"
+def taxiAppIcon = taxiAppVariant == "driver" ? "@drawable/edu_drive_icon" : "@drawable/edu_go_client_logo"
+def taxiAppRoundIcon = taxiAppVariant == "driver" ? "@drawable/edu_drive_icon" : "@drawable/edu_go_client_logo"
+def taxiSplashTheme = taxiAppVariant == "driver" ? "@style/Theme.EduDrive.SplashScreen" : "@style/Theme.EduGo.SplashScreen"
+def taxiAppScheme = taxiAppVariant == "driver" ? "taxi-go-driver" : "taxi-go"
+def taxiGoogleServicesVariable = taxiAppVariant == "driver" ? "DRIVER_GOOGLE_SERVICES_FILE" : "CLIENT_GOOGLE_SERVICES_FILE"
+def taxiGoogleServicesValue = System.getenv(taxiGoogleServicesVariable)?.trim()
+def taxiGoogleServices = taxiGoogleServicesValue
+    ? (new File(taxiGoogleServicesValue).isAbsolute() ? new File(taxiGoogleServicesValue) : new File(projectRoot, taxiGoogleServicesValue))
+    : new File(projectRoot, taxiAppVariant == "driver" ? "google-services.driver.json" : "google-services.json")
+
+if (taxiGoogleServices.exists()) {
+    copy {
+        from taxiGoogleServices
+        into projectDir
+        rename { "google-services.json" }
+    }
+    apply plugin: "com.google.gms.google-services"
+}
+
+// Environment variables are inlined by Expo. Gradle must rebundle when the
+// API origin or OSM tile URL changes, even if no JavaScript file was edited.
+tasks.withType(com.facebook.react.tasks.BundleHermesCTask).configureEach {
+    inputs.property("taxiBuildEnvironment", providers.provider {
+        def publicEnvironment = System.getenv().findAll { key, value ->
+            key.startsWith("EXPO_PUBLIC_") || key in ["APP_ENV", "APP_VARIANT", "NODE_ENV"]
+        }.collect { key, value -> "${key}=${value}" }.sort().join("\n")
+        java.security.MessageDigest.getInstance("SHA-256")
+            .digest(publicEnvironment.getBytes("UTF-8")).encodeHex().toString()
+    })
+    inputs.files([".env", ".env.local", ".env.production", ".env.production.local"].collect {
+        new File(projectRoot, it)
+    }).withPropertyName("taxiDotEnvFiles").optional()
+}
+
+// The shared native checkout produces both APKs. Enable background GPS only for the driver.
+def taxiManifest = new File(buildDir, "generated/taxiManifest/${taxiAppVariant}/AndroidManifest.xml")
+def taxiManifestSource = file("src/main/AndroidManifest.xml")
+def generateTaxiManifest = tasks.register("generateTaxiManifest") {
+    inputs.file(taxiManifestSource)
+    inputs.property("taxiAppVariant", taxiAppVariant)
+    outputs.file(taxiManifest)
+    doLast {
+        def taxiManifestText = taxiManifestSource.getText("UTF-8")
+        if (taxiAppVariant == "driver") {
+            ["ACCESS_BACKGROUND_LOCATION", "FOREGROUND_SERVICE_LOCATION"].each { permission ->
+                taxiManifestText = taxiManifestText.replace("android:name=\"android.permission.${permission}\" tools:node=\"remove\"", "android:name=\"android.permission.${permission}\"")
+            }
+        }
+        if (taxiAppVariant == "client") {
+            taxiManifestText = taxiManifestText.replace("android:name=\"android.permission.READ_CONTACTS\" tools:node=\"remove\"", "android:name=\"android.permission.READ_CONTACTS\"")
+        }
+        taxiManifest.parentFile.mkdirs()
+        taxiManifest.setText(taxiManifestText, "UTF-8")
+    }
+}
+android.sourceSets.main.manifest.srcFile(taxiManifest)
+tasks.matching { it.name.startsWith("process") && it.name.endsWith("MainManifest") }.configureEach {
+    dependsOn(generateTaxiManifest)
+}
 
 /**
  * This is the configuration block to customize your React Native Android app.
@@ -89,7 +154,16 @@ android {
 
     namespace 'kg.taxigo.app'
     defaultConfig {
-        applicationId 'kg.taxigo.app'
+        applicationId taxiApplicationId
+        manifestPlaceholders = [
+            taxiAppName: taxiAppName,
+            taxiAppIcon: taxiAppIcon,
+            taxiAppRoundIcon: taxiAppRoundIcon,
+            taxiSplashTheme: taxiSplashTheme,
+            taxiAppScheme: taxiAppScheme,
+            taxiExpoScheme: "exp+${taxiAppScheme}",
+            taxiAllowCleartext: System.getenv("APP_ENV") != "production" ? "true" : "false",
+        ]
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
         versionCode 1
@@ -97,7 +171,7 @@ android {
 
         // Ship the direct-install APK for modern Android phones only.
         ndk {
-            abiFilters 'arm64-v8a'
+            abiFilters (*((findProperty('reactNativeArchitectures') ?: 'arm64-v8a').split(',')))
         }
 
         buildConfigField "String", "REACT_NATIVE_RELEASE_LEVEL", "\"${findProperty('reactNativeReleaseLevel') ?: 'stable'}\""

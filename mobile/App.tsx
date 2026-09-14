@@ -2,14 +2,11 @@ import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
   AppState,
+  BackHandler,
   Modal,
-  Platform,
   Pressable,
   ScrollView,
-  StyleSheet,
-  Switch,
   Text,
-  TextInput,
   View,
 } from "react-native";
 import {
@@ -18,30 +15,46 @@ import {
   useSafeAreaInsets,
 } from "react-native-safe-area-context";
 import { StatusBar } from "expo-status-bar";
+import { ThemeProvider, useTheme } from "./src/design/theme";
+import { useFonts } from "expo-font";
+import { Inter_400Regular } from "@expo-google-fonts/inter/400Regular";
+import { Inter_500Medium } from "@expo-google-fonts/inter/500Medium";
+import { Inter_600SemiBold } from "@expo-google-fonts/inter/600SemiBold";
+import { Inter_700Bold } from "@expo-google-fonts/inter/700Bold";
+import { Inter_800ExtraBold } from "@expo-google-fonts/inter/800ExtraBold";
+import { Inter_900Black } from "@expo-google-fonts/inter/900Black";
 import NetInfo from "@react-native-community/netinfo";
 import { io, Socket } from "socket.io-client";
 import { api, ApiError, messageOf, requestId } from "./src/api";
 import { AuthScreen } from "./src/AuthScreen";
 import { AccountScreen, MenuRow, Page } from "./src/AccountScreens";
 import { AddressPicker, ChatOverlay } from "./src/Overlays";
-import { TripPanel } from "./src/TripPanel";
+import { BookingPanel, emptyRideDetails, rideComment } from "./src/BookingPanel";
+import { useRideQuotes } from "./src/useRideQuotes";
+import { statusText } from "./src/TripPanel";
+import { DriverOfferSkip, DriverPanel } from "./src/DriverPanel";
+import { DriverNavigation } from "./src/DriverNavigation";
+import { useDriverNavigation } from "./src/useDriverNavigation";
+import { useClientDriverTracking, useApproachRoute } from "./src/useDriverTracking";
+import { tripMapRoutes } from "./src/tripMapRoutes";
+import { GestureHandlerRootView } from "react-native-gesture-handler";
+import { ClientTripPanel } from "./src/ClientTripPanel";
+import { PermissionOnboarding } from "./src/PermissionOnboarding";
+import { WrongAppScreen } from "./src/WrongAppScreen";
+import { isRoleAllowed } from "./src/appVariant";
+import { FoodExperience, FoodEntry } from "./src/food/FoodExperience";
 import {
   Avatar,
   Button,
-  Car,
-  CityArt,
   colors,
-  Empty,
   Icon,
   IconButton,
   km,
   Logo,
-  mins,
-  money,
-  Route,
   s,
-  Sheet,
+  shortAddress,
   tr,
+  tripTime,
 } from "./src/ui";
 import {
   AppConfig,
@@ -51,40 +64,93 @@ import {
   normalizePoint,
   Order,
   Point,
-  Quote,
   Session,
   Tariff,
   User,
 } from "./src/types";
 import TaxiMap from "./src/native/TaxiMap";
 import { reverseGeocode } from "./src/native/search";
-import { getCurrentPosition } from "./src/native/location";
 import {
+  getCurrentPosition,
+  getLocationPermissionState,
+  openLocationSettings,
+  requestLocationAccess,
+} from "./src/native/location";
+import type { LocationPermissionState } from "./src/native/location";
+import {
+  getNotificationPermissionState,
+  openNotificationSettings,
   registerPushNotifications,
+  requestNotificationAccess,
   unregisterPushNotifications,
   onNotificationOpened,
+  onNotificationReceived,
 } from "./src/native/push";
-import { readLastOrderId, writeLastOrderId } from "./src/native/sessionStore";
+import { driverSounds } from "./src/native/driverSounds";
+import {
+  PermissionIntroState,
+  readLastOrderId,
+  readPermissionIntro,
+  writeLastOrderId,
+  writePermissionIntro,
+} from "./src/native/sessionStore";
+
+function shouldRestoreCompletedOrder(order: Order, role: User["role"]) {
+  return order.status === "COMPLETED" &&
+    (role === "DRIVER" ? order.driverRating == null : order.rating == null);
+}
+
+function isDismissedOrderUpdate(next: Order | null, dismissedOrderIds: ReadonlySet<string>) {
+  return next != null && dismissedOrderIds.has(next.id);
+}
 
 export default function App() {
+  const [fontsLoaded, fontError] = useFonts({
+    Inter_400Regular,
+    Inter_500Medium,
+    Inter_600SemiBold,
+    Inter_700Bold,
+    Inter_800ExtraBold,
+    Inter_900Black,
+  });
   return (
-    <SafeAreaProvider>
-      <StatusBar style="dark" />
-      <TaxiApp />
-    </SafeAreaProvider>
+    <GestureHandlerRootView style={{ flex: 1 }}><SafeAreaProvider>
+      <ThemeProvider><AppContent ready={!!(fontsLoaded || fontError)}/></ThemeProvider>
+    </SafeAreaProvider></GestureHandlerRootView>
   );
+}
+function AppContent({ ready }: { ready: boolean }) {
+  const { isDark, palette } = useTheme();
+  return <>
+    <StatusBar style={isDark ? "light" : "dark"} backgroundColor={isDark ? "#050505" : "#FFFFFF"}/>
+    {ready ? <TaxiApp/> : <View style={{ flex: 1, alignItems: "center", justifyContent: "center", backgroundColor: palette.background }}><ActivityIndicator color={palette.accent}/></View>}
+  </>;
 }
 function TaxiApp() {
   const insets = useSafeAreaInsets();
+  const { isDark, palette, preference: themePreference, setPreference: onThemePreferenceChange, resolved: theme } = useTheme();
   const [user, setUser] = useState<User | null>(null);
   const userRef = useRef<User | null>(null);
   const [booting, setBooting] = useState(true);
   const [bootError, setBootError] = useState("");
+  const [wrongAppLanguage, setWrongAppLanguage] = useState<User["language"] | null>(null);
+  const [permissionStep, setPermissionStep] = useState<PermissionIntroState | "loading">("loading");
+  const [permissionBusy, setPermissionBusy] = useState(false);
+  const permissionBusyRef = useRef(false);
+  const [permissionError, setPermissionError] = useState("");
+  const [permissionNeedsSettings, setPermissionNeedsSettings] = useState(false);
+  const [locationPermission, setLocationPermission] = useState<LocationPermissionState | null>(null);
+  const locationPermissionVersion = useRef(0);
   const [config, setConfig] = useState<AppConfig | null>(null);
   const [order, setOrder] = useState<Order | null>(null);
   const orderRef = useRef<Order | null>(null);
+  const dismissedOrderIds = useRef(new Set<string>());
   const [offers, setOffers] = useState<Order[]>([]);
   const [page, setPage] = useState<Page>("home");
+  const [service, setService] = useState<'hub' | 'taxi'>('hub');
+  const [foodEntry, setFoodEntry] = useState<FoodEntry>({ screen: 'home', key: 0 });
+  const [contentRevision, setContentRevision] = useState(0);
+  const [foodOrderRevision, setFoodOrderRevision] = useState(0);
   const [drawer, setDrawer] = useState(false);
   const [chat, setChat] = useState(false);
   const [incoming, setIncoming] = useState<ChatMessage | null>(null);
@@ -98,12 +164,19 @@ function TaxiApp() {
   const [addressField, setAddressField] = useState<"pickup" | "dropoff" | null>(
     null,
   );
+  const addressOpener = useRef<((field: "pickup" | "dropoff") => void) | null>(null);
+  const registerAddressOpener = useCallback((open: ((field: "pickup" | "dropoff") => void) | null) => { addressOpener.current = open; }, []);
+  const openAddress = (field: "pickup" | "dropoff") => { if (addressOpener.current) addressOpener.current(field); else setAddressField(field); };
   const [mapField, setMapField] = useState<"pickup" | "dropoff" | null>(null);
+  const [mapPanelHeight, setMapPanelHeight] = useState(180);
+  const [navigationHeight, setNavigationHeight] = useState(180);
+  const [mapFocus, setMapFocus] = useState<Coordinate | null>(null);
   const [recenter, setRecenter] = useState(0);
   const [tariffs, setTariffs] = useState<Tariff[]>([]);
   const [tariffId, setTariffId] = useState("");
-  const [quote, setQuote] = useState<Quote | null>(null);
-  const [comment, setComment] = useState("");
+  const [rideDetails, setRideDetails] = useState(emptyRideDetails);
+  const [bookingHeight, setBookingHeight] = useState(166);
+  const [driverCompletionHeight, setDriverCompletionHeight] = useState(520);
   const [coming, setComing] = useState(false);
   const [clock, setClock] = useState(Date.now());
   const socketRef = useRef<Socket | null>(null);
@@ -111,14 +184,26 @@ function TaxiApp() {
   const syncRef = useRef(false);
   const t = tr(user?.language || "ru");
   const driver = user?.role === "DRIVER";
-  const quoteInput = JSON.stringify({ pickup, dropoff, tariffId });
-  const quoteInputRef = useRef(quoteInput);
-  quoteInputRef.current = quoteInput;
+  const showingServices = !driver && page === 'home' && service === 'hub' && !order;
+  const locationEnabled = !!locationPermission?.granted && locationPermission.servicesEnabled;
+  const navigation = useDriverNavigation({ userId: user?.id, order: driver ? order : null, enabled: driver && permissionStep === 'done', locationEnabled, mapVisible: page === 'home' && !showingServices, language: user?.language || 'ru' });
+  const tracking = useClientDriverTracking(order, user?.role === "CLIENT");
+  const mapSelection = !driver && !order ? mapField : null;
+  const browsingPickup = !driver && !order && !dropoff && !mapSelection;
+  const { quote, quotes, calculating, quoteError, refresh: refreshQuotes, clear: clearQuotes } = useRideQuotes(pickup, dropoff, tariffs, tariffId, !!user && !driver && !order, user?.id);
   const updateUser = (next: User | null) => {
+    driverSounds.setUser(next);
     userRef.current = next;
     setUser(next);
   };
+  const refreshLocationPermission = useCallback(async () => {
+    const version = ++locationPermissionVersion.current;
+    const state = await getLocationPermissionState();
+    if (version === locationPermissionVersion.current) setLocationPermission(state);
+    return state;
+  }, []);
   const applyOrder = useCallback((next: Order | null) => {
+    if (isDismissedOrderUpdate(next, dismissedOrderIds.current)) return;
     const currentUser = userRef.current;
     if (
       next &&
@@ -141,6 +226,7 @@ function TaxiApp() {
     )
       return;
     if (next?.id !== orderRef.current?.id) setComing(false);
+    driverSounds.order(next, orderRef.current);
     orderRef.current = next;
     setOrder(next);
     if (next) {
@@ -148,6 +234,16 @@ function TaxiApp() {
       setOffers((current) => current.filter((item) => item.id !== next.id));
     }
   }, []);
+  async function rejectMismatchedRole(profile: User) {
+    if (isRoleAllowed(profile.role)) return false;
+    updateUser(null);
+    applyOrder(null);
+    setOffers([]);
+    setPermissionStep("loading");
+    await Promise.allSettled([api.clear(), writeLastOrderId(null)]);
+    setWrongAppLanguage(profile.language || "ru");
+    return true;
+  }
 
   async function sync() {
     if (!userRef.current || syncRef.current) return;
@@ -157,8 +253,10 @@ function TaxiApp() {
         api.request<Order | null>("/orders/active"),
         api.request<User>("/users/me"),
       ]);
+      if (await rejectMismatchedRole(profile)) return;
       updateUser(profile);
-      if (active) applyOrder(active);
+      const currentActive = isDismissedOrderUpdate(active, dismissedOrderIds.current) ? null : active;
+      if (currentActive) applyOrder(currentActive);
       else if (orderRef.current && isActive(orderRef.current)) {
         try {
           applyOrder(
@@ -171,7 +269,7 @@ function TaxiApp() {
           } else throw e;
         }
       }
-      if (profile.role === "DRIVER" && profile.driverProfile?.online && !active)
+      if (profile.role === "DRIVER" && profile.driverProfile?.online && !currentActive)
         setOffers(await api.request<Order[]>("/driver/offers"));
       else setOffers([]);
     } catch (e) {
@@ -187,6 +285,8 @@ function TaxiApp() {
       const stored = await api.restore();
       if (stored) {
         const profile = await api.request<User>("/users/me");
+        if (await rejectMismatchedRole(profile)) return;
+        setPermissionStep(await readPermissionIntro(profile.id));
         updateUser(profile);
         const active = await api.request<Order | null>("/orders/active");
         if (active) applyOrder(active);
@@ -195,7 +295,7 @@ function TaxiApp() {
           if (id) {
             try {
               const last = await api.request<Order>(`/orders/${id}`);
-              if (last.status === "COMPLETED" && !last.rating) applyOrder(last);
+              if (shouldRestoreCompletedOrder(last, profile.role)) applyOrder(last);
               else await writeLastOrderId(null);
             } catch (e) {
               if (e instanceof ApiError && [403, 404].includes(e.status))
@@ -205,6 +305,7 @@ function TaxiApp() {
           }
         }
       }
+      else setPermissionStep("loading");
     } catch (e) {
       if (api.getTokens()) setBootError(messageOf(e));
     } finally {
@@ -228,6 +329,8 @@ function TaxiApp() {
           applyOrder(null);
           setOffers([]);
           setPage("home");
+          setService('hub');
+          setFoodEntry(value => ({ screen: 'home', key: value.key + 1 }));
           setChat(false);
           setDrawer(false);
           setConnected(false);
@@ -244,29 +347,36 @@ function TaxiApp() {
   useEffect(
     () =>
       NetInfo.addEventListener((state) => {
-        setOffline(
-          state.isConnected === false || state.isInternetReachable === false,
-        );
-        if (state.isConnected && state.isInternetReachable !== false)
-          void sync();
+        // A failed third-party internet probe does not mean our API is unreachable.
+        if (state.isConnected === false) setOffline(true);
+        else if (state.isConnected) void sync();
       }),
     [],
   );
   useEffect(() => {
+    driverSounds.setForeground(AppState.currentState === "active");
+    void refreshLocationPermission().catch(() => undefined);
     const subscription = AppState.addEventListener("change", (state) => {
-      if (state === "active") void sync();
+      driverSounds.setForeground(state === "active");
+      if (state === "active") {
+        void sync();
+        void refreshLocationPermission().catch(() => undefined);
+        if (userRef.current?.notifications) void registerPushNotifications();
+      }
     });
-    return () => subscription.remove();
-  }, []);
+    return () => { subscription.remove(); driverSounds.setUser(null); };
+  }, [refreshLocationPermission]);
   useEffect(() => {
     if (!user) return;
-    void api
+    let subscribed = true;
+    const refreshTariffs = () => { void api
       .request<Tariff[]>("/tariffs")
       .then((result) => {
+        if (!subscribed) return;
         setTariffs(result);
-        setTariffId((current) => current || result[0]?.id || "");
+        setTariffId((current) => result.some(tariff => tariff.id === current) ? current : result[0]?.id || "");
       })
-      .catch((e) => setError(messageOf(e)));
+      .catch((e) => { if (subscribed) setError(messageOf(e)); }); };
     const socket = io(api.socketUrl, {
       auth: { token: api.getTokens()?.accessToken },
       transports: ["websocket", "polling"],
@@ -278,12 +388,24 @@ function TaxiApp() {
     socket.on("connect", () => {
       setConnected(true);
       void sync();
+      refreshTariffs();
+      setContentRevision(value => value + 1);
+      setFoodOrderRevision(value => value + 1);
+      if (userRef.current?.notifications) void registerPushNotifications();
     });
+    refreshTariffs();
+    socket.on("content:changed", (event?: { resource?: string }) => {
+      setContentRevision(value => value + 1);
+      if (!event?.resource || event.resource === 'tariffs') refreshTariffs();
+    });
+    socket.on("tariffs:changed", refreshTariffs);
+    socket.on("food:order:updated", () => setFoodOrderRevision(value => value + 1));
     socket.on("disconnect", () => setConnected(false));
     socket.on("connect_error", () => setConnected(false));
     socket.on("session:expired", () => {
       void api.refresh().catch((e) => setError(messageOf(e)));
     });
+    socket.on("driver:location", tracking.receive);
     socket.on("order:updated", (next: Order) => {
       applyOrder(next);
       if (next.status === "COMPLETED" && userRef.current?.role === "DRIVER")
@@ -297,15 +419,20 @@ function TaxiApp() {
             : [...current, next],
         );
     });
-    socket.on("order:withdrawn", ({ orderId }: { orderId: string }) =>
-      setOffers((current) => current.filter((item) => item.id !== orderId)),
-    );
-    socket.on("chat:message", setIncoming);
+    socket.on("order:withdrawn", ({ orderId }: { orderId: string }) => {
+      driverSounds.stopOffer(orderId);
+      setOffers((current) => current.filter((item) => item.id !== orderId));
+    });
+    socket.on("chat:message", (message: ChatMessage) => {
+      driverSounds.message(message, orderRef.current);
+      setIncoming(message);
+    });
     socket.on("rider:coming", ({ orderId }: { orderId: string }) => {
       if (orderRef.current?.id === orderId) setComing(true);
     });
     const interval = setInterval(() => void sync(), 12000);
     return () => {
+      subscribed = false;
       clearInterval(interval);
       socket.removeAllListeners();
       socket.disconnect();
@@ -313,11 +440,34 @@ function TaxiApp() {
     };
   }, [user?.id]);
   useEffect(() => {
-    if (user?.notifications)
-      void registerPushNotifications().catch((e) => setError(messageOf(e)));
-    else if (user)
+    driverSounds.offers(offers, order);
+  }, [offers, order, user?.id, user?.notifications, user?.driverProfile?.online, clock]);
+  useEffect(() => onNotificationReceived(data => {
+    if (AppState.currentState !== "active" || !userRef.current) return;
+    void sync();
+    // If the socket was interrupted, recover chat from the authoritative list.
+    if (data.event === "chat:message" && data.orderId === orderRef.current?.id) {
+      const accountId = userRef.current.id;
+      void api.request<ChatMessage[]>(`/orders/${data.orderId}/messages`).then(messages => {
+        if (userRef.current?.id !== accountId) return;
+        for (const message of messages) driverSounds.message(message, orderRef.current);
+        const latest = messages.at(-1);
+        if (latest) setIncoming(latest);
+      }).catch(() => undefined);
+    }
+  }), []);
+  useEffect(() => {
+    if (user?.notifications && permissionStep === "done") {
+      const accountId = user.id;
+      void getNotificationPermissionState()
+        .then((permission) => permission.granted && userRef.current?.id === accountId
+          ? registerPushNotifications()
+          : null)
+        .catch(() => undefined);
+    } else if (user && !user.notifications) {
       void unregisterPushNotifications().catch((e) => setError(messageOf(e)));
-  }, [user?.id, user?.notifications]);
+    }
+  }, [user?.id, user?.notifications, permissionStep]);
   useEffect(
     () =>
       onNotificationOpened(() => {
@@ -326,17 +476,6 @@ function TaxiApp() {
       }),
     [],
   );
-  useEffect(() => {
-    setQuote(null);
-    orderKey.current = null;
-  }, [
-    pickup?.latitude,
-    pickup?.longitude,
-    dropoff?.latitude,
-    dropoff?.longitude,
-    tariffId,
-  ]);
-
   async function run(work: () => Promise<void>) {
     if (busyRef.current) return;
     busyRef.current = true;
@@ -352,15 +491,22 @@ function TaxiApp() {
     }
   }
   async function login(session: Session, language: User["language"]) {
+    if (await rejectMismatchedRole(session.user)) return;
     await api.setTokens(session);
     const profile =
       session.user.language === language
         ? session.user
         : await api.patch<User>("/users/me", { language });
+    if (await rejectMismatchedRole(profile)) return;
+    setPermissionStep(await readPermissionIntro(profile.id));
+    setPermissionError("");
+    setPermissionNeedsSettings(false);
     updateUser(profile);
     await writeLastOrderId(null);
     setBootError("");
     setPage("home");
+    setService('hub');
+    setFoodEntry(value => ({ screen: 'home', key: value.key + 1 }));
   }
   const logout = () =>
     run(async () => {
@@ -371,9 +517,13 @@ function TaxiApp() {
       } finally {
         await api.clear();
         await writeLastOrderId(null);
+        setPermissionStep("loading");
+        setPermissionError("");
+        setPermissionNeedsSettings(false);
         setPickup(null);
         setDropoff(null);
-        setQuote(null);
+        setRideDetails(emptyRideDetails);
+        clearQuotes();
       }
     });
   const online = (value: boolean) =>
@@ -384,56 +534,171 @@ function TaxiApp() {
     });
   const selectAddress = (field: "pickup" | "dropoff", point: Point) => {
     const selected = normalizePoint(point);
-    if (field === "pickup") setPickup(selected);
+    setError("");
+    if (field === "pickup") { setPickup(selected); setRideDetails(current => ({ ...current, entrance: "" })); }
     else setDropoff(selected);
     setAddressField(null);
-    setMapField(null);
+    setMapField(field === "dropoff" && !pickup ? "pickup" : null);
+    setMapFocus(null);
     setRecenter((value) => value + 1);
   };
-  const resolvePoint = async (point: Coordinate): Promise<Point> =>
-    process.env.EXPO_PUBLIC_YANDEX_MAPKIT_KEY && Platform.OS !== "web"
-      ? reverseGeocode(point)
-      : api.request<Point>(
-          `/places/reverse?latitude=${point.latitude}&longitude=${point.longitude}`,
-        );
-  const locate = () =>
-    run(async () => {
-      const point = await getCurrentPosition();
-      selectAddress("pickup", await resolvePoint(point));
-    });
-  const mapSelect = (point: Coordinate) => {
-    if (mapField) {
-      const field = mapField;
-      void run(async () => selectAddress(field, await resolvePoint(point)));
+  const resolvePoint = (point: Coordinate): Promise<Point> => reverseGeocode(point, user?.language ?? 'ru');
+  const gpsPoint = (point: Coordinate): Point => ({
+    latitude: point.latitude,
+    longitude: point.longitude,
+    address: `GPS: ${point.latitude.toFixed(5)}, ${point.longitude.toFixed(5)}`,
+  });
+  const rememberPermissionStep = async (next: PermissionIntroState) => {
+    if (!userRef.current) return;
+    await writePermissionIntro(userRef.current.id, next);
+    setPermissionStep(next);
+    setPermissionError("");
+    setPermissionNeedsSettings(false);
+  };
+  const locateAfterPermissionGrant = (currentUser: User) => {
+    void getCurrentPosition().then((point) => {
+      if (userRef.current?.id !== currentUser.id) return;
+      setMapFocus(point);
+      setRecenter((value) => value + 1);
+      if (currentUser.role === "CLIENT") {
+        const fallback = gpsPoint(point);
+        setPickup(fallback);
+        void resolvePoint(point).then((resolved) => {
+          if (userRef.current?.id !== currentUser.id) return;
+          setPickup((selected) => selected && selected.latitude === point.latitude && selected.longitude === point.longitude ? normalizePoint(resolved) : selected);
+        }).catch(() => undefined);
+      }
+    }).catch(() => undefined).finally(() => void refreshLocationPermission().catch(() => undefined));
+  };
+  useEffect(() => {
+    const currentUser = userRef.current;
+    if (permissionStep !== "location" || !locationPermission?.granted || !currentUser || permissionBusyRef.current) return;
+    void rememberPermissionStep("notifications")
+      .then(() => locateAfterPermissionGrant(currentUser))
+      .catch((e) => setPermissionError(messageOf(e)));
+  }, [permissionStep, locationPermission?.granted]);
+  const allowPermission = async () => {
+    const currentUser = userRef.current;
+    if (!currentUser || permissionBusyRef.current || permissionStep === "loading" || permissionStep === "done") return;
+    permissionBusyRef.current = true;
+    setPermissionBusy(true);
+    setPermissionError("");
+    try {
+      if (permissionNeedsSettings) {
+        if (permissionStep === "location") await openLocationSettings();
+        else await openNotificationSettings();
+        setPermissionNeedsSettings(false);
+        return;
+      }
+      if (permissionStep === "location") {
+        const permission = await requestLocationAccess();
+        ++locationPermissionVersion.current;
+        setLocationPermission(permission);
+        if (!permission.granted) {
+          setPermissionNeedsSettings(!permission.canAskAgain);
+          setPermissionError(permission.canAskAgain
+            ? "Разрешите доступ к местоположению или выберите адрес вручную."
+            : "Разрешите доступ к местоположению в настройках устройства.");
+          return;
+        }
+
+        // Permission and a GPS fix are separate outcomes. Advance immediately
+        // after the grant; a cold provider must not look like a rejected grant.
+        await rememberPermissionStep("notifications");
+        locateAfterPermissionGrant(currentUser);
+        return;
+      }
+
+      const permission = await requestNotificationAccess();
+      if (permission.supported === false) {
+        await rememberPermissionStep("done");
+        return;
+      }
+      if (!permission.granted) {
+        setPermissionNeedsSettings(!permission.canAskAgain);
+        setPermissionError(permission.canAskAgain
+          ? "Разрешите уведомления, чтобы не пропустить события поездки."
+          : "Разрешите уведомления в настройках устройства.");
+        return;
+      }
+      await rememberPermissionStep("done");
+      if (!currentUser.notifications) {
+        void api.patch<User>("/users/me", { notifications: true }).then(next => {
+          if (userRef.current?.id === currentUser.id) updateUser(next);
+        }).catch(() => undefined);
+      }
+      void registerPushNotifications();
+    } catch (e) {
+      setPermissionError(messageOf(e));
+    } finally {
+      permissionBusyRef.current = false;
+      setPermissionBusy(false);
     }
   };
-  const calculate = () =>
+  const skipPermission = async () => {
+    const currentUser = userRef.current;
+    if (!currentUser || permissionBusyRef.current || permissionStep === "loading" || permissionStep === "done") return;
+    permissionBusyRef.current = true;
+    setPermissionBusy(true);
+    try {
+      if (permissionStep === "location") await rememberPermissionStep("notifications");
+      else {
+        if (currentUser.notifications) {
+          try { updateUser(await api.patch<User>("/users/me", { notifications: false })); }
+          catch (e) { setError(messageOf(e)); }
+        }
+        await rememberPermissionStep("done");
+      }
+    } catch (e) {
+      setPermissionError(messageOf(e));
+    } finally {
+      permissionBusyRef.current = false;
+      setPermissionBusy(false);
+    }
+  };
+  const locate = () =>
     run(async () => {
-      if (!pickup || !dropoff || !tariffId) return;
-      const snapshot = quoteInputRef.current;
-      const result = await api.post<Quote>("/orders/quote", {
-        pickup: normalizePoint(pickup),
-        dropoff: normalizePoint(dropoff),
-        tariffId,
-      });
-      if (snapshot === quoteInputRef.current) setQuote(result);
+      try {
+        const point = await getCurrentPosition();
+        if ((driver || mapSelection || browsingPickup) && !addressField) setMapFocus(point);
+        else {
+          const fallback = gpsPoint(point);
+          selectAddress("pickup", fallback);
+          void resolvePoint(point).then((resolved) => {
+            setPickup((selected) => selected && selected.latitude === point.latitude && selected.longitude === point.longitude ? normalizePoint(resolved) : selected);
+          }).catch(() => undefined);
+        }
+      } finally {
+        await refreshLocationPermission().catch(() => undefined);
+      }
     });
+  const mapSelect = (point: Coordinate) => {
+    if (mapSelection) {
+      const field = mapSelection;
+      void run(async () => {
+        selectAddress(field, await resolvePoint(point));
+      });
+    }
+  };
   const book = () =>
     run(async () => {
       if (!quote) return;
+      if (rideComment(rideDetails).length > 500) throw new Error("Сократите комментарий до 500 символов.");
       if (Date.now() >= new Date(quote.expiresAt).getTime()) {
-        setQuote(null);
-        throw new Error("Расчёт устарел. Рассчитайте стоимость ещё раз.");
+        refreshQuotes();
+        return;
       }
       if (orderKey.current?.quoteId !== quote.id)
         orderKey.current = { quoteId: quote.id, key: requestId() };
       const created = await api.post<Order>("/orders", {
         quoteId: quote.id,
-        comment: comment.trim(),
+        comment: rideComment(rideDetails),
+        passenger: rideDetails.passenger || undefined,
         idempotencyKey: orderKey.current.key,
       });
       applyOrder(created);
-      setQuote(null);
+
+      clearQuotes();
     });
   const action = (name: string) =>
     run(async () => {
@@ -445,40 +710,108 @@ function TaxiApp() {
       if (driver && ["complete", "cancel"].includes(name)) await sync();
     });
   const done = () => {
-    applyOrder(null);
-    void writeLastOrderId(null);
-    setQuote(null);
-    orderKey.current = null;
-    setComing(false);
-    setComment("");
-    void sync();
-  };
-  const rate = (score: number) =>
-    run(async () => {
-      if (order) {
-        await api.post(`/orders/${order.id}/rating`, { score });
-        done();
+    const current = orderRef.current;
+    if (!current || busyRef.current) return;
+    void run(async () => {
+      dismissedOrderIds.current.add(current.id);
+      try {
+        await writeLastOrderId(null);
+      } catch (e) {
+        dismissedOrderIds.current.delete(current.id);
+        throw e;
       }
+      if (orderRef.current?.id === current.id) applyOrder(null);
+      clearQuotes();
+      orderKey.current = null;
+      setComing(false);
+      setRideDetails(emptyRideDetails);
+      await sync();
     });
+  };
+  const rate = async (score: number, comment?: string): Promise<boolean> => {
+    const current = orderRef.current;
+    if (!current || busyRef.current) return false;
+    busyRef.current = true;
+    setBusy(true);
+    setError("");
+    try {
+      await api.post(`/orders/${current.id}/rating`, { score, comment });
+      applyOrder({ ...current, rating: score });
+      return true;
+    } catch (e) {
+      setError(messageOf(e));
+      return false;
+    } finally {
+      busyRef.current = false;
+      setBusy(false);
+    }
+  };
+  const rateClient = async (score: number): Promise<boolean> => {
+    const current = orderRef.current;
+    if (!current || busyRef.current || current.status !== 'COMPLETED' || current.driverRating != null) return false;
+    busyRef.current = true;
+    setBusy(true);
+    setError("");
+    try {
+      await api.post(`/orders/${current.id}/client-rating`, { score });
+      applyOrder({ ...current, driverRating: score });
+      return true;
+    } catch (e) {
+      setError(messageOf(e));
+      return false;
+    } finally {
+      busyRef.current = false;
+      setBusy(false);
+    }
+  };
   const accept = (offer: Order) =>
     run(async () => {
+      driverSounds.stopOffer(offer.id);
       try {
         applyOrder(await api.post<Order>(`/orders/${offer.id}/accept`));
-      } finally {
-        setOffers((current) => current.filter((item) => item.id !== offer.id));
+      } catch (e) {
+        // A timeout is ambiguous: the server may have accepted the order even
+        // though the response never reached the phone. Reconcile first. If the
+        // retry also cannot reach the server, keep the offer visible so the
+        // driver can slide again while it is still valid.
         await sync();
+        if (orderRef.current?.id === offer.id) return;
+        throw e;
       }
+      await sync();
     });
   const skip = (offer: Order) =>
     run(async () => {
+      driverSounds.stopOffer(offer.id);
       await api.post(`/orders/${offer.id}/skip`);
       setOffers((current) => current.filter((item) => item.id !== offer.id));
     });
   const navigate = (next: Page) => {
+
     setDrawer(false);
     setPage(next);
     setError("");
   };
+  const openServices = (screen: FoodEntry['screen']) => {
+    setDrawer(false);
+    setPage('home');
+    setService('hub');
+    setFoodEntry(value => ({ screen, key: value.key + 1 }));
+    setError('');
+  };
+  useEffect(() => {
+    const back = BackHandler.addEventListener("hardwareBackPress", () => {
+      // Expanded panels own their back action, including unsaved text edits.
+      if (addressField || chat || drawer) return false;
+      if (showingServices) return false;
+      if (mapField) { setMapField(null); setMapFocus(null); return true; }
+      if (page !== "home") { setPage("home"); return true; }
+      if (!driver && !order && dropoff) { setDropoff(null); return true; }
+      if (!driver && !order && page === 'home') { setService('hub'); setFoodEntry(value => ({ screen: 'home', key: value.key + 1 })); return true; }
+      return false;
+    });
+    return () => back.remove();
+  }, [addressField, chat, drawer, mapField, page, driver, order, dropoff, showingServices]);
   const offer = !order
     ? offers.find(
         (item) =>
@@ -487,14 +820,19 @@ function TaxiApp() {
       )
     : undefined;
   const displayed = order || offer;
-  const quoteExpired = !!quote && new Date(quote.expiresAt).getTime() <= clock;
+  const approachScope = driver && offer ? `offer:${offer.id}` : !driver && order?.status === 'ASSIGNED' ? `client:${order.id}:${order.driver?.id}` : '';
+  const approach = useApproachRoute(driver ? navigation.position : tracking.ageSeconds != null && tracking.ageSeconds <= 15 ? tracking.position : null, driver ? offer?.pickup : order?.pickup, approachScope);
+  const mapRoutes = tripMapRoutes({ driver, order, offer, quote, navigationRoute: navigation.route, approachRoute: approach.route });
 
+
+  if (wrongAppLanguage)
+    return <WrongAppScreen language={wrongAppLanguage} onContinue={() => { setWrongAppLanguage(null); setBootError(""); }} />;
   if (booting || bootError)
     return (
       <SafeAreaView
         style={{
           flex: 1,
-          backgroundColor: "white",
+          backgroundColor: palette.background,
           justifyContent: "center",
           padding: 30,
           gap: 20,
@@ -503,10 +841,10 @@ function TaxiApp() {
       >
         <Logo large />
         {booting ? (
-          <ActivityIndicator size="large" color={colors.blue} />
+          <ActivityIndicator size="large" color={palette.accent} />
         ) : (
           <>
-            <Text style={[s.muted, { textAlign: "center" }]}>{bootError}</Text>
+            <Text style={[s.muted, { textAlign: "center", color: palette.muted }]}>{bootError}</Text>
             <Button label={t("Повторить подключение")} onPress={bootstrap} />
             <Button
               secondary
@@ -518,8 +856,21 @@ function TaxiApp() {
       </SafeAreaView>
     );
   if (!user) return <AuthScreen onLogin={login} />;
+  if (permissionStep === "loading")
+    return <SafeAreaView style={{ flex: 1, alignItems: "center", justifyContent: "center", backgroundColor: palette.background }}><ActivityIndicator size="large" color={palette.accent}/></SafeAreaView>;
+  if (permissionStep !== "done")
+    return <PermissionOnboarding
+      step={permissionStep}
+      language={user.language}
+      role={user.role}
+      busy={permissionBusy}
+      error={permissionError}
+      openSettings={permissionNeedsSettings}
+      onAllow={() => void allowPermission()}
+      onSkip={() => void skipPermission()}
+    />;
   const pageTitles: Record<Page, string> = {
-    home: "Taxi GO",
+    home: driver ? "Atlas pro" : "Atlas",
     profile: "Профиль",
     history: driver ? "История заказов" : "История поездок",
     balance: "Баланс",
@@ -528,46 +879,43 @@ function TaxiApp() {
     payment: "Способы оплаты",
   };
   return (
-    <View style={{ flex: 1, backgroundColor: "#F4F8FD" }}>
-      <View style={{ paddingTop: insets.top, backgroundColor: "white" }}>
-        <View style={[s.spread, { paddingHorizontal: 17, paddingVertical: 8 }]}>
+    <View style={{ flex: 1, backgroundColor: palette.background }}>
+      <View accessibilityElementsHidden={!!addressField} importantForAccessibility={addressField ? 'no-hide-descendants' : 'auto'} style={{ flex: 1 }}>
+      <View key={page === "home" ? "map-header" : "account-header"} collapsable={false} pointerEvents="box-none" style={[{ paddingTop: insets.top, backgroundColor: palette.surface }, page === "home" && { position: "absolute", top: 0, left: 0, right: 0, zIndex: 10, backgroundColor: "transparent" }, (!!mapSelection || showingServices || driver && order?.status === 'COMPLETED') && { display: "none" }]} >
+        <View pointerEvents="box-none" style={[s.spread, { paddingHorizontal: 17, paddingVertical: 10 }, !driver && page === "home" && { paddingTop: 0 }]}>
           <IconButton
-            name={page === "home" ? "menu" : "arrow-back"}
-            label={t(page === "home" ? "Меню" : "Назад")}
+            name={page === "home" || driver ? "menu" : "arrow-back"}
+            label={t(page === "home" || driver ? "Меню" : "Назад")}
             onPress={() =>
-              page === "home" ? setDrawer(true) : navigate("home")
+              page === "home" || driver ? setDrawer(true) : navigate("home")
             }
           />
           {page === "home" ? (
-            <Logo />
+            driver ? <Text style={{ flex: 1, textAlign: "center", fontSize: 20, fontWeight: "700", color: palette.ink }}>{t(order ? "Поездка" : "Новые заказы")}</Text> : <View />
           ) : (
-            <Text style={[s.h2, { fontSize: 21 }]}>{t(pageTitles[page])}</Text>
+            <Text style={[s.h2, { fontSize: 21, color: palette.ink }]}>{t(pageTitles[page])}</Text>
           )}
           {driver && page === "home" ? (
-            <Switch
-              accessibilityLabel={t("На линии")}
-              value={!!user.driverProfile?.online}
-              onValueChange={online}
-              disabled={busy || !user.driverProfile?.verified}
-              trackColor={{ true: colors.blue }}
-            />
+<Pressable accessibilityRole="switch" accessibilityLabel={t("На линии")} accessibilityState={{ checked: !!user.driverProfile?.online, disabled: busy || !user.driverProfile?.verified }} disabled={busy || !user.driverProfile?.verified} onPress={() => online(!user.driverProfile?.online)} style={{ flexDirection: "row", alignItems: "center", gap: 6, paddingHorizontal: 11, height: 36 }}><View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: user.driverProfile?.online ? isDark ? palette.ink : colors.green : palette.muted }}/><Text style={{ fontSize: 12, color: palette.ink, fontWeight: "600", textShadowColor: palette.surface, textShadowRadius: 5 }}>{t(user.driverProfile?.online ? "Онлайн" : "Офлайн")}</Text></Pressable>
           ) : (
             <View style={{ width: 44 }} />
           )}
         </View>
       </View>
-      {(offline || !connected) && (
+      {!showingServices && !(driver && order?.status === 'COMPLETED') && (offline || !connected) && (
         <Pressable
           onPress={() => void sync()}
           style={{
-            backgroundColor: offline ? "#FFF0E5" : "#EBF4FE",
+            backgroundColor: isDark ? palette.elevated : offline ? "#FFF0E5" : "#EBF4FE",
+            marginTop: !driver && page === "home" ? insets.top + 64 : 0,
             paddingVertical: 7,
             paddingHorizontal: 18,
+            ...(!driver && page === "home" ? { position: "absolute" as const, top: insets.top + 64, left: 0, right: 0, marginTop: 0, zIndex: 11 } : {}),
           }}
         >
           <Text
             style={{
-              color: offline ? "#A56424" : "#67809C",
+              color: isDark ? palette.ink : offline ? "#A56424" : "#67809C",
               fontSize: 12,
               textAlign: "center",
             }}
@@ -580,7 +928,7 @@ function TaxiApp() {
           </Text>
         </Pressable>
       )}
-      {!!error && (
+      {!showingServices && !!error && !(page === "home" && !driver && !order && dropoff) && (
         <Pressable
           onPress={() => setError("")}
           accessibilityRole="alert"
@@ -588,441 +936,97 @@ function TaxiApp() {
             s.row,
             {
               margin: 12,
+              marginTop: page === "home" && !driver ? insets.top + 66 : 12,
               padding: 12,
-              backgroundColor: "#FFF0F0",
+              backgroundColor: isDark ? palette.elevated : "#FFF0F0",
               borderRadius: 15,
+              ...(!driver && page === "home" ? { position: "absolute" as const, top: insets.top + 64 + (offline || !connected ? 34 : 0), left: 0, right: 0, marginTop: 0, zIndex: 11 } : {}),
             },
           ]}
         >
-          <Icon name="alert-circle-outline" color={colors.danger} />
+          <Icon name="alert-circle-outline" color={isDark ? palette.ink : colors.danger} />
           <Text
             style={{
               flex: 1,
-              color: colors.danger,
+              color: isDark ? palette.ink : colors.danger,
               fontSize: 13,
               lineHeight: 18,
             }}
           >
             {t(error)}
           </Text>
-          <Icon name="close" size={16} color={colors.danger} />
+          <Icon name="close" size={16} color={isDark ? palette.ink : colors.danger} />
         </Pressable>
       )}
-      {page === "home" ? (
+      {page === "home" ? showingServices ? <View style={{ flex: 1 }} /> : (
         <View style={{ flex: 1 }}>
           <View
             style={{
               flex: 1,
-              minHeight: 120,
+              minHeight: order?.status === "COMPLETED" ? 0 : 120,
               position: "relative",
-              backgroundColor: "#E6F0F6",
+              backgroundColor: isDark ? palette.background : "#E6F0F6",
             }}
           >
             <TaxiMap
+              theme={theme}
+              language={user.language}
               pickup={displayed?.pickup || pickup}
               dropoff={displayed?.dropoff || dropoff}
-              geometry={
-                (displayed?.routeProvider || quote?.routeProvider) === "yandex"
-                  ? displayed?.geometry || quote?.geometry
-                  : undefined
-              }
-              selectionMode={mapField}
+              dropoffRouteLabel={driver && offer ? `${km(offer.distanceMeters)} · ${tripTime(offer.durationSeconds, user.language)}` : undefined}
+              geometry={mapRoutes.geometry}
+              approachGeometry={mapRoutes.approachGeometry}
+              routeOverview={mapRoutes.routeOverview}
+              driverPosition={(driver ? navigation.position : tracking.position) || undefined}
+              passengerView={!driver}
+              cameraSession={`${displayed?.id || 'idle'}:${displayed?.status || 'idle'}`}
+              navigationActive={navigation.active}
+              followDriver={driver && !offer && navigation.followDriver}
+              onFollowDriverChange={navigation.setFollowDriver}
+              selectionMode={mapSelection}
+              browsePickup={browsingPickup}
+              showUserPosition={locationEnabled && !driver}
+              onPickupChange={point => {
+                if (!pickup || Math.abs(pickup.latitude - point.latitude) + Math.abs(pickup.longitude - point.longitude) > .00005) setRideDetails(value => ({ ...value, entrance: '' }));
+                setPickup(normalizePoint(point));
+              }}
+              onPanelHeight={setMapPanelHeight}
+              focusPoint={driver ? null : mapFocus}
+              onSearchPoint={() => { if (mapSelection) { setAddressField(mapSelection); setMapField(null); } }}
+              onEditPoint={!driver && !order ? setMapField : undefined}
+              selecting={busy}
+              contentTopInset={insets.top + (driver && order?.status === 'COMPLETED' ? 8 : navigation.active ? navigationHeight + 72 : driver && offer ? 130 : 64)}
               onSelectPoint={mapSelect}
               recenterKey={recenter}
             />
-            {!driver && !mapField && (
-              <View
-                style={{ position: "absolute", left: 16, right: 16, top: 12 }}
-              >
-                <View
-                  style={[
-                    s.card,
-                    {
-                      padding: 14,
-                      gap: 11,
-                      shadowColor: "#28486A",
-                      shadowOpacity: 0.06,
-                      shadowRadius: 14,
-                      shadowOffset: { width: 0, height: 5 },
-                      elevation: 2,
-                    },
-                  ]}
-                >
-                  {(["pickup", "dropoff"] as const).map((field, index) => (
-                    <Pressable
-                      key={field}
-                      accessibilityLabel={t(
-                        field === "pickup" ? "Откуда" : "Куда",
-                      )}
-                      disabled={!!order || busy}
-                      onPress={() => setAddressField(field)}
-                      style={[
-                        s.row,
-                        index === 1 && {
-                          borderTopWidth: 1,
-                          borderTopColor: colors.line,
-                          paddingTop: 10,
-                        },
-                      ]}
-                    >
-                      <Icon
-                        name={
-                          field === "pickup" ? "radio-button-on" : "location"
-                        }
-                        color={field === "pickup" ? colors.blue : colors.ink}
-                        size={20}
-                      />
-                      <View style={{ flex: 1 }}>
-                        <Text style={s.caption}>
-                          {t(field === "pickup" ? "Откуда" : "Куда")}
-                        </Text>
-                        <Text
-                          style={[s.body, { fontWeight: "600", fontSize: 14 }]}
-                          numberOfLines={1}
-                        >
-                          {displayed?.[field].address ||
-                            (field === "pickup"
-                              ? pickup?.address
-                              : dropoff?.address) ||
-                            t("Найти адрес")}
-                        </Text>
-                      </View>
-                      {!order && (
-                        <Icon
-                          name="chevron-forward"
-                          color={colors.muted}
-                          size={17}
-                        />
-                      )}
-                    </Pressable>
-                  ))}
-                </View>
-              </View>
+            {navigation.active && <DriverNavigation navigation={navigation} top={insets.top + 62} onHeight={setNavigationHeight} onLocation={() => void openLocationSettings().catch(() => undefined)}/>}
+            {driver && offer && <View style={{ position: 'absolute', top: insets.top + 65, left: 0, right: 0, alignItems: 'center' }}><DriverOfferSkip offer={offer} busy={busy} language={user.language} onSkip={skip}/></View>}
+            {!driver && !mapSelection && !order && !dropoff && (
+              <Pressable accessibilityRole="button" accessibilityLabel={t("Место подачи")} onPress={() => openAddress("pickup")} style={{ position: "absolute", top: insets.top + 10, left: 76, right: 76, paddingHorizontal: 12, paddingVertical: 8, alignItems: "center" }}>
+                <Text style={{ fontSize: 11, color: palette.muted, textShadowColor: palette.surface, textShadowRadius: 5 }}>{t("Ваш адрес")} ›</Text>
+                <Text style={{ fontSize: 14, lineHeight: 19, color: palette.ink, fontWeight: "700", width: "100%", textAlign: "center", textShadowColor: palette.surface, textShadowRadius: 6 }} numberOfLines={1}>{shortAddress(pickup?.address) || t("Выберите место подачи")}</Text>
+              </Pressable>
             )}
-            {mapField && (
-              <View
-                style={{
-                  position: "absolute",
-                  top: 12,
-                  left: 16,
-                  right: 16,
-                  backgroundColor: "white",
-                  padding: 14,
-                  borderRadius: 18,
-                  flexDirection: "row",
-                  alignItems: "center",
-                  gap: 10,
-                }}
-              >
-                <Icon name="location" color={colors.blue} />
-                <Text style={[s.body, { flex: 1 }]}>
-                  {t("Выберите точку на карте")}
-                </Text>
-                <IconButton
-                  name="close"
-                  label={t("Закрыть")}
-                  onPress={() => setMapField(null)}
-                />
-              </View>
-            )}
-            <View style={{ position: "absolute", right: 17, bottom: 17 }}>
-              <IconButton
-                name="navigate"
-                label={t("Моё местоположение")}
-                onPress={locate}
-              />
-            </View>
+            {mapSelection && <View style={{ position: "absolute", left: 17, bottom: mapPanelHeight + 48 }}><IconButton name="arrow-back" label={t("Назад")} onPress={() => { setMapField(null); setMapFocus(null); }}/></View>}
+            {!driver && !order && dropoff && !mapSelection && <View style={{ position: "absolute", left: 17, bottom: 48 }}><IconButton name="arrow-back" label={t("Назад")} onPress={() => setDropoff(null)}/></View>}
           </View>
-          {!mapField && (
-            <Sheet
-              handleLabel={t("Развернуть или свернуть панель")}
-              key={order?.id || offer?.id || (driver ? "driver" : "booking")}
-            >
-              {order ? (
-                <TripPanel
-                  order={order}
-                  user={user}
-                  busy={busy}
-                  onAction={action}
-                  onChat={() => setChat(true)}
-                  onDone={done}
-                  onRating={rate}
-                  coming={coming}
-                />
-              ) : driver ? (
-                <>
-                  {!user.driverProfile?.verified ? (
-                    <Empty
-                      icon="shield-checkmark-outline"
-                      title={t("Ожидаем подтверждение")}
-                      subtitle={t(
-                        "Диспетчер проверит профиль и автомобиль. После подтверждения здесь появятся заказы.",
-                      )}
-                    />
-                  ) : offer ? (
-                    <>
-                      <View style={s.spread}>
-                        <Text style={s.h2}>{t("Новый заказ")}</Text>
-                        <View
-                          style={{
-                            paddingHorizontal: 10,
-                            paddingVertical: 6,
-                            backgroundColor: "#E2F8EC",
-                            borderRadius: 15,
-                          }}
-                        >
-                          <Text
-                            style={{
-                              color: colors.green,
-                              fontWeight: "600",
-                              fontSize: 12,
-                            }}
-                          >
-                            {t("На линии")}
-                          </Text>
-                        </View>
-                      </View>
-                      <Route order={offer} t={t} />
-                      <View
-                        style={[
-                          s.spread,
-                          {
-                            borderTopWidth: 1,
-                            borderBottomWidth: 1,
-                            borderColor: colors.line,
-                            paddingVertical: 17,
-                          },
-                        ]}
-                      >
-                        <View>
-                          <Text style={s.h3}>{km(offer.distanceMeters)}</Text>
-                          <Text style={s.caption}>{t("Расстояние")}</Text>
-                        </View>
-                        <View>
-                          <Text style={s.h3}>
-                            ≈ {mins(offer.durationSeconds, user.language)}
-                          </Text>
-                          <Text style={s.caption}>{t("В пути")}</Text>
-                        </View>
-                        <View>
-                          <Text style={[s.h2, { color: colors.blue }]}>
-                            {money(offer.price)}
-                          </Text>
-                          <Text style={s.caption}>{t("Наличные")}</Text>
-                        </View>
-                      </View>
-                      {!!offer.comment && (
-                        <View style={s.row}>
-                          <Icon name="chatbox-outline" />
-                          <Text style={[s.body, { flex: 1 }]}>
-                            {offer.comment}
-                          </Text>
-                        </View>
-                      )}
-                      <Button
-                        label={t("Принять")}
-                        onPress={() => accept(offer)}
-                        busy={busy}
-                      />
-                      <Button
-                        secondary
-                        label={t("Пропустить")}
-                        onPress={() => skip(offer)}
-                        busy={busy}
-                      />
-                    </>
-                  ) : (
-                    <>
-                      <Empty
-                        icon={
-                          user.driverProfile.online
-                            ? "radio-outline"
-                            : "car-outline"
-                        }
-                        title={t(
-                          user.driverProfile.online
-                            ? "Новых заказов пока нет"
-                            : "Вы не на линии",
-                        )}
-                        subtitle={t(
-                          user.driverProfile.online
-                            ? "Предложения появятся, когда рядом будет пассажир."
-                            : "Включите режим на линии, чтобы получать доступные заказы.",
-                        )}
-                      />
-                      {!user.driverProfile.online && (
-                        <Button
-                          label={t("Выйти на линию")}
-                          onPress={() => online(true)}
-                          busy={busy}
-                        />
-                      )}
-                    </>
-                  )}
-                </>
-              ) : (
-                <>
-                  <View style={s.spread}>
-                    <Text style={s.h3}>{t("Тариф")}</Text>
-                    {quote && !quoteExpired && (
-                      <Text style={s.caption}>
-                        {km(quote.distanceMeters)} · ≈{" "}
-                        {mins(quote.durationSeconds, user.language)}
-                      </Text>
-                    )}
-                  </View>
-                  {tariffs.length ? (
-                    tariffs.map((tariff, index) => (
-                      <Pressable
-                        key={tariff.id}
-                        accessibilityRole="radio"
-                        accessibilityState={{ checked: tariffId === tariff.id }}
-                        disabled={busy}
-                        onPress={() => setTariffId(tariff.id)}
-                        style={[
-                          s.row,
-                          {
-                            padding: 12,
-                            borderRadius: 19,
-                            borderWidth: 1.5,
-                            borderColor:
-                              tariffId === tariff.id ? "#5AA7FF" : colors.line,
-                            backgroundColor:
-                              tariffId === tariff.id ? "#F0F7FF" : "white",
-                            minHeight: 74,
-                          },
-                        ]}
-                      >
-                        <Car
-                          color={
-                            index === 0
-                              ? "#E5ECF4"
-                              : index === 1
-                                ? "#67788D"
-                                : "#253447"
-                          }
-                          size={67}
-                        />
-                        <View style={{ flex: 1, gap: 3 }}>
-                          <Text style={s.h3}>{tariff.name}</Text>
-                          <Text style={s.caption} numberOfLines={1}>
-                            {tariff.description || t("Комфортные поездки")}
-                          </Text>
-                        </View>
-                        <View style={{ alignItems: "flex-end", gap: 3 }}>
-                          <Text
-                            style={[
-                              s.h3,
-                              {
-                                color:
-                                  tariffId === tariff.id
-                                    ? colors.blue
-                                    : colors.ink,
-                              },
-                            ]}
-                          >
-                            {tariffId === tariff.id && quote && !quoteExpired
-                              ? money(quote.price)
-                              : `${t("от")} ${money(tariff.minimumPrice)}`}
-                          </Text>
-                          <Text style={s.caption}>
-                            {t(
-                              tariffId === tariff.id && quote && !quoteExpired
-                                ? "за поездку"
-                                : "минимум",
-                            )}
-                          </Text>
-                        </View>
-                      </Pressable>
-                    ))
-                  ) : (
-                    <View style={{ gap: 10 }}>
-                      <Text style={s.muted}>{t("Тарифы пока недоступны")}</Text>
-                      <Button
-                        secondary
-                        label={t("Обновить")}
-                        onPress={() =>
-                          void run(async () => {
-                            const list =
-                              await api.request<Tariff[]>("/tariffs");
-                            setTariffs(list);
-                            setTariffId(list[0]?.id || "");
-                          })
-                        }
-                      />
-                    </View>
-                  )}
-                  <Pressable
-                    onPress={() => navigate("payment")}
-                    style={[s.spread, { paddingVertical: 5 }]}
-                  >
-                    <View style={s.row}>
-                      <View
-                        style={{
-                          backgroundColor: "#E7F7E9",
-                          padding: 10,
-                          borderRadius: 12,
-                        }}
-                      >
-                        <Icon name="cash" color={colors.green} />
-                      </View>
-                      <View>
-                        <Text style={s.h3}>{t("Наличные")}</Text>
-                        <Text style={s.caption}>{t("Оплата водителю")}</Text>
-                      </View>
-                    </View>
-                    <Icon
-                      name="chevron-forward"
-                      color={colors.muted}
-                      size={18}
-                    />
-                  </Pressable>
-                  <TextInput
-                    placeholder={t("Комментарий водителю")}
-                    accessibilityLabel={t("Комментарий водителю")}
-                    value={comment}
-                    onChangeText={setComment}
-                    maxLength={500}
-                    style={[
-                      s.input,
-                      { minHeight: 47, paddingVertical: 12, fontSize: 14 },
-                    ]}
-                    multiline
-                  />
-                  {!pickup || !dropoff ? (
-                    <Button
-                      label={t("Выберите маршрут")}
-                      onPress={() =>
-                        setAddressField(!pickup ? "pickup" : "dropoff")
-                      }
-                    />
-                  ) : quote && !quoteExpired ? (
-                    <Button
-                      label={`${t("Заказать")} · ${money(quote.price)}`}
-                      onPress={book}
-                      busy={busy}
-                    />
-                  ) : (
-                    <Button
-                      label={t(
-                        quoteExpired ? "Новый расчёт" : "Рассчитать стоимость",
-                      )}
-                      onPress={calculate}
-                      disabled={!tariffId}
-                      busy={busy}
-                    />
-                  )}
-                  {quote?.development && (
-                    <Text style={s.caption}>
-                      {t(
-                        "Development: тестовый маршрут. Проверьте боевой ключ маршрутизации перед реальными поездками.",
-                      )}
-                    </Text>
-                  )}
-                </>
-              )}
-            </Sheet>
-          )}
+          {driver && order?.status === 'COMPLETED' && <View style={{ height: Math.max(0, driverCompletionHeight - 30) }}/>}
+          {driver && <DriverPanel key={order?.id || offer?.id || 'idle'} user={user} order={order} offer={offer} busy={busy} coming={coming} approach={approach} navigation={navigation} backgroundReady={navigation.backgroundReady} onBackground={navigation.enableBackground} onAccept={accept} onRateClient={rateClient} onCompletionHeight={setDriverCompletionHeight} onOnline={() => online(true)} onAction={action} onChat={() => setChat(true)} onDone={done}/>}
+          {!driver && !order && <>
+            {!mapSelection && <View style={{ height: Math.max(0, bookingHeight - 30) }}/>}
+            <BookingPanel pickup={pickup} dropoff={dropoff} tariffs={tariffs} tariffId={tariffId}
+              quote={quote} quotes={quotes} calculating={calculating} quoteError={quoteError} bookingError={error} busy={busy}
+              language={user.language} details={rideDetails} onDetails={setRideDetails}
+              onAddress={setAddressField} registerAddressOpener={registerAddressOpener} onTariff={setTariffId} hidden={!!mapSelection || !!addressField} onHeight={setBookingHeight}
+              onSwap={() => { setPickup(dropoff); setDropoff(pickup); setRideDetails(current => ({ ...current, entrance: '' })); }}
+              onBook={book}
+              onRefresh={() => { if (tariffs.length) refreshQuotes(); else void run(async () => { const list = await api.request<Tariff[]>("/tariffs"); setTariffs(list); setTariffId(list[0]?.id || ""); }); }}
+            />
+          </>}
+          {!driver && order && <>
+            <View style={{ height: Math.max(0, bookingHeight - 30) }}/>
+            <ClientTripPanel order={order} user={user} busy={busy} onAction={action} onChat={() => setChat(true)} onDone={done} onRating={rate} coming={coming} onHeight={setBookingHeight} driverPosition={tracking.position} trackingWaiting={tracking.waiting} trackingStatus={tracking.statusMessage} approach={approach.route}/>
+          </>}
         </View>
       ) : (
         <AccountScreen
@@ -1035,16 +1039,18 @@ function TaxiApp() {
           onOnline={online}
           onNavigate={navigate}
           busy={busy}
+          themePreference={themePreference}
+          onThemePreferenceChange={onThemePreferenceChange}
         />
       )}
-      {driver ? (
+      {driver && (page !== "home" || !displayed) ? (
         <View
           style={{
-            backgroundColor: "white",
+            backgroundColor: palette.surface,
             paddingBottom: Math.max(insets.bottom, 10),
             paddingTop: 10,
             borderTopWidth: 1,
-            borderTopColor: colors.line,
+            borderTopColor: palette.line,
             flexDirection: "row",
           }}
         >
@@ -1065,12 +1071,12 @@ function TaxiApp() {
             >
               <Icon
                 name={item.icon}
-                color={page === item.page ? colors.blue : "#95A5BD"}
+                color={page === item.page ? palette.accent : palette.muted}
                 size={23}
               />
               <Text
                 style={{
-                  color: page === item.page ? colors.blue : "#95A5BD",
+                  color: page === item.page ? palette.accent : palette.muted,
                   fontSize: 11,
                   fontWeight: "600",
                 }}
@@ -1080,9 +1086,13 @@ function TaxiApp() {
             </Pressable>
           ))}
         </View>
-      ) : (
-        <View style={{ height: insets.bottom, backgroundColor: "white" }} />
+      ) : page === 'home' && !showingServices ? null : (
+        <View style={{ height: insets.bottom, backgroundColor: palette.surface }} />
       )}
+      {!driver && <View pointerEvents={showingServices ? 'auto' : 'none'} style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, zIndex: 20, display: showingServices ? 'flex' : 'none' }}>
+        <FoodExperience key={user.id} userId={user.id} contentRevision={contentRevision} orderRevision={foodOrderRevision} active={showingServices} entry={foodEntry} defaultAddress={pickup?.address || ''} onTaxi={() => { setService('taxi'); setError(''); }} onTaxiSearch={() => { setService('taxi'); setAddressField('dropoff'); setError(''); }} onMenu={() => setDrawer(true)} />
+      </View>}
+      </View>
       <Modal
         visible={drawer}
         transparent
@@ -1093,78 +1103,62 @@ function TaxiApp() {
           style={{
             flex: 1,
             flexDirection: "row",
-            backgroundColor: "#101C385F",
+            backgroundColor: palette.backdrop,
           }}
         >
           <SafeAreaView
             style={{
-              width: "82%",
+              width: "76%",
               maxWidth: 370,
-              backgroundColor: "white",
+              backgroundColor: palette.surface,
               borderTopRightRadius: 28,
               borderBottomRightRadius: 28,
             }}
           >
-            <ScrollView contentContainerStyle={{ padding: 24, flexGrow: 1 }}>
+            <ScrollView contentContainerStyle={{ padding: 20, flexGrow: 1 }}>
               <Logo />
               <Pressable
+                accessibilityRole="button"
+                accessibilityLabel={t("Профиль")}
                 onPress={() => navigate("profile")}
                 style={[s.row, { paddingVertical: 29 }]}
               >
-                <Avatar user={user} size={57} />
+                {driver && <Avatar user={user} size={62} />}
                 <View style={{ flex: 1 }}>
-                  <Text style={s.h3}>{user.name || t("Профиль")}</Text>
-                  <Text style={s.caption}>{user.phone}</Text>
+                  <Text style={[s.h3, { color: palette.ink }]}>{user.name || t("Профиль")}</Text>
+                  <Text style={[s.caption, { color: palette.muted }]}>{user.phone}</Text>
                 </View>
                 <Icon name="chevron-forward" color={colors.muted} size={18} />
               </Pressable>
-              <View style={s.divider} />
-              <MenuRow
-                icon="person-outline"
-                label={t("Профиль")}
-                onPress={() => navigate("profile")}
-              />
+              <View style={[s.divider, { backgroundColor: palette.line }]} />
+              {!driver && <>
+                <MenuRow icon="home-outline" label={t("Главная")} onPress={() => openServices('home')} />
+                <MenuRow icon="car-outline" label={t("Заказать такси")} onPress={() => { setDrawer(false); setPage('home'); setService('taxi'); }} />
+                <MenuRow icon="restaurant-outline" label={t("Доставка еды")} onPress={() => openServices('restaurants')} />
+                <MenuRow icon="bag-handle-outline" label={t("Мои заказы еды")} onPress={() => openServices('history')} />
+                <View style={[s.divider, { backgroundColor: palette.line }]} />
+              </>}
               <MenuRow
                 icon="time-outline"
-                label={t("История поездок")}
+                label={t(driver ? "История заказов" : "История поездок")}
                 onPress={() => navigate("history")}
               />
-              {driver ? (
-                <MenuRow
+              {driver && <MenuRow
                   icon="wallet-outline"
                   label={t("Баланс")}
                   onPress={() => navigate("balance")}
-                />
-              ) : (
-                <MenuRow
-                  icon="card-outline"
-                  label={t("Способы оплаты")}
-                  onPress={() => navigate("payment")}
-                />
-              )}
+                />}
               <MenuRow
                 icon="settings-outline"
                 label={t("Настройки")}
                 onPress={() => navigate("settings")}
               />
-              <MenuRow
-                icon="headset-outline"
-                label={t("Поддержка")}
-                onPress={() => navigate("support")}
-              />
-              <View style={s.divider} />
+              <View style={[s.divider, { backgroundColor: palette.line }]} />
               <MenuRow
                 icon="log-out-outline"
                 label={t("Выйти")}
                 onPress={logout}
               />
-              <View style={{ flex: 1, minHeight: 20 }} />
-              <CityArt />
-              <Text style={[s.caption, { paddingTop: 16 }]}>
-                {t("Комфортные поездки")}
-                {"\n"}
-                {t("каждый день")}
-              </Text>
             </ScrollView>
           </SafeAreaView>
           <Pressable
@@ -1178,6 +1172,9 @@ function TaxiApp() {
         <AddressPicker
           field={addressField}
           center={pickup}
+          pickup={pickup}
+          dropoff={dropoff}
+          onFieldChange={setAddressField}
           language={user.language}
           onSelect={(point) => selectAddress(addressField, point)}
           onClose={() => setAddressField(null)}

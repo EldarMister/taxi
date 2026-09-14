@@ -27,7 +27,9 @@ model User {
   id String @id @default(uuid()) @db.Uuid
   phone String @unique
   name String @default("")
-  photoUrl String?
+  avatarData Bytes?
+  avatarMime String?
+  avatarUpdatedAt DateTime?
   role Role @default(CLIENT)
   notifications Boolean @default(true)
   language String @default("ru")
@@ -39,6 +41,8 @@ model User {
   driverOrders Order[] @relation("DriverOrders")
   sentMessages Message[]
   pushTokens PushToken[]
+  foodOrders FoodOrder[]
+  adminCredential AdminCredential?
 }
 model DriverProfile {
   userId String @id @db.Uuid
@@ -99,6 +103,7 @@ model Order {
   quote Quote @relation(fields:[quoteId],references:[id])
   idempotencyKey String
   status OrderStatus @default(SEARCHING)
+  driverLocation Json?
   pickup Json
   dropoff Json
   geometry Json
@@ -107,6 +112,8 @@ model Order {
   price Int
   commission Int
   comment String @default("")
+  passengerName String?
+  passengerPhone String?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
   searchExpiresAt DateTime
@@ -114,6 +121,7 @@ model Order {
   history StatusHistory[]
   messages Message[]
   rating Rating?
+  clientRating ClientRating?
   ledger LedgerEntry[]
   offers OrderOffer[]
   @@unique([clientId,idempotencyKey])
@@ -158,6 +166,15 @@ model Rating {
   orderId String @unique @db.Uuid
   order Order @relation(fields:[orderId],references:[id])
   score Int
+  comment String @default("")
+  createdAt DateTime @default(now())
+}
+model ClientRating {
+  id String @id @default(uuid()) @db.Uuid
+  orderId String @unique @db.Uuid
+  order Order @relation(fields:[orderId],references:[id])
+  score Int
+  comment String @default("")
   createdAt DateTime @default(now())
 }
 model LedgerEntry {
@@ -183,8 +200,55 @@ model RefreshSession {
   familyId String @db.Uuid
   expiresAt DateTime
   revokedAt DateTime?
+  adminAuthenticated Boolean @default(false)
   createdAt DateTime @default(now())
   @@index([userId,familyId])
+}
+
+model AdminCredential {
+  userId String @id @db.Uuid
+  user User @relation(fields:[userId],references:[id])
+  username String @unique
+  passwordHash String
+  disabled Boolean @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model AdminAudit {
+  id String @id @default(uuid()) @db.Uuid
+  actorId String @db.Uuid
+  action String
+  entity String
+  entityId String
+  details Json?
+  createdAt DateTime @default(now())
+  @@index([createdAt])
+  @@index([entity,entityId])
+}
+
+model Banner {
+  id String @id @default(uuid()) @db.Uuid
+  title String
+  subtitle String @default("")
+  imageUrl String?
+  imageKey String?
+  actionType String @default("NONE")
+  restaurantId String?
+  sortOrder Int @default(0)
+  active Boolean @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  @@index([active,sortOrder])
+}
+
+model MediaAsset {
+  id String @id @default(uuid()) @db.Uuid
+  data Bytes
+  mime String
+  width Int
+  height Int
+  createdAt DateTime @default(now())
 }
 model SmsChallenge {
   phone String @id
@@ -217,4 +281,69 @@ model PushJob {
   sentAt DateTime?
   createdAt DateTime @default(now())
   @@index([sentAt,availableAt])
+}
+
+enum FoodOrderStatus {
+  PLACED
+  CONFIRMED
+  PREPARING
+  READY
+  DELIVERING
+  COMPLETED
+  CANCELLED
+}
+enum FoodFulfillment {
+  DELIVERY
+  PICKUP
+}
+enum FoodPaymentMethod {
+  CASH
+  CARD
+  ONLINE
+}
+model FoodRestaurant {
+  id String @id
+  catalog Json
+  active Boolean @default(false)
+  isDemo Boolean @default(false)
+  sortOrder Int @default(0)
+  updatedAt DateTime @updatedAt
+  orders FoodOrder[]
+}
+model FoodOrder {
+  id String @id @default(uuid()) @db.Uuid
+  clientId String @db.Uuid
+  client User @relation(fields:[clientId],references:[id])
+  restaurantId String
+  restaurant FoodRestaurant @relation(fields:[restaurantId],references:[id])
+  restaurantSnapshot Json
+  requestId String
+  requestHash String
+  items Json
+  subtotal Int
+  deliveryFee Int
+  total Int
+  fulfillment FoodFulfillment
+  address String
+  comment String @default("")
+  paymentMethod FoodPaymentMethod
+  status FoodOrderStatus @default(PLACED)
+  isDemo Boolean @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  completedAt DateTime?
+  history FoodStatusHistory[]
+  @@unique([clientId,requestId])
+  @@index([clientId,createdAt])
+  @@index([status,createdAt])
+}
+model FoodStatusHistory {
+  id String @id @default(uuid()) @db.Uuid
+  orderId String @db.Uuid
+  order FoodOrder @relation(fields:[orderId],references:[id])
+  status FoodOrderStatus
+  actorId String @db.Uuid
+  reason String?
+  createdAt DateTime @default(now())
+  @@index([orderId,createdAt])
 }

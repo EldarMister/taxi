@@ -1,8 +1,12 @@
 import 'dotenv/config';
-import { PrismaClient } from '@prisma/client';
+import { Prisma, PrismaClient } from '@prisma/client';
+import { DEMO_FOOD_RESTAURANTS } from '../src/food-catalog';
 const db=new PrismaClient();
 async function main() {
   if(process.env.NODE_ENV!=='development') throw new Error('Demo seed is allowed only in NODE_ENV=development');
+  for(const [sortOrder,restaurant] of DEMO_FOOD_RESTAURANTS.entries()) {
+    await db.foodRestaurant.upsert({where:{id:restaurant.id},create:{id:restaurant.id,catalog:restaurant as unknown as Prisma.InputJsonValue,isDemo:true,active:true,sortOrder},update:{}});
+  }
   await db.tariff.upsert({where:{id:'economy'},create:{id:'economy',name:'Эконом',description:'Быстро и доступно',basePrice:60,pricePerKm:14,pricePerMinute:2,minimumPrice:100,commissionBps:1000},update:{}});
   await db.tariff.upsert({where:{id:'comfort'},create:{id:'comfort',name:'Комфорт',description:'Больше места и комфорта',basePrice:90,pricePerKm:19,pricePerMinute:3,minimumPrice:150,commissionBps:1000},update:{}});
   await db.user.upsert({where:{phone:'+996700123456'},create:{phone:'+996700123456',name:'Айдана',role:'CLIENT'},update:{}});
@@ -15,6 +19,6 @@ async function main() {
       await tx.ledgerEntry.upsert({where:{idempotencyKey:`seed:${user.id}`},create:{driverId:user.id,kind:'TOPUP',amount:1000,balanceAfter:1000,idempotencyKey:`seed:${user.id}`,note:'Тестовое пополнение депозита'},update:{}});
     }, {timeout: 15000});
   }
-  console.log('Demo data ready. Client +996700123456; drivers +996700111111 / +996700222222; admin +996700999999. Use DEV_OTP_CODE after requesting SMS.');
+  console.log('Demo data ready. Client +996700123456; drivers +996700111111 / +996700222222 use DEV_OTP_CODE after requesting SMS. Administrator access requires separate password provisioning with admin:bootstrap.');
 }
 main().catch(error=>{console.error(error.message);process.exitCode=1;}).finally(()=>db.$disconnect());
