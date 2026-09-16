@@ -12,7 +12,7 @@ type Props = {
   order: Order;
   user: User;
   busy: boolean;
-  onDone: () => void;
+  onDone: (orderId: string) => void;
   onRateClient: (score: number) => Promise<boolean>;
   onHeight?: (height: number) => void;
 };
@@ -38,7 +38,7 @@ export function DriverCompletionPanel({ order, user, busy, onDone, onRateClient,
   const [rated, setRated] = useState(order.driverRating != null);
   const [submitting, setSubmitting] = useState(false);
   const [ratingError, setRatingError] = useState(false);
-  const closeCompletion = () => exitStage(onDone);
+  const closeCompletion = () => exitStage(() => onDone(order.id));
   const drag = useSheetDragToClose(stage === 'rating' ? () => navigateStage('success') : closeCompletion, !busy && !submitting);
   useEffect(() => { drag.reset(); }, [stage]);
 
@@ -56,8 +56,8 @@ export function DriverCompletionPanel({ order, user, busy, onDone, onRateClient,
     try {
       if (await onRateClient(score)) {
         setRated(true);
-        navigateStage('success');
         setRatingError(false);
+        closeCompletion();
       } else setRatingError(true);
     } finally {
       setSubmitting(false);
@@ -83,7 +83,7 @@ export function DriverCompletionPanel({ order, user, busy, onDone, onRateClient,
             <View style={s.metricsDivider}/>
             <View style={s.metric}><Text style={s.metricLabel}>{say('Время в пути', 'Жолдогу убакыт')}</Text><Text style={s.metricValue}>{tripTime(order.durationSeconds, user.language)}</Text></View>
           </View>
-          <View style={s.fareCard}><Icon name="cash" size={25} color={palette.accent}/><Text style={s.fareLabel} numberOfLines={1}>{say('Наличные', 'Накталай')} · {order.tariff?.name || say('Стандарт', 'Стандарт')}</Text><Text style={s.price}>{money(order.price)}</Text></View>
+          <View style={s.fareCard}><Icon name="cash" size={25} color={isDark ? '#FFFFFF' : palette.accent}/><Text style={s.fareLabel} numberOfLines={1}>{say('Наличные', 'Накталай')} · {order.tariff?.name || say('Стандарт', 'Стандарт')}</Text><Text style={s.price}>{money(order.price)}</Text></View>
           {!rated && <MainButton label={say('Оценить пассажира', 'Жүргүнчүнү баалоо')} onPress={() => { setScore(0); setRatingError(false); navigateStage('rating'); }} busy={busy}/>}
           <Pressable accessibilityRole="button" accessibilityLabel={say('Закрыть', 'Жабуу')} accessibilityState={{ disabled: busy }} disabled={busy} onPress={closeCompletion} style={s.close}><Text style={s.closeText}>{say('Закрыть', 'Жабуу')}</Text></Pressable>
         </> : <>

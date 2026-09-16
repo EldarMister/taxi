@@ -39,6 +39,12 @@ export class CreateOrderDto {
   @ApiProperty() @IsString() @MinLength(8) @MaxLength(100) idempotencyKey!:string;
 }
 export class OnlineDto { @ApiProperty() @IsBoolean() online!:boolean; }
+export class DriverPositionDto {
+  @ApiProperty() @IsNumber() @Min(-90) @Max(90) latitude!:number;
+  @ApiProperty() @IsNumber() @Min(-180) @Max(180) longitude!:number;
+  @ApiProperty() @IsNumber() @Min(0) @Max(100) accuracyM!:number;
+  @ApiProperty() @IsInt() @Min(1) measuredAtMs!:number;
+}
 export class MessageDto {
   @ApiProperty() @IsString() @MinLength(1) @MaxLength(1000) text!:string;
   @ApiProperty() @IsString() @MinLength(8) @MaxLength(100) clientMessageId!:string;

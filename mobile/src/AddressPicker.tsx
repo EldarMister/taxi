@@ -4,14 +4,14 @@ import { BottomPanel } from './BottomPanel';
 import { shortAddress } from './address';
 import { api, messageOf } from './api';
 import { searchAddresses } from './native/search';
-import { Order, Point, User } from './types';
+import { Coordinate, Order, Point, User } from './types';
 import { colors, Icon, PickupIcon, s, tr } from './ui';
 import { useTheme } from './design/theme';
 import { useThemeStyles } from './design/themeStyles';
 
 type Field = 'pickup' | 'dropoff';
 export function AddressPicker({ field, center, pickup, dropoff, language, onFieldChange, onSelect, onClose, onMap, onLocation }: {
-  field: Field; center?: Point | null; pickup?: Point | null; dropoff?: Point | null; language: User['language'];
+  field: Field; center?: Coordinate | null; pickup?: Point | null; dropoff?: Point | null; language: User['language'];
   onFieldChange: (field: Field) => void; onSelect: (point: Point) => void; onClose: () => void; onMap: () => void; onLocation: () => void;
 }) {
   const { isDark, palette } = useTheme();

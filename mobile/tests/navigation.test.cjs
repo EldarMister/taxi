@@ -5,7 +5,7 @@ const vm = require('node:vm');
 const ts = require('typescript');
 const exportsObject = {};
 vm.runInNewContext(ts.transpileModule(fs.readFileSync(require.resolve('../src/navigation.ts'), 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText, { exports: exportsObject, Date });
-const { prepareRoute, routeProgress, guidanceCue, maneuverText, usableNavigationFix, stableNavigationFix, bestRussianVoice, bestVoiceForLanguage, navigationDestination, distanceBetween } = exportsObject;
+const { prepareRoute, routeProgress, guidanceCue, maneuverText, normalizeManeuver, bearingDelta, usableNavigationFix, stableNavigationFix, bestRussianVoice, bestVoiceForLanguage, navigationDestination, distanceBetween } = exportsObject;
 const point = (latitude, longitude) => ({ latitude, longitude });
 const a = point(42.87, 74.59), b = point(42.875, 74.59), c = point(42.875, 74.595);
 function step(type, location, geometry, modifier) { return { name: 'Улица', distanceMeters: 500, durationSeconds: 60, geometry, maneuver: { type, location, modifier, bearingBefore: 0, bearingAfter: 90 } }; }
@@ -91,6 +91,16 @@ test('structured bearings and geometry agree for north-east right, north-west le
     assert.equal(maneuverText(prepareRoute({ ...candidate, cameraBearing: 180 }).route.steps[1]), instruction);
   }
 });
+test('OSRM bearing sides remain correct across north and independent of map rotation', () => {
+  for (const [before, after, expected] of [[0,90,'right'],[0,270,'left'],[90,0,'left'],[270,0,'right'],[359,1,'right'],[1,359,'left']]) {
+    const turn = { ...step('turn', b, [b,c]), maneuver: { type: 'turn', location: b, bearingBefore: before, bearingAfter: after } };
+    assert.equal(normalizeManeuver(turn).side, expected);
+    assert.equal(normalizeManeuver({ ...turn, cameraBearing: 137 }).side, expected);
+    assert.match(maneuverText(turn), expected === 'right' ? /направо/ : /налево/);
+  }
+  assert.equal(bearingDelta(359,1), 2);
+  assert.equal(bearingDelta(1,359), -2);
+});
 test('a right turn that matches the line stays right, and a nearly straight road keeps the provider instruction', () => {
   assert.equal(prepareRoute(route).route.steps[1].maneuver.modifier, 'right');
   const nearlyStraight = point(b.latitude + .005, b.longitude + .0003);
@@ -110,6 +120,18 @@ test('off-route position cannot advance route progress', () => {
 test('GPS jitter cannot rewind completed progress', () => {
   const result = routeProgress(prepareRoute(route), fix(point(42.8708, a.longitude)), { along: 100, timestamp: Date.now() - 2000 });
   assert.equal(result.along, 100);
+});
+test('one near-junction fix cannot switch the active maneuver', () => {
+  const prepared = prepareRoute(route);
+  const timestamp = Date.now();
+  const before = { along: prepared.offsets[1] - 4, timestamp: timestamp - 1000, stepIndex: 1 };
+  const nearby = fix(point(b.latitude, b.longitude + .00022), timestamp);
+  const first = routeProgress(prepared, nearby, before);
+  assert.equal(first.stepIndex, 1);
+  assert.equal(first.pendingStepIndex, 2);
+  assert.equal(guidanceCue(first), null, 'a turn already behind this GPS fix must not be spoken');
+  const second = routeProgress(prepared, { ...nearby, timestamp: timestamp + 1000 }, { along: first.along, timestamp, stepIndex: first.stepIndex, pendingStepIndex: first.pendingStepIndex, pendingStepCount: first.pendingStepCount });
+  assert.equal(second.stepIndex, 2);
 });
 test('loop returning to departure does not announce arrival at its start', () => {
   const loop = { ...route, geometry: [a, b, c, a], steps: [step('depart', a, [a,b]), step('turn', b, [b,c], 'right'), step('turn', c, [c,a], 'right'), step('arrive', a, [a])] };
@@ -136,13 +158,15 @@ test('Russian voice prompts cover turns, fork, roundabout, ramps, uturn and arri
   assert.match(maneuverText(step('off ramp', b, [b,c], 'right')), /направо/);
   assert.match(maneuverText(step('arrive', c, [c])), /назначения впереди/);
 });
-test('500 m, 100 m and immediate cue stages have stable deduplication keys', () => {
+test('route, leg, maneuver and stage produce stable deduplication keys', () => {
   const progress = { stepIndex: 1, instruction: 'Поверните направо', arrived: false };
   assert.equal(guidanceCue({ ...progress, maneuverDistance: 600 }), null);
-  assert.equal(guidanceCue({ ...progress, maneuverDistance: 501 }).key, '1:500');
-  assert.equal(guidanceCue({ ...progress, maneuverDistance: 100 }).text, 'Через 100 метров поверните направо.');
-  assert.equal(guidanceCue({ ...progress, maneuverDistance: 95 }).key, '1:100');
-  assert.equal(guidanceCue({ ...progress, maneuverDistance: 25 }).key, '1:0');
+  assert.equal(guidanceCue({ ...progress, maneuverDistance: 501 }, 'ru', 7, 1).key, '7:1:1:500');
+  assert.equal(guidanceCue({ ...progress, maneuverDistance: 200 }).text, 'Через 200 метров поверните направо.');
+  assert.equal(guidanceCue({ ...progress, maneuverDistance: 95 }, 'ru', 7, 1).key, '7:1:1:200');
+  assert.equal(guidanceCue({ ...progress, maneuverDistance: 25 }, 'ru', 7, 1).key, '7:1:1:0');
+  assert.deepEqual(Array.from(guidanceCue({ ...progress, maneuverDistance: 25 }, 'ru', 7, 1).supersedes), ['7:1:1:500', '7:1:1:200']);
+  assert.notEqual(guidanceCue({ ...progress, maneuverDistance: 95 }, 'ru', 8, 1).key, guidanceCue({ ...progress, maneuverDistance: 95 }, 'ru', 7, 1).key);
 });
 
 test('a turn announces distance and the destination street without losing its name', () => {

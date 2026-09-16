@@ -116,15 +116,18 @@ test('foreground GPS uses a fast cached fix, precise fallback and keeps coordina
   assert.match(app, /await rememberPermissionStep\("notifications"\);\s*locateAfterPermissionGrant\(currentUser\)/);
   assert.match(app, /locationPermission\?\.granted[\s\S]*rememberPermissionStep\("notifications"\)/);
   assert.match(app, /showUserPosition=\{locationEnabled && !driver\}/);
-  assert.match(map, /passengerView \? 'Моё местоположение' : 'Показать водителя'/);
+  assert.match(map, /driverPosition \? 'Показать водителя' : 'Моё местоположение'/);
   assert.match(map, /await getCurrentPosition\(\)/);
   assert.doesNotMatch(app, /navigate-outline/, 'the old duplicate map control is gone');
   assert.match(app, /state === "active"[\s\S]*refreshLocationPermission/);
-  assert.match(map, /showUserPosition && !driverPosition && !navigationActive && <UserLocation/);
-  assert.match(map, /useAnimatedCarPosition\(passengerView && driverPosition \? \{ \.\.\.driverPosition, heading: driverHeading \} : null, cameraSession\)/);
+  assert.match(map, /showUserPosition && passengerView && <UserLocation visible=\{false\} onUpdate=/);
+  assert.match(map, /client-user-position/);
+  assert.doesNotMatch(map, /<UserLocation renderMode="native"/, 'the native puck must not paint a blue accuracy radius');
+  assert.match(map, /useAnimatedCarPosition\(passengerView && driverPosition \? \{ \.\.\.driverPosition, heading: driverHeading \} : null, driverIdentity, carAnimationRoute\)/);
+  assert.match(map, /trustedCarRoutePath\(previousRaw, point, from, roadRef\.current, fixInterval\)/);
+  assert.match(map, /trustedCarDirectPath\(previousRaw, point, from, fixInterval\)/);
   assert.doesNotMatch(map, /roadPosition\(/, 'the passenger car cannot snap onto another route segment');
-  assert.match(map, /passengerView && markerPosition[\s\S]*<MarkerView coordinate=\{toCoordinate\(markerPosition\)\}/);
-  assert.match(map, /!passengerView && driverMarkerShape[\s\S]*<SymbolLayer id="driver-navigation-arrow"/);
+  assert.doesNotMatch(map, /<MarkerView/, 'the client car stays in MapLibre geography during camera gestures');
   assert.doesNotMatch(map, /<ShapeSource id="driver-accuracy"/);
 });
 

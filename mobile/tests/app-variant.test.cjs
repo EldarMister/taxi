@@ -152,7 +152,7 @@ test('closing a trip fences late socket, sync, and rating responses for its orde
   assert.match(sync, /const currentActive = isDismissedOrderUpdate\(active, dismissedOrderIds\.current\) \? null : active/);
   assert.match(sync, /if \(currentActive\) applyOrder\(currentActive\)/);
   const done = source.slice(source.indexOf('const done ='), source.indexOf('const rate ='));
-  assert.match(done, /if \(!current \|\| busyRef\.current\) return/);
+  assert.match(done, /if \(!current \|\| busyRef\.current \|\| \(expectedOrderId != null && current\.id !== expectedOrderId\)\) return/, 'an old completion cannot dismiss a newer active order');
   assert.match(done, /dismissedOrderIds\.current\.add\(current\.id\)[\s\S]*await writeLastOrderId\(null\)[\s\S]*applyOrder\(null\)/);
 });
 

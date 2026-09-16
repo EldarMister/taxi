@@ -32,6 +32,7 @@ async function login(phone:string) {
   return response.body as Session;
 }
 async function quoted(session:Session) {
+  await db.driverProfile.updateMany({where:{online:true,locationLatitude:{not:null}},data:{locationMeasuredAt:new Date()}});
   return (await api.post('/api/orders/quote').set(headers(session)).send({pickup,dropoff,tariffId:'economy'}).expect(201)).body;
 }
 async function create(session=client) {
@@ -40,6 +41,10 @@ async function create(session=client) {
 }
 async function setOnline(session:Session, online=true) {
   await api.patch('/api/driver/online').set(headers(session)).send({online}).expect(200);
+  if(online){
+    const longitude=session.user.id===driver1?.user.id?74.6042:74.6150;
+    await api.patch('/api/driver/position').set(headers(session)).send({latitude:42.8756,longitude,accuracyM:8,measuredAtMs:Date.now()}).expect(200);
+  }
 }
 async function socket(session:Session) {
   const connection=io(baseUrl,{auth:{token:session.accessToken},transports:['websocket'],reconnection:false});sockets.push(connection);
@@ -126,12 +131,13 @@ test('avatar upload is driver-only, validates bytes and serves versioned public 
 test('driver tracking is scoped to the assigned passenger, rejects replay and ends with the trip', async()=>{
   await setOnline(driver1); await setOnline(driver2);
   const order=await create();
-  assert.ok(Math.abs(Date.parse(order.searchExpiresAt)-Date.parse(order.createdAt)-60000)<1000);
+  assert.ok(Math.abs(Date.parse(order.searchExpiresAt)-Date.parse(order.createdAt)-30000)<1500);
   const path=`/api/orders/${order.id}/driver-location`;
   const fix={latitude:41.1987,longitude:72.1802,accuracy:8,heading:90,speed:12,timestamp:Date.now()};
   await api.patch(path).send(fix).expect(401);
   await api.patch(path).set(headers(driver1)).send(fix).expect(403);
-  await api.post(`/api/orders/${order.id}/accept`).set(headers(driver1)).expect(201);
+  const accepted=await api.post(`/api/orders/${order.id}/accept`).set(headers(driver1)).expect(201);
+  assert.match(accepted.body.assignmentId,/^[0-9a-f-]{36}$/i);
   const own=await socket(client), outsider=await socket(client2), otherDriver=await socket(driver2);
   const leaked:any[]=[]; outsider.on('driver:location',value=>leaked.push(value)); otherDriver.on('driver:location',value=>leaked.push(value));
   const delivered=once(own,'driver:location');
@@ -151,9 +157,28 @@ test('driver tracking is scoped to the assigned passenger, rejects replay and en
   await api.patch(path).set(headers(driver1)).send(sequenced).expect(200);
   const duplicate=await api.patch(path).set(headers(driver1)).send({...sequenced,timestamp:measuredAt+1,measuredAt:measuredAt+1,latitude:42}).expect(200);
   assert.equal(duplicate.body.location.latitude,fix.latitude,'the same sequence cannot replace the current point');
+  const v1At=Math.max(Date.now(),measuredAt+2);
+  const v1={schemaVersion:1,orderId:order.id,assignmentId:accepted.body.assignmentId,trackingSessionId:'integration-v1',
+    trackingStartedAtMs:v1At-100,sequence:1,latitude:41.198700123,longitude:72.180200456,
+    accuracyM:null,speedMps:0,courseDeg:0,measuredAtMs:v1At};
+  const v1Response=await api.patch(path).set(headers(driver1)).send(v1).expect(200);
+  assert.equal(v1Response.body.assignmentId,accepted.body.assignmentId);
+  assert.equal(v1Response.body.location.latitude,v1.latitude);
+  assert.equal(v1Response.body.location.longitude,v1.longitude);
+  assert.equal(v1Response.body.location.speedMps,0);
+  assert.equal(v1Response.body.location.courseDeg,0);
+  assert.equal(v1Response.body.location.measuredAtMs,v1At);
+  assert.ok(v1Response.body.location.receivedAtMs<=v1Response.body.serverTimeMs);
+  assert.ok(v1Response.body.stateVersion>duplicate.body.stateVersion);
+  const v1Snapshot=await api.get(path).set(headers(client)).expect(200).expect('Cache-Control','private, no-store');
+  assert.equal(v1Snapshot.body.assignmentId,accepted.body.assignmentId);
+  assert.equal(v1Snapshot.body.stateVersion,v1Response.body.stateVersion);
+  await api.patch(path).set(headers(driver1)).send({...v1,assignmentId:randomUUID(),sequence:2,measuredAtMs:v1At+1}).expect(403);
+  const duplicateV1=await api.patch(path).set(headers(driver1)).send({...v1,sequence:1,measuredAtMs:v1At+2,latitude:42}).expect(200);
+  assert.equal(duplicateV1.body.location.latitude,v1.latitude);
   await api.patch(path).set(headers(driver1)).send({...sequenced,tripId:randomUUID()}).expect(400);
   for(const stage of ['arrive','start']) await api.post(`/api/orders/${order.id}/${stage}`).set(headers(driver1)).expect(201);
-  assert.equal((await api.get(path).set(headers(client)).expect(200)).body.location.latitude,fix.latitude);
+  assert.equal((await api.get(path).set(headers(client)).expect(200)).body.location.latitude,v1.latitude);
   await api.post(`/api/orders/${order.id}/complete`).set(headers(driver1)).expect(201);
   assert.equal((await api.get(path).set(headers(client)).expect(200)).body.location,null);
   assert.equal((await api.get(`/api/orders/${order.id}`).set(headers(client)).expect(200)).body.driverLocation,null);
@@ -170,7 +195,7 @@ test('driver tracking is scoped to the assigned passenger, rejects replay and en
   await api.post(`/api/orders/${cancelled.id}/cancel`).set(headers(client)).expect(201);
 });
 
-test('concurrent creation and competing acceptances produce one active order and driver',async()=>{
+test('concurrent creation offers only the nearest driver and accepts only that driver',async()=>{
   const quote=await quoted(client);const idempotencyKey=randomUUID();
   const requests=await Promise.all(Array.from({length:5},()=>api.post('/api/orders').set(headers(client)).send({quoteId:quote.id,idempotencyKey})));
   requests.forEach(response=>assert.equal(response.status,201));
@@ -180,6 +205,7 @@ test('concurrent creation and competing acceptances produce one active order and
   await api.post('/api/orders').set(headers(client)).send({quoteId:secondQuote.id,idempotencyKey:randomUUID()}).expect(409);
   const offers=(await api.get('/api/driver/offers').set(headers(driver1)).expect(200)).body;
   assert.equal(offers[0].id,order.id);assert.equal(offers[0].client,undefined);
+  assert.equal((await api.get('/api/driver/offers').set(headers(driver2)).expect(200)).body.length,0);
   const accepted=await Promise.all([driver1,driver2].map(driver=>api.post(`/api/orders/${order.id}/accept`).set(headers(driver))));
   assert.deepEqual(accepted.map(response=>response.status).sort(),[201,409]);
   const acceptedOrder=accepted.find(response=>response.status===201)!.body;
@@ -188,11 +214,53 @@ test('concurrent creation and competing acceptances produce one active order and
   assert.equal((await db.order.findUniqueOrThrow({where:{id:order.id}})).driverId,winner.user.id);
   const pushJobs=await db.pushJob.findMany({where:{orderId:order.id},select:{userId:true,event:true}});
   assert.equal(pushJobs.filter(job=>job.userId===client.user.id&&job.event==='order:created').length,1);
-  assert.deepEqual(pushJobs.filter(job=>job.event==='order:offer').map(job=>job.userId).sort(),[driver1.user.id,driver2.user.id].sort());
+  assert.deepEqual(pushJobs.filter(job=>job.event==='order:offer').map(job=>job.userId),[driver1.user.id]);
   assert.deepEqual(pushJobs.filter(job=>job.event==='order:assigned'),[{userId:client.user.id,event:'order:assigned'}]);
   await api.get(`/api/orders/${order.id}`).set(headers(client2)).expect(403);
   await api.get(`/api/orders/${order.id}/messages`).set(headers(client2)).expect(403);
   await api.post(`/api/orders/${order.id}/cancel`).set(headers(client)).expect(201);
+});
+test('skip and 30-second expiry hand the order to the next driver without reoffering',async()=>{
+  await setOnline(driver1);await setOnline(driver2);
+  const passenger=await login('+996700123459');
+  const order=await create(passenger);
+  assert.equal((await api.get('/api/driver/offers').set(headers(driver1)).expect(200)).body[0].id,order.id);
+  assert.equal((await api.get('/api/driver/offers').set(headers(driver2)).expect(200)).body.length,0);
+  await api.post(`/api/orders/${order.id}/skip`).set(headers(driver1)).expect(201);
+  await api.post(`/api/orders/${order.id}/accept`).set(headers(driver1)).expect(403);
+  assert.equal((await api.get('/api/driver/offers').set(headers(driver2)).expect(200)).body[0].id,order.id);
+  const next=await db.orderOffer.findUniqueOrThrow({where:{orderId_driverId:{orderId:order.id,driverId:driver2.user.id}}});
+  assert.ok(next.expiresAt.getTime()-next.createdAt.getTime()<=30000);
+  await db.orderOffer.update({where:{id:next.id},data:{expiresAt:new Date(Date.now()-1000)}});
+  await app.get(OrdersService).dispatchOrder(order.id);
+  await api.post(`/api/orders/${order.id}/accept`).set(headers(driver2)).expect(409);
+  assert.equal((await api.get(`/api/orders/${order.id}`).set(headers(passenger)).expect(200)).body.status,'NO_DRIVER');
+});
+test('stale or inaccurate online GPS does not qualify for nearest-driver dispatch',async()=>{
+  const passenger=await login('+996700123460');
+  const quote=await quoted(passenger);
+  await db.driverProfile.update({where:{userId:driver1.user.id},data:{locationMeasuredAt:new Date(Date.now()-31000)}});
+  await api.patch('/api/driver/position').set(headers(passenger)).send({latitude:pickup.latitude,longitude:pickup.longitude,accuracyM:8,measuredAtMs:Date.now()}).expect(403);
+  await api.patch('/api/driver/position').set(headers(driver1)).send({latitude:pickup.latitude,longitude:pickup.longitude,accuracyM:101,measuredAtMs:Date.now()}).expect(400);
+  const order=(await api.post('/api/orders').set(headers(passenger)).send({quoteId:quote.id,idempotencyKey:randomUUID()}).expect(201)).body;
+  assert.equal((await api.get('/api/driver/offers').set(headers(driver2)).expect(200)).body[0].id,order.id);
+  await api.post(`/api/orders/${order.id}/cancel`).set(headers(passenger)).expect(201);
+  await setOnline(driver1);
+});
+test('higher-rated driver wins when both online drivers are within 250 metres of the nearest',async()=>{
+  const passenger=await login('+996700123461');
+  await setOnline(driver1,false);await setOnline(driver2);
+  const rated=await create(passenger);
+  await api.post(`/api/orders/${rated.id}/accept`).set(headers(driver2)).expect(201);
+  for(const stage of ['arrive','start','complete'])await api.post(`/api/orders/${rated.id}/${stage}`).set(headers(driver2)).expect(201);
+  await api.post(`/api/orders/${rated.id}/rating`).set(headers(passenger)).send({score:5}).expect(201);
+  await setOnline(driver1);
+  await db.driverProfile.update({where:{userId:driver2.user.id},data:{locationLatitude:42.8756,locationLongitude:74.6055,locationAccuracyM:8,locationMeasuredAt:new Date()}});
+  const next=await create(passenger);
+  assert.equal((await api.get('/api/driver/offers').set(headers(driver2)).expect(200)).body[0].id,next.id);
+  assert.equal((await api.get('/api/driver/offers').set(headers(driver1)).expect(200)).body.length,0);
+  await api.post(`/api/orders/${next.id}/cancel`).set(headers(passenger)).expect(201);
+  await db.driverProfile.update({where:{userId:driver2.user.id},data:{locationLongitude:74.6150,locationMeasuredAt:new Date()}});
 });
 test('one driver cannot accept two different client orders concurrently',async()=>{
   await setOnline(driver1);

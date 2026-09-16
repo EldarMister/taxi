@@ -7,7 +7,7 @@ import sharp from 'sharp';
 import { Actor, AuthGuard, AuthService, RateLimits } from './auth';
 import { AppConfig } from './config';
 import { DriverService } from './driver';
-import { CreateOrderDto, HistoryDto, MessageDto, OnlineDto, PhoneDto, ProfileDto, PushTokenDto, QuoteDto, RatingDto, RefreshDto, RemovePushTokenDto, TopupDto, VerifyDriverDto, VerifyDto } from './dto';
+import { CreateOrderDto, DriverPositionDto, HistoryDto, MessageDto, OnlineDto, PhoneDto, ProfileDto, PushTokenDto, QuoteDto, RatingDto, RefreshDto, RemovePushTokenDto, TopupDto, VerifyDriverDto, VerifyDto } from './dto';
 import { OrdersService } from './orders';
 import { PrismaService } from './prisma.service';
 import { AdminGuard } from './admin.security';
@@ -112,6 +112,7 @@ export class OrdersController {
 export class DriverController {
   constructor(private readonly driver:DriverService,private readonly orders:OrdersService) {}
   @Patch('online') online(@Req() req:AuthedRequest,@Body() dto:OnlineDto) {return this.driver.online(req.actor,dto.online);}
+  @Patch('position') position(@Req() req:AuthedRequest,@Body() dto:DriverPositionDto) {return this.driver.position(req.actor,dto);}
   @Get('offers') offers(@Req() req:AuthedRequest) {return this.orders.offers(req.actor);}
   @Get('balance') balance(@Req() req:AuthedRequest) {return this.driver.balance(req.actor);}
 }

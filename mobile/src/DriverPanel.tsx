@@ -17,7 +17,7 @@ type Props = {
   user: User; order: Order | null; offer?: Order; busy: boolean; coming: boolean;
   onAccept: (offer: Order) => void; onRateClient: (score: number) => Promise<boolean>;
   onCompletionHeight?: (height: number) => void;
-  onOnline: () => void; onAction: (action: string) => void; onChat: () => void; onDone: () => void;
+  onOnline: () => void; onAction: (action: string) => void; onChat: () => void; onDone: (orderId?: string) => void;
 };
 const nextAction = {
   ASSIGNED: { title: 'Следуйте к пассажиру', button: 'Приехал', action: 'arrive' },
@@ -33,7 +33,7 @@ function Deadline({ order, language }: { order: Order; language: User['language'
   if (!order.searchExpiresAt) return null;
   const end = new Date(order.searchExpiresAt).getTime();
   const remaining = Math.max(0, Math.ceil((end - now) / 1000));
-  const total = 60000;
+  const total = 30000;
   return <View style={d.deadline}>
     <Text style={d.caption}>{tr(language)('Осталось')} {Math.floor(remaining / 60)}:{String(remaining % 60).padStart(2, '0')}</Text>
     <View style={d.progress}><View style={{ height: 4, borderRadius: 4, backgroundColor: palette.accent, width: `${Math.min(100, Math.max(0, (end - now) / total * 100))}%` }}/></View>

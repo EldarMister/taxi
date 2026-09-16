@@ -2,7 +2,7 @@ import { BadRequestException, ConflictException, ForbiddenException, Injectable,
 import { Actor, AuthService } from './auth';
 import { AppConfig } from './config';
 import { ACTIVE_STATUSES } from './domain';
-import { TopupDto, VerifyDriverDto } from './dto';
+import { DriverPositionDto, TopupDto, VerifyDriverDto } from './dto';
 import { PrismaService } from './prisma.service';
 import { AdminAuditService } from './admin.security';
 import { RealtimeEvents } from './events';
@@ -20,9 +20,17 @@ export class DriverService {
       if(!profile?.verified||!profile.vehicle) throw new ForbiddenException('Профиль водителя не подтверждён');
       if(online&&profile.deposit<this.config.minimumDeposit) throw new BadRequestException('Пополните депозит у администратора');
       if(!online&&await tx.order.findFirst({where:{driverId:actor.id,status:{in:ACTIVE_STATUSES}}})) throw new ConflictException('Сначала завершите или отмените активный заказ');
-      await tx.driverProfile.update({where:{userId:actor.id},data:{online}});
+      await tx.driverProfile.update({where:{userId:actor.id},data:{online,...(!online?{locationLatitude:null,locationLongitude:null,locationAccuracyM:null,locationMeasuredAt:null}:{})}});
     });
     this.events.adminChanged('drivers',actor.id);return this.auth.user(actor.id);
+  }
+  async position(actor:Actor,dto:DriverPositionDto) {
+    this.assertDriver(actor);
+    const now=Date.now();
+    if(dto.measuredAtMs>now+5000||dto.measuredAtMs<now-30000)throw new BadRequestException('GPS-точка устарела');
+    const updated=await this.db.driverProfile.updateMany({where:{userId:actor.id,verified:true,online:true,OR:[{locationMeasuredAt:null},{locationMeasuredAt:{lt:new Date(dto.measuredAtMs)}}]},data:{locationLatitude:dto.latitude,locationLongitude:dto.longitude,locationAccuracyM:dto.accuracyM,locationMeasuredAt:new Date(dto.measuredAtMs)}});
+    if(!updated.count)throw new ConflictException('Водитель не на линии или GPS-точка устарела');
+    return {ok:true};
   }
   async balance(actor:Actor) {
     this.assertDriver(actor);
@@ -63,7 +71,7 @@ export class DriverService {
       if(await tx.order.findFirst({where:{OR:[{clientId:userId},{driverId:userId}],status:{in:ACTIVE_STATUSES}}})) throw new ConflictException('У пользователя активный заказ');
       if(user.role==='CLIENT'&&await tx.foodOrder.findFirst({where:{clientId:userId,status:{in:ACTIVE_FOOD_STATUSES}}}))throw new ConflictException('У пользователя активный заказ еды');
       await tx.user.update({where:{id:userId},data:{role:'DRIVER'}});
-      await tx.driverProfile.upsert({where:{userId},create:{userId,verified:dto.verified},update:{verified:dto.verified,online:false}});
+      await tx.driverProfile.upsert({where:{userId},create:{userId,verified:dto.verified},update:{verified:dto.verified,online:false,locationLatitude:null,locationLongitude:null,locationAccuracyM:null,locationMeasuredAt:null}});
       await tx.vehicle.upsert({where:{driverId:userId},create:{driverId:userId,make:dto.carMake,color:dto.carColor,plate:dto.carPlate},update:{make:dto.carMake,color:dto.carColor,plate:dto.carPlate}});
       await this.audit.record(tx,actor,'driver.verify','drivers',userId,{verified:dto.verified,carMake:dto.carMake,carColor:dto.carColor,carPlate:dto.carPlate});
     });this.events.adminChanged('drivers',userId);return this.auth.user(userId);

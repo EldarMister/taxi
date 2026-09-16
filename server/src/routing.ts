@@ -50,12 +50,18 @@ function roadNameProbe(step: RouteStep): RouteCoordinate | null {
   return null;
 }
 
-/** Only an explicit language tag on a road may replace a routing-graph name. */
-export function localizedRoadName(value: unknown, language: RouteLanguage): string {
+function comparableRoadName(name: string): string {
+  return name.toLocaleLowerCase().normalize('NFC').replace(/[.,\s]+/gu, ' ').trim();
+}
+/** A language tag may replace the OSRM segment name only for that same road. */
+export function localizedRoadName(value: unknown, language: RouteLanguage, routeName?: string): string {
+  if (!routeName) return '';
   if (!value || typeof value !== 'object' || Array.isArray(value)) return '';
   const place = value as Record<string, unknown>;
   if ((place.category ?? place.class) !== 'highway' || !place.namedetails || typeof place.namedetails !== 'object' || Array.isArray(place.namedetails)) return '';
   const names = place.namedetails as Record<string, unknown>;
+  if (!Object.entries(names).some(([key, name]) => /^name(?::(?:ru|ky))?$/.test(key)
+    && typeof name === 'string' && comparableRoadName(name) === comparableRoadName(routeName))) return '';
   const name = names[`name:${language}`];
   return typeof name === 'string' ? name.trim().replace(/\s+/g, ' ').slice(0, 100) : '';
 }
@@ -124,9 +130,9 @@ export function parseOsrmRoute(payload: unknown, pickup: RouteCoordinate, dropof
 export class RoutingService {
   private readonly names = new Map<string, { name: string; expires: number }>();
   constructor(private readonly config: AppConfig) {}
-  private async roadName(point: RouteCoordinate, language: RouteLanguage, timeoutMs: number): Promise<string> {
+  private async roadName(point: RouteCoordinate, language: RouteLanguage, routeName: string, timeoutMs: number): Promise<string> {
     if (!this.config.nominatimBaseUrl) return '';
-    const key = `${language}:${point.latitude.toFixed(5)}:${point.longitude.toFixed(5)}`;
+    const key = `${language}:${routeName}:${point.latitude.toFixed(5)}:${point.longitude.toFixed(5)}`;
     const cached = this.names.get(key);
     if (cached && cached.expires > Date.now()) return cached.name;
     const url = new URL(`${this.config.nominatimBaseUrl}/reverse`);
@@ -134,21 +140,25 @@ export class RoutingService {
     try {
       const response = await fetch(url, { signal: AbortSignal.timeout(timeoutMs), redirect: 'error', headers: { 'User-Agent': this.config.nominatimUserAgent, Accept: 'application/json' } });
       if (!response.ok) return '';
-      const name = localizedRoadName(await response.json(), language);
+      const name = localizedRoadName(await response.json(), language, routeName);
       if (this.names.size >= 1000) this.names.delete(this.names.keys().next().value!);
       this.names.set(key, { name, expires: Date.now() + (name ? 10 * 60_000 : 30_000) });
       return name;
     } catch { return ''; }
   }
   private async localize(route: DrivingRoute, language: RouteLanguage): Promise<DrivingRoute> {
+    // The extract's default name may be old or in another language. It cannot
+    // be spoken as a localized street name without a matching language tag.
     const steps = route.steps.map(step => ({ ...step, name: '' }));
-    const jobs = route.steps.slice(0, MAX_ROAD_NAME_LOOKUPS).map((step, index) => ({ index, point: roadNameProbe(step) })).filter((job): job is { index: number; point: RouteCoordinate } => !!job.point);
+    const jobs = route.steps.slice(0, MAX_ROAD_NAME_LOOKUPS).map((step, index) => ({ index, name: step.name.trim(), point: roadNameProbe(step) }))
+      .filter((job): job is { index: number; name: string; point: RouteCoordinate } => !!job.name && !!job.point);
     const deadline = Date.now() + ROAD_NAME_BUDGET_MS;
     let cursor = 0;
     await Promise.all(Array.from({ length: Math.min(4, jobs.length) }, async () => {
       while (cursor < jobs.length && Date.now() < deadline) {
         const job = jobs[cursor++];
-        steps[job.index].name = await this.roadName(job.point, language, Math.min(1200, Math.max(1, deadline - Date.now())));
+        const translated = await this.roadName(job.point, language, job.name, Math.min(1200, Math.max(1, deadline - Date.now())));
+        if (translated) steps[job.index].name = translated;
       }
     }));
     return { ...route, steps };

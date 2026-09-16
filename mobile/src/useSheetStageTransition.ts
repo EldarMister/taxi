@@ -83,9 +83,10 @@ export function useSheetStageTransition<Stage extends string>(initial: Stage) {
   };
 
   const exit = (onClosed: () => void) => {
-    if (pending.current || exiting.current) return;
+    if (exiting.current) return;
     exiting.current = true;
     running.current?.stop();
+    pending.current = null;
     if (reducedMotion === true) {
       onClosed();
       return;

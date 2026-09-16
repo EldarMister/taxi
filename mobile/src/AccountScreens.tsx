@@ -8,6 +8,7 @@ import { useTheme } from './design/theme';
 import type { ThemePreference } from './design/theme';
 import type { AppConfig, Balance, Language, Order, User } from './types';
 import { Avatar, Button, Car, colors, Empty, Icon, km, mins, money, Route, s as lightUi, shortAddress, ToggleSwitch, tr } from './ui';
+import { ClientHistoryRow, ClientTripHistoryDetail } from './ClientTripHistory';
 
 export type Page = 'home' | 'profile' | 'history' | 'balance' | 'settings' | 'support' | 'payment';
 const completedOrders = (orders: Order[]) => orders.filter(order => order.status === 'COMPLETED');
@@ -39,7 +40,7 @@ function HistoryRow({ order, user, expanded, onPress }: { order: Order; user: Us
   </View>;
 }
 
-export function AccountScreen({ page, user, config, onUser, onError, onOnline, onNavigate, busy, themePreference, onThemePreferenceChange }: { page: Page; user: User; config: AppConfig | null; onUser: (user: User) => void; onError: (error: string) => void; onOnline: (online: boolean) => void; onNavigate: (page: Page) => void; busy: boolean; themePreference: ThemePreference; onThemePreferenceChange: (preference: ThemePreference) => void }) {
+export function AccountScreen({ page, user, config, onUser, onError, onOnline, onNavigate, busy, themePreference, onThemePreferenceChange, historyDetailId, onHistoryDetailId }: { page: Page; user: User; config: AppConfig | null; onUser: (user: User) => void; onError: (error: string) => void; onOnline: (online: boolean) => void; onNavigate: (page: Page) => void; busy: boolean; themePreference: ThemePreference; onThemePreferenceChange: (preference: ThemePreference) => void; historyDetailId: string | null; onHistoryDetailId: (id: string | null) => void }) {
   const styles = useAccountStyles();
   const s = useAccountUi();
   const t = tr(user.language);
@@ -140,7 +141,7 @@ export function AccountScreen({ page, user, config, onUser, onError, onOnline, o
   }, []);
   const driverProfile = user.driverProfile;
 
-  return <ScrollView showsVerticalScrollIndicator={false} style={{ backgroundColor: isDark ? palette.background : page === 'profile' ? '#F3F8FC' : '#FFFFFF' }} contentContainerStyle={styles.page} refreshControl={['history', 'balance'].includes(page) || (page === 'profile' && user.role === 'DRIVER') ? <RefreshControl refreshing={loading} onRefresh={refresh} tintColor={palette.accent}/> : undefined} keyboardShouldPersistTaps="handled">
+  return <ScrollView key={page === 'history' && user.role === 'CLIENT' ? historyDetailId || 'history-list' : page} showsVerticalScrollIndicator={false} style={{ backgroundColor: isDark ? palette.background : page === 'profile' ? '#F3F8FC' : '#FFFFFF' }} contentContainerStyle={styles.page} refreshControl={['history', 'balance'].includes(page) || (page === 'profile' && user.role === 'DRIVER') ? <RefreshControl refreshing={loading} onRefresh={refresh} tintColor={palette.accent}/> : undefined} keyboardShouldPersistTaps="handled">
     {page === 'profile' && <>
       <View style={styles.profileCard}>
         <Pressable accessibilityRole="button" accessibilityLabel={local('Редактировать профиль', 'Профилди түзөтүү')} accessibilityState={{ expanded: editing }} onPress={() => { setName(user.name || ''); setEditing(!editing); }} style={styles.profilePerson}>
@@ -178,7 +179,9 @@ export function AccountScreen({ page, user, config, onUser, onError, onOnline, o
       <View style={[styles.profileCard, { paddingVertical: 2 }]}><MenuRow icon="settings-outline" label={t('Настройки')} onPress={() => onNavigate('settings')}/><View style={styles.menuDivider}/><MenuRow icon="help-circle-outline" label={t('Поддержка')} onPress={() => onNavigate('support')}/><View style={styles.menuDivider}/><MenuRow icon="receipt-outline" label={user.role === 'DRIVER' ? t('История заказов') : t('Способы оплаты')} onPress={() => onNavigate(user.role === 'DRIVER' ? 'history' : 'payment')}/></View>
     </>}
 
-    {page === 'history' && <>
+    {page === 'history' && user.role === 'CLIENT' && historyDetailId ? (
+      history.find(order => order.id === historyDetailId) ? <ClientTripHistoryDetail order={history.find(order => order.id === historyDetailId)!} user={user} onError={onError}/> : loading ? <ActivityIndicator style={{ paddingVertical: 20 }} color={palette.accent}/> : <Empty icon="time-outline" title={t('Поездка не найдена')}/>
+    ) : page === 'history' && <>
       <View style={styles.segments}>{[['today', 'Сегодня'], ['week', 'Неделя'], ['all', 'Все']].map(([value, label]) => <Pressable key={value} accessibilityRole="button" accessibilityState={{ selected: period === value }} onPress={() => { if (value !== period) { setLoading(true); setHistory([]); setExpandedOrder(null); setPeriod(value); } }} style={[styles.segment, period === value && styles.segmentActive]}><Text style={[styles.segmentText, period === value && { color: isDark ? '#050505' : '#FFFFFF' }]}>{t(label)}</Text></Pressable>)}</View>
       {user.role === 'DRIVER' && <View style={styles.historySummary}>
         <View style={[s.row, { gap: 15 }]}><View style={styles.incomeIcon}><Icon name="bar-chart" color={palette.accent} size={29}/></View><View style={{ flex: 1, gap: 3 }}><Text style={s.muted}>{t('Доход наличными')}</Text><Text style={styles.summaryValue}>{loading && history.length === 0 ? '—' : money(income(history))}</Text></View></View>
@@ -186,7 +189,7 @@ export function AccountScreen({ page, user, config, onUser, onError, onOnline, o
       </View>}
       {loading && history.length === 0 && <ActivityIndicator style={{ paddingVertical: 20 }} color={palette.accent}/>}
       {!loading && history.length === 0 && <Empty icon="time-outline" title={t('Поездок пока нет')}/>}
-      {groups.map(group => <View key={group.date} style={{ gap: 8 }}><Text style={styles.dateHeading}>{period === 'today' ? `${t('Сегодня')}, ` : ''}{group.date}</Text>{group.orders.map(order => <HistoryRow key={order.id} order={order} user={user} expanded={expandedOrder === order.id} onPress={() => setExpandedOrder(expandedOrder === order.id ? null : order.id)}/>)}</View>)}
+      {groups.map(group => <View key={group.date} style={{ gap: 8 }}><Text style={styles.dateHeading}>{period === 'today' ? `${t('Сегодня')}, ` : ''}{group.date}</Text>{group.orders.map(order => user.role === 'CLIENT' ? <ClientHistoryRow key={order.id} order={order} user={user} onPress={() => onHistoryDetailId(order.id)}/> : <HistoryRow key={order.id} order={order} user={user} expanded={expandedOrder === order.id} onPress={() => setExpandedOrder(expandedOrder === order.id ? null : order.id)}/>)}</View>)}
     </>}
 
     {page === 'balance' && <>{balance ? <>

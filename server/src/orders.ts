@@ -8,6 +8,7 @@ import { RealtimeEvents } from './events';
 import { PrismaService } from './prisma.service';
 import { RoutingService } from './providers';
 import { visibleDriverLocation } from './tracking';
+import { nextDriver, OFFER_SECONDS, POSITION_MAX_AGE_MS } from './dispatch-ranking';
 
 @Injectable()
 export class OrdersService {
@@ -41,7 +42,7 @@ export class OrdersService {
       const quote = await tx.quote.findFirst({where:{id:dto.quoteId,userId:actor.id,expiresAt:{gt:new Date()}},include:{order:true}});
       if(!quote) throw new BadRequestException('Расчёт стоимости истёк. Постройте маршрут ещё раз.');
       if(quote.order) throw new ConflictException('Этот расчёт уже использован');
-      const created = await tx.order.create({data:{clientId:actor.id,quoteId:quote.id,idempotencyKey:dto.idempotencyKey,pickup:quote.pickup as Prisma.InputJsonValue,dropoff:quote.dropoff as Prisma.InputJsonValue,geometry:quote.geometry as Prisma.InputJsonValue,distanceMeters:quote.distanceMeters,durationSeconds:quote.durationSeconds,price:quote.price,commission:quote.commission,comment:dto.comment?.trim()??'',passengerName:passenger?.name,passengerPhone:passenger?.phone,searchExpiresAt:new Date(Date.now()+this.config.searchSeconds*1000),history:{create:{status:'SEARCHING',actorId:actor.id}}}});
+      const created = await tx.order.create({data:{clientId:actor.id,quoteId:quote.id,idempotencyKey:dto.idempotencyKey,pickup:quote.pickup as Prisma.InputJsonValue,dropoff:quote.dropoff as Prisma.InputJsonValue,geometry:quote.geometry as Prisma.InputJsonValue,distanceMeters:quote.distanceMeters,durationSeconds:quote.durationSeconds,price:quote.price,commission:quote.commission,comment:dto.comment?.trim()??'',passengerName:passenger?.name,passengerPhone:passenger?.phone,searchExpiresAt:new Date(Date.now()+OFFER_SECONDS*1000),history:{create:{status:'SEARCHING',actorId:actor.id}}}});
       await this.push(tx,[actor.id],'order:created',created.id); return created;
     });
     await this.dispatchOrder(order.id); await this.publish(order.id); return this.serialize(order.id,false,actor.id);
@@ -72,11 +73,14 @@ export class OrdersService {
   async serialize(id:string,offer=false,viewerId?:string) {
     const order = await this.db.order.findUniqueOrThrow({where:{id},include:{rating:true,clientRating:true,quote:{include:{tariff:true}}}});
     if(viewerId&&order.clientId!==viewerId&&order.driverId!==viewerId)throw new ForbiddenException('Нет доступа к заказу');
+    const assignment = !offer&&order.driverId&&ASSIGNED_STATUSES.includes(order.status)
+      ? await this.db.statusHistory.findFirst({where:{orderId:id,status:'ASSIGNED',actorId:order.driverId},orderBy:{createdAt:'desc'},select:{id:true}})
+      : null;
     const driver = !offer&&order.driverId?await this.auth.user(order.driverId):null;
     const client = offer?undefined:await this.auth.user(order.clientId);
     const clientRating = await this.db.clientRating.aggregate({where:{order:{clientId:order.clientId,passengerName:null}},_avg:{score:true}});
     const safeClient = client?{id:client.id,name:client.name,phone:client.phone,photoUrl:client.photoUrl,role:client.role}:undefined;
-    return {driverLocation:offer?null:visibleDriverLocation(order),id:order.id,status:order.status,pickup:order.pickup,dropoff:order.dropoff,geometry:order.geometry,distanceMeters:order.distanceMeters,durationSeconds:order.durationSeconds,price:order.price,currency:'KGS',paymentMethod:'CASH',comment:order.comment,passenger:order.passengerName?{name:order.passengerName,phone:offer?undefined:order.passengerPhone}:null,createdAt:order.createdAt,updatedAt:order.updatedAt,searchExpiresAt:order.searchExpiresAt,completedAt:order.completedAt,driver,client:safeClient,rating:order.rating?.score??null,clientRating:clientRating._avg.score??null,driverRating:order.clientRating?.score??null,tariff:order.quote.tariff,routeProvider:order.quote.routeProvider};
+    return {driverLocation:offer?null:visibleDriverLocation(order),assignmentId:assignment?.id??null,id:order.id,status:order.status,pickup:order.pickup,dropoff:order.dropoff,geometry:order.geometry,distanceMeters:order.distanceMeters,durationSeconds:order.durationSeconds,price:order.price,currency:'KGS',paymentMethod:'CASH',comment:order.comment,passenger:order.passengerName?{name:order.passengerName,phone:offer?undefined:order.passengerPhone}:null,createdAt:order.createdAt,updatedAt:order.updatedAt,searchExpiresAt:order.searchExpiresAt,completedAt:order.completedAt,driver,client:safeClient,rating:order.rating?.score??null,clientRating:clientRating._avg.score??null,driverRating:order.clientRating?.score??null,tariff:order.quote.tariff,routeProvider:order.quote.routeProvider};
   }
   async publish(id:string,additionalUsers:string[]=[]) {
     const snapshot=await this.serialize(id);
@@ -91,22 +95,43 @@ export class OrdersService {
   async dispatchOrder(id:string) {
     const dispatch = await this.db.$transaction(async tx=>{
       const order = await this.lockOrder(tx,id);
-      if(order.status !== 'SEARCHING') return {offers:[] as string[],expired:false};
-      if(order.searchExpiresAt.getTime() <= Date.now()) {
-        await tx.order.update({where:{id},data:{status:'NO_DRIVER',history:{create:{status:'NO_DRIVER',reason:'SEARCH_TIMEOUT'}}}});
-        await this.push(tx,[order.clientId],'order:updated',id);return {offers:[],expired:true};
+      if(order.status !== 'SEARCHING') return {offered:null as string|null,withdrawn:[] as string[],expired:false};
+      const now=Date.now();
+      const existing=await tx.orderOffer.findMany({where:{orderId:id},select:{driverId:true,skipped:true,expiresAt:true}});
+      const active=existing.find(offer=>!offer.skipped&&offer.expiresAt.getTime()>now);
+      if(active)return {offered:null,withdrawn:[],expired:false};
+      const withdrawn=existing.filter(offer=>!offer.skipped&&offer.expiresAt.getTime()<=now).map(offer=>offer.driverId);
+      if(withdrawn.length)await tx.orderOffer.updateMany({where:{orderId:id,driverId:{in:withdrawn}},data:{skipped:true}});
+      const drivers=await tx.driverProfile.findMany({where:{verified:true,online:true,deposit:{gte:Math.max(this.config.minimumDeposit,order.commission)},vehicle:{isNot:null},locationMeasuredAt:{gte:new Date(now-POSITION_MAX_AGE_MS)}}});
+      const busy=new Set((await tx.order.findMany({where:{driverId:{in:drivers.map(d=>d.userId)},status:{in:ACTIVE_STATUSES}},select:{driverId:true}})).map(o=>o.driverId));
+      const offered=new Set(existing.map(o=>o.driverId));
+      const eligible=drivers.filter(d=>!busy.has(d.userId)&&!offered.has(d.userId));
+      let ratings=new Map<string,number>();
+      if(eligible.length){
+        const ids=eligible.map(d=>Prisma.sql`${d.userId}::uuid`);
+        const rows=await tx.$queryRaw<{driverId:string;rating:number}[]>`SELECT o."driverId", AVG(r."score")::float AS "rating" FROM "Rating" r JOIN "Order" o ON o."id"=r."orderId" WHERE o."driverId" IN (${Prisma.join(ids)}) GROUP BY o."driverId"`;
+        ratings=new Map(rows.map(row=>[row.driverId,row.rating]));
       }
-      const drivers = await tx.driverProfile.findMany({where:{verified:true,online:true,deposit:{gte:Math.max(this.config.minimumDeposit,order.commission)},vehicle:{isNot:null}},take:500});
-      const busy = new Set((await tx.order.findMany({where:{driverId:{in:drivers.map(d=>d.userId)},status:{in:ACTIVE_STATUSES}},select:{driverId:true}})).map(o=>o.driverId));
-      const offered = new Set((await tx.orderOffer.findMany({where:{orderId:id},select:{driverId:true}})).map(o=>o.driverId));
-      const eligible = drivers.filter(d=>!busy.has(d.userId)&&!offered.has(d.userId));
-      await tx.orderOffer.createMany({data:eligible.map(d=>({orderId:id,driverId:d.userId})),skipDuplicates:true});
-      await this.push(tx,eligible.map(d=>d.userId),'order:offer',id);return {offers:eligible.map(d=>d.userId),expired:false};
+      const next=nextDriver(order.pickup as unknown as Point,eligible,ratings,now);
+      if(next){
+        const expiresAt=new Date(now+OFFER_SECONDS*1000);
+        await tx.orderOffer.create({data:{orderId:id,driverId:next,expiresAt}});
+        await tx.order.update({where:{id},data:{searchExpiresAt:expiresAt}});
+        await this.push(tx,[next],'order:offer',id);
+        return {offered:next,withdrawn,expired:false};
+      }
+      if(existing.length||order.searchExpiresAt.getTime()<=now){
+        await tx.order.update({where:{id},data:{status:'NO_DRIVER',history:{create:{status:'NO_DRIVER',reason:'SEARCH_TIMEOUT'}}}});
+        await this.push(tx,[order.clientId],'order:updated',id);
+        return {offered:null,withdrawn,expired:true};
+      }
+      return {offered:null,withdrawn,expired:false};
     });
+    if(dispatch.withdrawn.length)this.events.publish(dispatch.withdrawn,'order:withdrawn',{orderId:id});
     if(dispatch.expired) await this.publish(id);
-    if(dispatch.offers.length) {
+    if(dispatch.offered) {
       const snapshot=await this.serialize(id,true);
-      if(snapshot.status==='SEARCHING')this.events.publish(dispatch.offers,'order:offer',snapshot);
+      if(snapshot.status==='SEARCHING')this.events.publish([dispatch.offered],'order:offer',snapshot);
     }
   }
   async dispatchPending() {
@@ -118,22 +143,22 @@ export class OrdersService {
     const driver = await this.db.driverProfile.findUnique({where:{userId:actor.id}});
     if(!driver?.verified || !driver.online) return [];
     if(await this.db.order.findFirst({where:{driverId:actor.id,status:{in:ACTIVE_STATUSES}}})) return [];
-    const offers = await this.db.orderOffer.findMany({where:{driverId:actor.id,skipped:false,order:{status:'SEARCHING',searchExpiresAt:{gt:new Date()},commission:{lte:driver.deposit}}},include:{order:true},orderBy:{createdAt:'desc'},take:50});
+    const offers = await this.db.orderOffer.findMany({where:{driverId:actor.id,skipped:false,expiresAt:{gt:new Date()},order:{status:'SEARCHING',commission:{lte:driver.deposit}}},include:{order:true},orderBy:{createdAt:'desc'},take:50});
     const valid = offers.filter(()=>driver.deposit>=this.config.minimumDeposit);
-    return Promise.all(valid.map(offer=>this.serialize(offer.orderId,true)));
+    return Promise.all(valid.map(async offer=>({...await this.serialize(offer.orderId,true),searchExpiresAt:offer.expiresAt})));
   }
   async accept(actor:Actor,id:string) {
     if(actor.role !== 'DRIVER') throw new ForbiddenException('Действие доступно водителю');
     await this.db.$transaction(async tx=>{
       const order = await this.lockOrder(tx,id);
       if(order.driverId===actor.id&&ASSIGNED_STATUSES.includes(order.status)) return;
-      if(order.status !== 'SEARCHING' || order.searchExpiresAt.getTime() <= Date.now()) throw new ConflictException('Этот заказ уже недоступен');
+      if(order.status !== 'SEARCHING') throw new ConflictException('Этот заказ уже недоступен');
       await tx.$queryRaw`SELECT "userId" FROM "DriverProfile" WHERE "userId"=${actor.id}::uuid FOR UPDATE`;
       const driver = await tx.driverProfile.findUnique({where:{userId:actor.id},include:{vehicle:true}});
       if(!driver?.verified||!driver.online||!driver.vehicle) throw new ForbiddenException('Водитель не подтверждён или не на линии');
       if(driver.deposit<Math.max(order.commission,this.config.minimumDeposit)) throw new BadRequestException('Недостаточно средств на депозите');
       const offer = await tx.orderOffer.findUnique({where:{orderId_driverId:{orderId:id,driverId:actor.id}}});
-      if(!offer||offer.skipped) throw new ForbiddenException('Заказ не был предложен вам');
+      if(!offer||offer.skipped||offer.expiresAt.getTime()<=Date.now()) throw new ForbiddenException('Предложение истекло или заказ не был предложен вам');
       if(await tx.order.findFirst({where:{driverId:actor.id,status:{in:ACTIVE_STATUSES}}})) throw new ConflictException('У вас уже есть активный заказ');
       await tx.order.update({where:{id},data:{status:'ASSIGNED',driverId:actor.id,driverLocation:Prisma.DbNull,history:{create:{status:'ASSIGNED',actorId:actor.id}}}});
       await this.push(tx,[order.clientId],'order:assigned',id);
@@ -142,8 +167,10 @@ export class OrdersService {
   }
   async skip(actor:Actor,id:string) {
     if(actor.role !== 'DRIVER') throw new ForbiddenException();
-    const result = await this.db.orderOffer.updateMany({where:{orderId:id,driverId:actor.id,order:{status:'SEARCHING'}},data:{skipped:true}});
-    if(!result.count) throw new NotFoundException('Предложение не найдено');return {ok:true};
+    const result = await this.db.orderOffer.updateMany({where:{orderId:id,driverId:actor.id,skipped:false,expiresAt:{gt:new Date()},order:{status:'SEARCHING'}},data:{skipped:true}});
+    if(!result.count) throw new NotFoundException('Предложение не найдено');
+    this.events.publish([actor.id],'order:withdrawn',{orderId:id});
+    await this.dispatchOrder(id);return {ok:true};
   }
   async transition(actor:Actor,id:string,status:OrderStatus) {
     await this.db.$transaction(async tx=>{
@@ -156,7 +183,7 @@ export class OrdersService {
         const driver = await tx.driverProfile.findUniqueOrThrow({where:{userId:actor.id}});
         if(driver.deposit<order.commission) throw new ConflictException('Недостаточно депозита для комиссии. Обратитесь в поддержку.');
         const balanceAfter = driver.deposit-order.commission;
-        await tx.driverProfile.update({where:{userId:actor.id},data:{deposit:balanceAfter,...(balanceAfter<this.config.minimumDeposit?{online:false}:{})}});
+        await tx.driverProfile.update({where:{userId:actor.id},data:{deposit:balanceAfter,...(balanceAfter<this.config.minimumDeposit?{online:false,locationLatitude:null,locationLongitude:null,locationAccuracyM:null,locationMeasuredAt:null}:{})}});
         await tx.ledgerEntry.create({data:{driverId:actor.id,orderId:id,kind:'COMMISSION',amount:-order.commission,balanceAfter,idempotencyKey:`commission:${id}`,note:'Комиссия за поездку'}});
       }
       await tx.order.update({where:{id},data:{status,...(status==='COMPLETED'?{completedAt:new Date(),driverLocation:Prisma.DbNull}:{}),history:{create:{status,actorId:actor.id}}}});
@@ -182,7 +209,7 @@ export class OrdersService {
         await tx.orderOffer.deleteMany({where:{orderId:id,driverId:{not:actor.id},skipped:false}});
       }
       const status = byDriver?'SEARCHING':'CANCELLED';
-      await tx.order.update({where:{id},data:{status,driverLocation:Prisma.DbNull,...(byDriver?{driverId:null,searchExpiresAt:new Date(Date.now()+this.config.searchSeconds*1000)}:{}),history:{create:{status,actorId:actor.id,reason:byDriver?'DRIVER_CANCELLED':'CLIENT_CANCELLED'}}}});
+      await tx.order.update({where:{id},data:{status,driverLocation:Prisma.DbNull,...(byDriver?{driverId:null,searchExpiresAt:new Date(Date.now()+OFFER_SECONDS*1000)}:{}),history:{create:{status,actorId:actor.id,reason:byDriver?'DRIVER_CANCELLED':'CLIENT_CANCELLED'}}}});
       await this.push(tx,this.participants(order),'order:updated',id);
     });
     await this.publish(id,previousDriver?[previousDriver]:[]);await this.dispatchOrder(id);

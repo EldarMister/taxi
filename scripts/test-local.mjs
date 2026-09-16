@@ -12,7 +12,7 @@ if (!['127.0.0.1', 'localhost'].includes(parsed.hostname) || parsed.pathname !==
 }
 const npmCli = process.env.npm_execpath || resolve(dirname(process.execPath), 'node_modules/npm/bin/npm-cli.js');
 if (!existsSync(npmCli)) throw new Error('Run this helper through npm run test:local.');
-const env = { ...process.env, DATABASE_URL: config.TEST_DATABASE_URL, TEST_DATABASE_RESET: 'true', NODE_ENV: 'development', ROUTING_PROVIDER: 'osrm', SEARCH_TIMEOUT_SECONDS: '60' };
+const env = { ...process.env, DATABASE_URL: config.TEST_DATABASE_URL, TEST_DATABASE_RESET: 'true', NODE_ENV: 'development', ROUTING_PROVIDER: 'osrm' };
 async function run(script) {
   await new Promise((done, fail) => {
     const child = spawn(process.execPath, [npmCli, 'run', script], { cwd: resolve(root, 'server'), env, stdio: 'inherit', windowsHide: true });

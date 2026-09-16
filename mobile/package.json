@@ -25,7 +25,7 @@
     "build:ios:client": "eas build --platform ios --profile production-client",
     "build:ios:driver": "eas build --platform ios --profile production-driver",
     "typecheck": "tsc --noEmit",
-    "test:native": "node --test tests/native-lifecycle.test.cjs tests/app-variant.test.cjs tests/location.test.cjs tests/map-selection.test.cjs tests/permission-onboarding.test.cjs tests/push-permissions.test.cjs tests/theme.test.cjs",
+    "test:native": "node --test tests/native-lifecycle.test.cjs tests/app-variant.test.cjs tests/location.test.cjs tests/map-selection.test.cjs tests/car-route-animation.test.cjs tests/permission-onboarding.test.cjs tests/push-permissions.test.cjs tests/theme.test.cjs tests/client-history.test.cjs",
     "test:variant": "node --test tests/app-variant.test.cjs",
     "test:api": "node --test scripts/test-api.cjs",
     "test:ui": "node --test scripts/test-ui-contracts.cjs",

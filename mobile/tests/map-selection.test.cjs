@@ -13,6 +13,8 @@ const compile = file => ts.transpileModule(fs.readFileSync(path.join(__dirname, 
 }).outputText;
 const frameExports = {};
 vm.runInNewContext(compile('routeFrame.ts'), { exports: frameExports });
+const carAnimationExports = {};
+vm.runInNewContext(compile('carRouteAnimation.ts'), { exports: carAnimationExports });
 const feature = (latitude, longitude, properties = {}) => ({ type: 'Feature', geometry: { type: 'Point', coordinates: [longitude, latitude] }, properties });
 
 async function mountMap(t, initialProps, options = {}) {
@@ -51,6 +53,7 @@ async function mountMap(t, initialProps, options = {}) {
         return options.position || { latitude: 42.88, longitude: 74.59 };
       } };
       if (id === './routeFrame') return frameExports;
+      if (id === './carRouteAnimation') return carAnimationExports;
       if (id === './taxiMapStyle') return styles;
       throw Error(id);
     },
@@ -334,7 +337,7 @@ test('accepted trip shows both routes while manual map browsing persists through
 
 test('the map styles vector roads and places, keeps attribution and can fall back to configured raster tiles', async t => {
   const route = [{ latitude: 42.87, longitude: 74.57 }, { latitude: 42.93, longitude: 74.61 }, { latitude: 42.88, longitude: 74.58 }];
-  const h = await mountMap(t, { pickup: route[0], dropoff: route[2], geometry: route, contentTopInset: 110, showUserPosition: true }, { env: { EXPO_PUBLIC_OSM_TILE_URL: 'https://tiles.example.test/{z}/{x}/{y}.png' } });
+  const h = await mountMap(t, { passengerView: true, pickup: route[0], dropoff: route[2], geometry: route, contentTopInset: 110, showUserPosition: true }, { env: { EXPO_PUBLIC_OSM_TILE_URL: 'https://tiles.example.test/{z}/{x}/{y}.png' } });
   await h.ready();
   const style = h.map().props.mapStyle;
   assert.equal(style.sources.openmaptiles.type, 'vector');
@@ -477,6 +480,40 @@ test('closing a completed trip returns the map to the driver instead of Bishkek'
   assert.equal(h.bounds.length, 1);
 });
 
+test('late client GPS replaces the startup city camera and displays a dot without an accuracy radius', async t => {
+  const seen = [];
+  const h = await mountMap(t, { passengerView: true, showUserPosition: true, onUserLocation: point => seen.push(point) });
+  await h.ready();
+  const puck = h.renderer.root.findByType('UserLocation');
+  assert.equal(puck.props.visible, false);
+  await act(async () => puck.props.onUpdate({ timestamp: Date.now(), coords: { latitude: 41.1987, longitude: 72.1802, accuracy: 8 } }));
+  assert.deepEqual([...h.cameraCalls.at(-1).centerCoordinate], [72.1802, 41.1987]);
+  assert.equal(h.renderer.root.findByProps({ id: 'client-user-position' }).props.coordinate[1], 41.1987);
+  assert.equal(h.renderer.root.findAllByType('CircleLayer').length, 0);
+  assert.equal(seen.length, 1);
+});
+
+test('following client GPS keeps an explicitly chosen pickup pin unchanged', async t => {
+  const pickup = { latitude: 41.24, longitude: 72.25, address: 'Выбранный вручную адрес' };
+  const changed = [];
+  const h = await mountMap(t, { passengerView: true, showUserPosition: true, pickup, browsePickup: false, onPickupChange: point => changed.push(point) });
+  await h.ready();
+  await act(async () => h.renderer.root.findByType('UserLocation').props.onUpdate({
+    timestamp: Date.now(), coords: { latitude: 41.1987, longitude: 72.1802, accuracy: 8 },
+  }));
+  assert.deepEqual([...h.cameraCalls.at(-1).centerCoordinate], [72.1802, 41.1987]);
+  assert.deepEqual([...h.renderer.root.findByProps({ id: 'pickup' }).props.coordinate], [pickup.longitude, pickup.latitude]);
+  assert.equal(changed.length, 0);
+});
+
+test('dark approach route has a distinct amber line alongside the white fare route', async t => {
+  const a = { latitude: 41.1987, longitude: 72.1802 }, b = { latitude: 41.20, longitude: 72.183 };
+  const h = await mountMap(t, { theme: 'dark', pickup: a, dropoff: b, geometry: [a, b], approachGeometry: [a, b] });
+  await h.ready();
+  assert.equal(h.renderer.root.findByProps({ id: 'approach-route-line' }).props.style.lineColor, '#FFBC4B');
+  assert.equal(h.renderer.root.findByProps({ id: 'route-line' }).props.style.lineColor, '#F0F0F0');
+});
+
 test('destination Б uses blue in the light theme and white in the dark theme', async t => {
   const h = await mountMap(t, { pickup: { latitude: 41.2, longitude: 72.18 }, dropoff: { latitude: 41.24, longitude: 72.22 }, dropoffRouteLabel: '0,5 км · 1 мин' });
   const letter = () => h.renderer.root.findAllByType('Text').find(node => node.children.includes('Б'));
@@ -487,22 +524,53 @@ test('destination Б uses blue in the light theme and white in the dark theme', 
 
 test('passenger sees only the supplied driver and can inspect the route without camera resets', async t => {
   const a = { latitude: 41.1987, longitude: 72.1802 }, b = { latitude: 41.204, longitude: 72.19 };
-  const h = await mountMap(t, { passengerView: true, pickup: b, geometry: [a,b], driverPosition: a, cameraSession: 'order:assigned' });
-  await h.ready(); assert.equal(h.bounds.length, 1);
-  assert.ok(h.renderer.root.findByProps({ accessibilityLabel: 'Ваш водитель' }));
-  assert.equal(h.renderer.root.findByType('Image').props.source, 'tracking-car-white.png');
-  const passengerMarker = () => h.renderer.root.findByType('MarkerView');
-  assert.deepEqual([...passengerMarker().props.coordinate], [a.longitude, a.latitude]);
-  assert.deepEqual(JSON.parse(JSON.stringify(passengerMarker().props.anchor)), { x: .5, y: .5 }, 'car stays centered over its coordinate');
-  assert.equal(h.renderer.root.findByType('Image').props.style.width, 26, 'passenger car stays compact');
-  assert.equal(h.renderer.root.findByType('Image').props.style.height, 38);
+  const h = await mountMap(t, { passengerView: true, pickup: b, geometry: [a,b], driverPosition: a, cameraSession: 'order:ASSIGNED' });
+  await h.ready(); assert.deepEqual([...h.cameraCalls.at(-1).centerCoordinate], [a.longitude, a.latitude]);
+  const source = () => h.renderer.root.findByProps({ id: 'client-driver-position' });
+  const car = () => h.renderer.root.findByProps({ id: 'client-driver-car' });
+  assert.deepEqual([...source().props.shape.coordinates], [a.longitude, a.latitude]);
+  assert.equal(car().props.style.iconImage, 'tracking-car-white.png');
+  assert.equal(car().props.style.iconSize, .025, 'the 1046×1504 source uses a scale, not logical pixels');
+  assert.equal(car().props.style.iconAnchor, 'center');
+  assert.deepEqual([...car().props.style.iconOffset], [0, 0]);
+  assert.equal(car().props.style.iconRotationAlignment, 'map');
+  assert.equal(car().props.style.iconAllowOverlap, true);
+  assert.equal(h.renderer.root.findAllByType('MarkerView').length, 0, 'car is a geographical MapLibre symbol');
   assert.equal(h.renderer.root.findAllByType('UserLocation').length, 0, 'driver marker owns the location display');
   assert.equal(h.renderer.root.findAllByType('CircleLayer').length, 0, 'passenger sees no second blue GPS circle');
-  await act(async () => h.map().props.onRegionWillChange(feature(41.2, 72.19, { isUserInteraction: true })));
-  await h.update({ geometry: [{ ...a, latitude: 41.199 }, b], driverPosition: { ...a, latitude: 41.199 } });
-  assert.equal(h.bounds.length, 1);
-  assert.deepEqual([...passengerMarker().props.coordinate], [a.longitude, 41.199], 'panning does not detach the car from the latest GPS fix');
-  await h.update({ driverPosition: null }); assert.equal(h.renderer.root.findAllByType('MarkerView').length, 0);
+  const beforeStage = h.cameraCalls.length;
+  await h.update({ cameraSession: 'order:ARRIVED' });
+  assert.equal(h.cameraCalls.length, beforeStage, 'stage changes do not reset the followed zoom or camera');
+  await act(async () => h.map().props.onRegionWillChange(feature(41.2, 72.19, { isUserInteraction: true, heading: 77 })));
+  const cameraCallsAfterPan = h.cameraCalls.length;
+  await h.update({ geometry: [{ ...a, latitude: 41.199 }, b], driverPosition: { ...a, latitude: 41.199, heading: 90 }, cameraSession: 'order:IN_PROGRESS' });
+  assert.equal(h.cameraCalls.length, cameraCallsAfterPan, 'status and GPS updates preserve free inspection');
+  assert.deepEqual([...source().props.shape.coordinates], [a.longitude, 41.199], 'panning does not detach the car from the latest GPS fix');
+  assert.equal(car().props.style.iconRotate, 90, 'camera heading must not change true geographic bearing');
+  await act(async () => h.renderer.root.findByProps({ accessibilityLabel: 'Показать водителя' }).props.onPress());
+  assert.deepEqual([...h.cameraCalls.at(-1).centerCoordinate], [a.longitude, 41.199]);
+  await h.update({ driverPosition: null }); assert.equal(h.renderer.root.findAllByProps({ id: 'client-driver-position' }).length, 0);
+});
+
+test('native car converts latitude and longitude at the MapLibre boundary', async t => {
+  const h = await mountMap(t, { passengerView: true, driverPosition: { latitude: 42, longitude: 74, heading: 0 }, cameraSession: 'sample:ASSIGNED' });
+  await h.ready();
+  assert.deepEqual([...h.renderer.root.findByProps({ id: 'client-driver-position' }).props.shape.coordinates], [74, 42]);
+  assert.equal(h.renderer.root.findByProps({ id: 'client-driver-car' }).props.style.iconRotate, 0, 'zero degrees is a real heading');
+  await act(async () => h.map().props.onRegionWillChange(feature(42, 74, { isUserInteraction: true, heading: 173, zoomLevel: 15 })));
+  assert.deepEqual([...h.renderer.root.findByProps({ id: 'client-driver-position' }).props.shape.coordinates], [74, 42]);
+  assert.equal(h.renderer.root.findByProps({ id: 'client-driver-car' }).props.style.iconRotate, 0, 'rotation cannot affect the driver fix');
+});
+
+test('a status transition keeps the stopped car heading while a new assignment resets it', async t => {
+  const point = { latitude: 42, longitude: 74, accuracyM: 5, assignmentId: 'assignment-one', heading: 90 };
+  const h = await mountMap(t, { passengerView: true, driverPosition: point, cameraSession: 'order:ASSIGNED' });
+  const car = () => h.renderer.root.findByProps({ id: 'client-driver-car' });
+  assert.equal(car().props.style.iconRotate, 90);
+  await h.update({ driverPosition: { ...point, heading: 270 }, cameraSession: 'order:IN_PROGRESS' });
+  assert.equal(car().props.style.iconRotate, 90, 'a stage change is not a new GPS bearing');
+  await h.update({ driverPosition: { ...point, assignmentId: 'assignment-two', heading: 270 } });
+  assert.equal(car().props.style.iconRotate, 270, 'a replacement driver starts a new heading history');
 });
 
 test('native and web address lookups use the authenticated API and retain search coordinates', async () => {

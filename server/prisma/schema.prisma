@@ -50,6 +50,10 @@ model DriverProfile {
   verified Boolean @default(false)
   online Boolean @default(false)
   deposit Int @default(0)
+  locationLatitude Float?
+  locationLongitude Float?
+  locationAccuracyM Float?
+  locationMeasuredAt DateTime?
   vehicle Vehicle?
   ledger LedgerEntry[]
   offers OrderOffer[]
@@ -145,9 +149,11 @@ model OrderOffer {
   driverId String @db.Uuid
   driver DriverProfile @relation(fields:[driverId],references:[userId])
   skipped Boolean @default(false)
+  expiresAt DateTime
   createdAt DateTime @default(now())
   @@unique([orderId,driverId])
   @@index([driverId,skipped])
+  @@index([orderId,skipped,expiresAt])
 }
 model Message {
   id String @id @default(uuid()) @db.Uuid

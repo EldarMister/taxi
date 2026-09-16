@@ -11,7 +11,6 @@ export class AppConfig {
   readonly port = this.integer('PORT', 3000, 1, 65535);
   readonly accessSeconds = this.integer('ACCESS_TOKEN_SECONDS', 900, 60, 3600);
   readonly refreshDays = this.integer('REFRESH_TOKEN_DAYS', 30, 1, 90);
-  readonly searchSeconds = this.integer('SEARCH_TIMEOUT_SECONDS', 60, 10, 1800);
   readonly minimumDeposit = this.integer('MIN_DRIVER_DEPOSIT', 50, 0, 100000);
   readonly devAuth = this.development && process.env.DEV_AUTH_ENABLED === 'true';
   readonly devCode = process.env.DEV_OTP_CODE ?? '123456';

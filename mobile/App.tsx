@@ -147,6 +147,7 @@ function TaxiApp() {
   const dismissedOrderIds = useRef(new Set<string>());
   const [offers, setOffers] = useState<Order[]>([]);
   const [page, setPage] = useState<Page>("home");
+  const [historyDetailId, setHistoryDetailId] = useState<string | null>(null);
   const [service, setService] = useState<'hub' | 'taxi'>('hub');
   const [foodEntry, setFoodEntry] = useState<FoodEntry>({ screen: 'home', key: 0 });
   const [contentRevision, setContentRevision] = useState(0);
@@ -160,6 +161,9 @@ function TaxiApp() {
   const [offline, setOffline] = useState(false);
   const [connected, setConnected] = useState(false);
   const [pickup, setPickup] = useState<Point | null>(null);
+  const [pickupChosenManually, setPickupChosenManually] = useState(false);
+  const pickupChosenManuallyRef = useRef(false);
+  const markManualPickup = (value: boolean) => { pickupChosenManuallyRef.current = value; setPickupChosenManually(value); };
   const [dropoff, setDropoff] = useState<Point | null>(null);
   const [addressField, setAddressField] = useState<"pickup" | "dropoff" | null>(
     null,
@@ -171,6 +175,7 @@ function TaxiApp() {
   const [mapPanelHeight, setMapPanelHeight] = useState(180);
   const [navigationHeight, setNavigationHeight] = useState(180);
   const [mapFocus, setMapFocus] = useState<Coordinate | null>(null);
+  const [searchCenter, setSearchCenter] = useState<Coordinate | null>(null);
   const [recenter, setRecenter] = useState(0);
   const [tariffs, setTariffs] = useState<Tariff[]>([]);
   const [tariffId, setTariffId] = useState("");
@@ -186,10 +191,26 @@ function TaxiApp() {
   const driver = user?.role === "DRIVER";
   const showingServices = !driver && page === 'home' && service === 'hub' && !order;
   const locationEnabled = !!locationPermission?.granted && locationPermission.servicesEnabled;
+  useEffect(() => { setSearchCenter(null); }, [user?.id]);
+  useEffect(() => {
+    if (!addressField || !locationEnabled || searchCenter) return;
+    let live = true;
+    void getCurrentPosition().then(point => { if (live) setSearchCenter(point); }).catch(() => undefined);
+    return () => { live = false; };
+  }, [addressField, locationEnabled, !!searchCenter]);
   const navigation = useDriverNavigation({ userId: user?.id, order: driver ? order : null, enabled: driver && permissionStep === 'done', locationEnabled, mapVisible: page === 'home' && !showingServices, language: user?.language || 'ru' });
+  const lastDriverPositionUpload = useRef(0);
+  useEffect(() => {
+    const fix=navigation.position;
+    if(!driver||!user?.driverProfile?.online||!locationEnabled||!fix||AppState.currentState!=='active')return;
+    if(!Number.isFinite(fix.accuracy)||fix.accuracy>100||Date.now()-fix.timestamp>15000)return;
+    if(Date.now()-lastDriverPositionUpload.current<5000)return;
+    lastDriverPositionUpload.current=Date.now();
+    void api.patch('/driver/position',{latitude:fix.latitude,longitude:fix.longitude,accuracyM:fix.accuracy,measuredAtMs:fix.timestamp}).catch(()=>undefined);
+  },[driver,user?.id,user?.driverProfile?.online,locationEnabled,navigation.position]);
   const tracking = useClientDriverTracking(order, user?.role === "CLIENT");
   const mapSelection = !driver && !order ? mapField : null;
-  const browsingPickup = !driver && !order && !dropoff && !mapSelection;
+  const browsingPickup = !driver && !order && !dropoff && !mapSelection && !pickupChosenManually;
   const { quote, quotes, calculating, quoteError, refresh: refreshQuotes, clear: clearQuotes } = useRideQuotes(pickup, dropoff, tariffs, tariffId, !!user && !driver && !order, user?.id);
   const updateUser = (next: User | null) => {
     driverSounds.setUser(next);
@@ -327,6 +348,9 @@ function TaxiApp() {
         if (event === "logout") {
           updateUser(null);
           applyOrder(null);
+          setPickup(null);
+          markManualPickup(false);
+          setDropoff(null);
           setOffers([]);
           setPage("home");
           setService('hub');
@@ -521,6 +545,7 @@ function TaxiApp() {
         setPermissionError("");
         setPermissionNeedsSettings(false);
         setPickup(null);
+        markManualPickup(false);
         setDropoff(null);
         setRideDetails(emptyRideDetails);
         clearQuotes();
@@ -528,14 +553,16 @@ function TaxiApp() {
     });
   const online = (value: boolean) =>
     run(async () => {
+      const position=value?await getCurrentPosition():null;
       await api.patch("/driver/online", { online: value });
+      if(position)await api.patch('/driver/position',{latitude:position.latitude,longitude:position.longitude,accuracyM:position.accuracy??100,measuredAtMs:Date.now()});
       updateUser(await api.request<User>("/users/me"));
       if (!value) setOffers([]);
     });
   const selectAddress = (field: "pickup" | "dropoff", point: Point) => {
     const selected = normalizePoint(point);
     setError("");
-    if (field === "pickup") { setPickup(selected); setRideDetails(current => ({ ...current, entrance: "" })); }
+    if (field === "pickup") { setPickup(selected); markManualPickup(!selected.address.startsWith('GPS:')); setRideDetails(current => ({ ...current, entrance: "" })); }
     else setDropoff(selected);
     setAddressField(null);
     setMapField(field === "dropoff" && !pickup ? "pickup" : null);
@@ -558,11 +585,12 @@ function TaxiApp() {
   const locateAfterPermissionGrant = (currentUser: User) => {
     void getCurrentPosition().then((point) => {
       if (userRef.current?.id !== currentUser.id) return;
+      setSearchCenter(point);
       setMapFocus(point);
       setRecenter((value) => value + 1);
       if (currentUser.role === "CLIENT") {
         const fallback = gpsPoint(point);
-        setPickup(fallback);
+        if (!pickupChosenManuallyRef.current) setPickup(fallback);
         void resolvePoint(point).then((resolved) => {
           if (userRef.current?.id !== currentUser.id) return;
           setPickup((selected) => selected && selected.latitude === point.latitude && selected.longitude === point.longitude ? normalizePoint(resolved) : selected);
@@ -709,9 +737,9 @@ function TaxiApp() {
       else applyOrder(result);
       if (driver && ["complete", "cancel"].includes(name)) await sync();
     });
-  const done = () => {
+  const done = (expectedOrderId?: string, resetTrip = false) => {
     const current = orderRef.current;
-    if (!current || busyRef.current) return;
+    if (!current || busyRef.current || (expectedOrderId != null && current.id !== expectedOrderId)) return;
     void run(async () => {
       dismissedOrderIds.current.add(current.id);
       try {
@@ -721,6 +749,16 @@ function TaxiApp() {
         throw e;
       }
       if (orderRef.current?.id === current.id) applyOrder(null);
+      if (driver) setPage('home');
+      else {
+        setPage('home');
+        setService('taxi');
+        setMapField(null);
+        setMapFocus(null);
+        setAddressField(null);
+        if (resetTrip) { setPickup(null); markManualPickup(false); setDropoff(null); }
+        setRecenter(value => value + 1);
+      }
       clearQuotes();
       orderKey.current = null;
       setComing(false);
@@ -789,6 +827,7 @@ function TaxiApp() {
   const navigate = (next: Page) => {
 
     setDrawer(false);
+    setHistoryDetailId(null);
     setPage(next);
     setError("");
   };
@@ -805,13 +844,14 @@ function TaxiApp() {
       if (addressField || chat || drawer) return false;
       if (showingServices) return false;
       if (mapField) { setMapField(null); setMapFocus(null); return true; }
+      if (!driver && page === 'history' && historyDetailId) { setHistoryDetailId(null); return true; }
       if (page !== "home") { setPage("home"); return true; }
       if (!driver && !order && dropoff) { setDropoff(null); return true; }
       if (!driver && !order && page === 'home') { setService('hub'); setFoodEntry(value => ({ screen: 'home', key: value.key + 1 })); return true; }
       return false;
     });
     return () => back.remove();
-  }, [addressField, chat, drawer, mapField, page, driver, order, dropoff, showingServices]);
+  }, [addressField, chat, drawer, mapField, page, driver, order, dropoff, showingServices, historyDetailId]);
   const offer = !order
     ? offers.find(
         (item) =>
@@ -872,7 +912,7 @@ function TaxiApp() {
   const pageTitles: Record<Page, string> = {
     home: driver ? "Atlas pro" : "Atlas",
     profile: "Профиль",
-    history: driver ? "История заказов" : "История поездок",
+    history: driver ? "История заказов" : historyDetailId ? "Детали поездки" : "История поездок",
     balance: "Баланс",
     settings: "Настройки",
     support: "Поддержка",
@@ -887,7 +927,7 @@ function TaxiApp() {
             name={page === "home" || driver ? "menu" : "arrow-back"}
             label={t(page === "home" || driver ? "Меню" : "Назад")}
             onPress={() =>
-              page === "home" || driver ? setDrawer(true) : navigate("home")
+              page === "home" || driver ? setDrawer(true) : page === 'history' && historyDetailId ? setHistoryDetailId(null) : navigate("home")
             }
           />
           {page === "home" ? (
@@ -986,8 +1026,13 @@ function TaxiApp() {
               selectionMode={mapSelection}
               browsePickup={browsingPickup}
               showUserPosition={locationEnabled && !driver}
+              onUserLocation={point => setSearchCenter(previous => previous && Math.hypot(
+                (point.latitude - previous.latitude) * 111320,
+                (point.longitude - previous.longitude) * 111320 * Math.cos(point.latitude * Math.PI / 180),
+              ) < 100 ? previous : point)}
               onPickupChange={point => {
                 if (!pickup || Math.abs(pickup.latitude - point.latitude) + Math.abs(pickup.longitude - point.longitude) > .00005) setRideDetails(value => ({ ...value, entrance: '' }));
+                markManualPickup(false);
                 setPickup(normalizePoint(point));
               }}
               onPanelHeight={setMapPanelHeight}
@@ -1025,7 +1070,7 @@ function TaxiApp() {
           </>}
           {!driver && order && <>
             <View style={{ height: Math.max(0, bookingHeight - 30) }}/>
-            <ClientTripPanel order={order} user={user} busy={busy} onAction={action} onChat={() => setChat(true)} onDone={done} onRating={rate} coming={coming} onHeight={setBookingHeight} driverPosition={tracking.position} trackingWaiting={tracking.waiting} trackingStatus={tracking.statusMessage} approach={approach.route}/>
+            <ClientTripPanel order={order} user={user} busy={busy} onAction={action} onChat={() => setChat(true)} onDone={() => done(order.id)} onReset={() => done(order.id, true)} onRating={rate} coming={coming} onHeight={setBookingHeight} driverPosition={tracking.position} trackingWaiting={tracking.waiting} trackingStatus={tracking.statusMessage} approach={approach.route}/>
           </>}
         </View>
       ) : (
@@ -1038,6 +1083,8 @@ function TaxiApp() {
           onError={setError}
           onOnline={online}
           onNavigate={navigate}
+          historyDetailId={historyDetailId}
+          onHistoryDetailId={setHistoryDetailId}
           busy={busy}
           themePreference={themePreference}
           onThemePreferenceChange={onThemePreferenceChange}
@@ -1171,7 +1218,7 @@ function TaxiApp() {
       {addressField && (
         <AddressPicker
           field={addressField}
-          center={pickup}
+          center={searchCenter || pickup}
           pickup={pickup}
           dropoff={dropoff}
           onFieldChange={setAddressField}

@@ -62,9 +62,9 @@ export class PushService {
           const { title, body, sound, channelId } = pushPresentation(job.event, user.role);
           let ttl = pushTtlSeconds(job.event);
           if (job.event === 'order:offer') {
-            const offer = await this.db.orderOffer.findFirst({where:{orderId:job.orderId,driverId:job.userId,skipped:false,driver:{online:true,verified:true},order:{status:'SEARCHING',searchExpiresAt:{gt:new Date()}}},include:{order:true}});
+            const offer = await this.db.orderOffer.findFirst({where:{orderId:job.orderId,driverId:job.userId,skipped:false,expiresAt:{gt:new Date()},driver:{online:true,verified:true},order:{status:'SEARCHING'}},include:{order:true}});
             if (!offer) { await this.db.pushJob.update({where:{id:job.id},data:{sentAt:new Date()}}); continue; }
-            ttl = pushTtlSeconds(job.event, offer.order.searchExpiresAt);
+            ttl = pushTtlSeconds(job.event, offer.expiresAt);
           }
           if (this.config.pushProvider === 'expo') {
             const headers: Record<string,string> = {'Content-Type':'application/json'};

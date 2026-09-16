@@ -6,7 +6,7 @@ import { activateKeepAwakeAsync, deactivateKeepAwake } from 'expo-keep-awake';
 import { api, messageOf } from './api';
 import { ingestDriverLocation, requestDriverBackgroundAccess, setDriverTrackingSession, startDriverBackgroundTracking, subscribeDriverFix } from './native/driverTracking';
 import type { Language, Order } from './types';
-import { DrivingRoute, NavigationFix, NavigationProgress, PreparedRoute, bestVoiceForLanguage, guidanceCue, navigationDestination, prepareRoute, routeProgress, usableNavigationFix } from './navigation';
+import { DrivingRoute, GuidanceCue, NavigationFix, NavigationProgress, PreparedRoute, PreviousRouteProgress, bestVoiceForLanguage, guidanceCue, navigationConfig, navigationDestination, prepareRoute, routeProgress, usableNavigationFix } from './navigation';
 
 export function useDriverNavigation({ userId, order, enabled, locationEnabled, mapVisible = true, language = 'ru' }: { userId?: string; order: Order | null; enabled: boolean; locationEnabled: boolean; mapVisible?: boolean; language?: Language }) {
   const [foreground, setForeground] = useState(AppState.currentState === 'active');
@@ -37,23 +37,26 @@ export function useDriverNavigation({ userId, order, enabled, locationEnabled, m
   const tracking = enabled && locationEnabled && !!userId && !!order && ['ASSIGNED', 'ARRIVED', 'IN_PROGRESS'].includes(order.status);
   useEffect(() => {
     let live = true;
-    const next = tracking && userId && order ? { userId, order: { id: order.id, status: order.status, pickup: order.pickup, dropoff: order.dropoff }, voice: voiceEnabled, language } : null;
+    const next = tracking && userId && order ? { userId, order: { id: order.id, status: order.status, pickup: order.pickup,
+      dropoff: order.dropoff, assignmentId: order.assignmentId }, voice: voiceEnabled, language } : null;
     void setDriverTrackingSession(next).then(() => next ? startDriverBackgroundTracking() : false).then(ready => {
       if (live) setBackgroundReady(previous => ready || (!!next && !foreground && previous));
     }).catch(() => { if (live) { setBackgroundReady(false); setBackgroundError('Не удалось включить работу в фоне'); } });
     return () => { live = false; };
-  }, [tracking, userId, order?.id, order?.status, voiceEnabled, language, foreground, retry]);
-  useEffect(() => () => { void setDriverTrackingSession(null).catch(() => undefined); }, []);
+  }, [tracking, userId, order?.id, order?.assignmentId, order?.status, voiceEnabled, language, foreground, retry]);
   const enableBackground = useCallback(async () => {
     try { await requestDriverBackgroundAccess(); setRetry(value => value + 1); setBackgroundError(''); }
     catch { setBackgroundError('Разрешите геолокацию «Всегда» в настройках телефона'); }
   }, []);
-  const session = active ? `${userId}:${order?.id}:${order?.status}:${destination?.latitude}:${destination?.longitude}:${language}` : '';
+  const session = active ? `${userId}:${order?.id}:${order?.assignmentId || ''}:${order?.status}:${destination?.latitude}:${destination?.longitude}:${language}` : '';
   const sessionRef = useRef(session); sessionRef.current = session;
   const destinationRef = useRef(destination); destinationRef.current = destination;
   const fixRef = useRef(position); fixRef.current = position;
   const routeRef = useRef<PreparedRoute | null>(null);
-  const progressRef = useRef<{ along: number; timestamp: number } | undefined>(undefined);
+  const progressRef = useRef<PreviousRouteProgress | undefined>(undefined);
+  const latestGuidanceRef = useRef<NavigationProgress | null>(null);
+  const routeVersionRef = useRef(0);
+  const legIndexRef = useRef(0); legIndexRef.current = order?.status === 'IN_PROGRESS' ? 1 : 0;
   const requestRef = useRef<AbortController | null>(null);
   const requestVersion = useRef(0);
   const lastRequest = useRef(0);
@@ -87,28 +90,51 @@ export function useDriverNavigation({ userId, order, enabled, locationEnabled, m
     speechTimer.current = undefined;
     void Speech.stop().catch(() => undefined);
   }, []);
-  const say = useCallback((text: string, cue?: { key: string; priority: number; stepIndex: number }) => {
+  const say = useCallback((text: string, cue?: GuidanceCue) => {
     if (!voiceRef.current || !foregroundRef.current || !sessionRef.current) return;
-    if (speechBusy.current && (cue?.priority || 1) <= speechPriority.current) return;
+    const priority = cue?.priority ?? 0;
+    if (speechBusy.current && priority <= speechPriority.current) return;
     const interrupt = speechBusy.current;
     if (interrupt && activeSpeechCue.current) spoken.current.delete(activeSpeechCue.current);
     activeSpeechCue.current = null;
     if (speechTimer.current) clearTimeout(speechTimer.current);
     speechTimer.current = undefined;
     const version = ++speechVersion.current;
-    speechBusy.current = true; speechPriority.current = cue?.priority || 1;
+    speechBusy.current = true; speechPriority.current = priority;
     pendingSpeech.current = cue?.key || null;
     void (interrupt ? Speech.stop() : Promise.resolve()).then(() => {
       if (version !== speechVersion.current || !voiceRef.current || !foregroundRef.current || !sessionRef.current) return;
+      // A queued phrase may become wrong while Speech.stop or the TTS engine
+      // waits. Recompute it from the current route and GPS before speaking.
+      let currentCue = cue;
+      if (cue) {
+        const progress = latestGuidanceRef.current;
+        const refreshed = progress && usableNavigationFix(fixRef.current) && Date.now() - fixRef.current!.timestamp <= 15_000
+          ? guidanceCue(progress, language, routeVersionRef.current, legIndexRef.current) : null;
+        if (!refreshed || refreshed.key !== cue.key) {
+          speechBusy.current = false; pendingSpeech.current = null; speechPriority.current = 0;
+          return;
+        }
+        currentCue = refreshed; text = refreshed.text;
+      }
       Speech.speak(text, { language: language === 'ky' ? 'ky-KG' : Platform.OS === 'android' ? 'ru' : 'ru-RU', voice: selectedVoice.current, rate: .9, volume: 1, useApplicationAudioSession: false,
         onStart: () => {
           if (version !== speechVersion.current) return;
+          if (currentCue) {
+            const progress = latestGuidanceRef.current;
+            const atStart = progress && usableNavigationFix(fixRef.current) && Date.now() - fixRef.current!.timestamp <= 15_000
+              ? guidanceCue(progress, language, routeVersionRef.current, legIndexRef.current) : null;
+            if (!atStart || atStart.key !== currentCue.key) {
+              speechVersion.current++; speechBusy.current = false; pendingSpeech.current = null; activeSpeechCue.current = null;
+              void Speech.stop().catch(() => undefined);
+              return;
+            }
+          }
           pendingSpeech.current = null; setVoiceError('');
-          if (cue) {
-            activeSpeechCue.current = cue.key;
-            spoken.current.add(cue.key);
-            if (cue.priority >= 2) spoken.current.add(`${cue.stepIndex}:500`);
-            if (cue.priority >= 3) spoken.current.add(`${cue.stepIndex}:100`);
+          if (currentCue) {
+            activeSpeechCue.current = currentCue.key;
+            spoken.current.add(currentCue.key);
+            for (const key of currentCue.supersedes) spoken.current.add(key);
           }
         },
         onDone: () => { if (version === speechVersion.current) { speechBusy.current = false; pendingSpeech.current = null; activeSpeechCue.current = null; if (speechTimer.current) clearTimeout(speechTimer.current); } },
@@ -118,7 +144,7 @@ export function useDriverNavigation({ userId, order, enabled, locationEnabled, m
           speechBusy.current = false; pendingSpeech.current = null;
           activeSpeechCue.current = null;
           if (speechTimer.current) clearTimeout(speechTimer.current);
-          if (cue) spoken.current.delete(cue.key);
+          if (currentCue) spoken.current.delete(currentCue.key);
           setVoiceError(language === 'ky' ? 'Не удалось включить кыргызский голос. Проверьте языки озвучки телефона.' : 'Не удалось включить голос. Проверьте русский голос в настройках телефона.');
         } });
       if (speechBusy.current) speechTimer.current = setTimeout(() => {
@@ -129,6 +155,11 @@ export function useDriverNavigation({ userId, order, enabled, locationEnabled, m
       if (version === speechVersion.current) { speechBusy.current = false; pendingSpeech.current = null; setVoiceError('Озвучка недоступна на этом устройстве.'); }
     });
   }, [language]);
+  const testVoice = useCallback(() => {
+    if (!voiceRef.current) { setVoiceError('Включите голосовые подсказки для проверки.'); return; }
+    stopSpeech();
+    say(language === 'ky' ? 'Үн текшерүүсү. Кийинки бурулушта көрсөтмө угасыз.' : 'Проверка голоса. Перед следующим поворотом вы услышите подсказку.');
+  }, [language, say, stopSpeech]);
   useEffect(() => {
     const subscription = AppState.addEventListener('change', state => {
       foregroundRef.current = state === 'active';
@@ -145,7 +176,7 @@ export function useDriverNavigation({ userId, order, enabled, locationEnabled, m
       selectedVoice.current = bestVoiceForLanguage(voices, language);
       // Some Android engines report no installed voice but can still speak
       // when the requested language is supplied explicitly.
-      setVoiceError('');
+      setVoiceError(language === 'ky' && voices.length > 0 && !selectedVoice.current ? 'Кыргызский голос не найден на устройстве.' : '');
     }).catch(() => { if (live) { selectedVoice.current = undefined; setVoiceError(''); } });
     return () => { live = false; };
   }, [enabled, retry, language]);
@@ -194,7 +225,7 @@ export function useDriverNavigation({ userId, order, enabled, locationEnabled, m
   useEffect(() => {
     requestVersion.current++;
     requestRef.current?.abort(); requestRef.current = null;
-    routeRef.current = null; progressRef.current = undefined;
+    routeRef.current = null; progressRef.current = undefined; latestGuidanceRef.current = null; routeVersionRef.current = 0;
     setRoute(null); setProgress(null); setLoading(false); setRouteError('');
     lastRequest.current = 0; offRouteCount.current = 0; spoken.current.clear(); stopSpeech(); setRouteVersion(0); setRerouteReason('');
     return () => { requestVersion.current++; requestRef.current?.abort(); requestRef.current = null; stopSpeech(); };
@@ -218,11 +249,15 @@ export function useDriverNavigation({ userId, order, enabled, locationEnabled, m
       }) });
       if (version !== requestVersion.current || currentSession !== sessionRef.current || controller.signal.aborted) return;
       const prepared = prepareRoute(result);
-      routeRef.current = prepared; progressRef.current = { along: 0, timestamp: fix.timestamp }; spoken.current.clear(); offRouteCount.current = 0;
+      routeRef.current = prepared; progressRef.current = { along: 0, timestamp: fix.timestamp, stepIndex: 1 }; latestGuidanceRef.current = null;
+      routeVersionRef.current = version; spoken.current.clear(); offRouteCount.current = 0;
       setRoute(prepared.route); setProgress(null); setRouteVersion(version);
     } catch (error) {
       if (version === requestVersion.current && !controller.signal.aborted) {
-        routeRef.current = null; setRoute(null); setProgress(null); setRouteError(messageOf(error)); stopSpeech();
+        // Retain the last road route if an attempted refresh loses network;
+        // off-route guidance remains muted until an on-route GPS fix returns.
+        if (!rerouting || !routeRef.current) { routeRef.current = null; latestGuidanceRef.current = null; setRoute(null); setProgress(null); }
+        setRouteError(messageOf(error)); stopSpeech();
       }
     } finally { if (version === requestVersion.current) { requestRef.current = null; setLoading(false); } }
   }, [say, stopSpeech, language]);
@@ -235,25 +270,28 @@ export function useDriverNavigation({ userId, order, enabled, locationEnabled, m
     }
     if (requestRef.current) return;
     if (progressRef.current && position.timestamp - progressRef.current.timestamp > 15_000) {
-      routeRef.current = null; progressRef.current = undefined; setRoute(null); setProgress(null); stopSpeech();
+      progressRef.current = { ...progressRef.current, timestamp: position.timestamp }; latestGuidanceRef.current = null;
+      setProgress(null); stopSpeech();
       if (Date.now() - lastRequest.current >= 15_000) void loadRoute(true, 'gps-gap');
       return;
     }
     const next = routeProgress(routeRef.current, position, progressRef.current, language);
-    if (next.offRouteMeters > 60) {
+    latestGuidanceRef.current = next;
+    if (next.offRouteMeters > navigationConfig.offRouteMeters) {
       // Count distinct fixes, not timer renders, before triggering a reroute.
       if (progressRef.current?.timestamp !== position.timestamp) {
-        offRouteCount.current = next.offRouteMeters > Math.max(60, position.accuracy * 2) ? offRouteCount.current + 1 : 0;
+        offRouteCount.current = next.offRouteMeters > Math.max(navigationConfig.offRouteMeters, position.accuracy * 2) ? offRouteCount.current + 1 : 0;
       }
-      progressRef.current = { along: progressRef.current?.along || 0, timestamp: position.timestamp };
+      progressRef.current = { ...progressRef.current, along: progressRef.current?.along ?? 0, timestamp: position.timestamp };
       setProgress(next); stopSpeech();
-      if (offRouteCount.current >= 3 && Date.now() - lastRequest.current >= 15000) void loadRoute(true, 'off-route');
+      if (offRouteCount.current >= navigationConfig.rerouteFixes && Date.now() - lastRequest.current >= 15000) void loadRoute(true, 'off-route');
       return;
     }
     offRouteCount.current = 0;
-    progressRef.current = { along: next.along, timestamp: position.timestamp }; setProgress(next);
-    const cue = guidanceCue(next, language);
-    if (cue && voiceEnabled && !spoken.current.has(cue.key) && pendingSpeech.current !== cue.key) say(cue.text, { ...cue, stepIndex: next.stepIndex });
+    progressRef.current = { along: next.along, timestamp: position.timestamp, stepIndex: next.stepIndex,
+      pendingStepIndex: next.pendingStepIndex, pendingStepCount: next.pendingStepCount }; setProgress(next);
+    const cue = guidanceCue(next, language, routeVersionRef.current, legIndexRef.current);
+    if (cue && voiceEnabled && !spoken.current.has(cue.key) && pendingSpeech.current !== cue.key) say(cue.text, cue);
   }, [active, foreground, usable, position, route, now, voiceEnabled, language, loadRoute, stopSpeech]);
   const toggleVoice = useCallback(() => {
     stopSpeech(); spoken.current.clear();
@@ -267,6 +305,6 @@ export function useDriverNavigation({ userId, order, enabled, locationEnabled, m
     : ageSeconds > 5 ? `Местоположение обновляется с задержкой · ${ageSeconds} с назад`
     : gpsError || (hasInaccurateFix ? 'Слабый сигнал GPS. Ожидаем точное положение…' : '');
   return { active, position: enabled && locationEnabled ? position : null, route, progress, loading, error: routeError, gpsStatus: status,
-    voiceError, voiceEnabled, toggleVoice, followDriver, setFollowDriver, retry: retryNavigation, destination,
+    voiceError, voiceEnabled, toggleVoice, testVoice, followDriver, setFollowDriver, retry: retryNavigation, destination,
     headingToPickup: order?.status === 'ASSIGNED', backgroundReady, backgroundError, enableBackground, routeVersion, rerouteReason };
 }

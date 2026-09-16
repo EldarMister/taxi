@@ -142,15 +142,30 @@ test('route names use explicit OSM language tags, never the stale OSRM name',asy
   assert.ok(requests.filter(path=>path==='/reverse').length>=2);
   assert.equal(localizedRoadName({category:'highway',namedetails:{name:'Ленин көч'}},'ru'),'');
   assert.equal(localizedRoadName({category:'building',namedetails:{'name:ru':'улица Ленина'}},'ru'),'');
+  assert.equal(localizedRoadName({category:'highway',namedetails:{name:'Другая улица','name:ru':'улица Ленина'}},'ru','Ленин көч'),'');
+  assert.equal(localizedRoadName({category:'highway',namedetails:{name:'Ленин көч','name:ru':'улица Ленина'}},'ru','Ленин көч'),'улица Ленина');
 });
 
-test('route remains usable without geocoder, but uncertain street names are withheld',async(t)=>{
+test('route remains usable without geocoder but never speaks an unverified OSRM street name',async(t)=>{
   t.mock.method(globalThis,'fetch',async(input:any)=>new URL(input.toString()).pathname.includes('/route/v1/driving/')
     ? Response.json(osrmFixture()) : new Response('',{status:503}));
   const route=await new RoutingService(config).route(pickup,dropoff,12000,'ru');
   assert.equal(route.provider,'osrm');
   assert.equal(route.geometry.length,3);
   assert.ok(route.steps.every(step=>step.name===''));
+  const foreign=osrmFixture();foreign.routes[0].legs[0].steps[1].name='Ленин көч';
+  t.mock.method(globalThis,'fetch',async(input:any)=>new URL(input.toString()).pathname.includes('/route/v1/driving/')
+    ? Response.json(foreign) : new Response('',{status:503}));
+  const untranslated=await new RoutingService(config).route(pickup,dropoff,12000,'ru');
+  assert.equal(untranslated.steps[1].name,'');
+});
+
+test('reverse geocoder cannot substitute a different road for the routed segment',async(t)=>{
+  t.mock.method(globalThis,'fetch',async(input:any)=>new URL(input.toString()).pathname.includes('/route/v1/driving/')
+    ? Response.json(osrmFixture())
+    : Response.json({category:'highway',namedetails:{name:'улица Ленина','name:ru':'улица Ленина'}}));
+  const route=await new RoutingService(config).route(pickup,dropoff,12000,'ru');
+  assert.equal(route.steps[1].name,'');
 });
 
 test('Nominatim parser validates coordinates and preserves an OSM identity',()=>{

@@ -44,7 +44,10 @@ function load(file) {
     if (id === 'expo-contacts') return contacts;
     if (id === 'react-native-svg') return { __esModule: true, default: 'Svg', Path: 'Path', Circle: 'Circle' };
     if (id === 'react-native-gesture-handler') return { PanGestureHandler: 'PanGestureHandler', State: { BEGAN: 2, END: 5, CANCELLED: 3, FAILED: 1 } };
-    if (id === './navigation') return { displayDistance: value => value + ' м' };
+    if (id === './navigation') return { displayDistance: value => value + ' м', navigationConfig: { offRouteMeters: 40 },
+      normalizeManeuver: step => ({ kind: step.maneuver.type, side: step.maneuver.modifier }) };
+    if (id === './native/driverTracking') return { getDriverTrackingDiagnostics: () => ({ raw: null, processed: null, ageMs: null,
+      trackingSessionId: null, sequence: 0, transportStatus: 'idle', lastDropReason: '' }), stopDriverGpsDiagnostic() {} };
     if (id === 'react-native-safe-area-context') return { useSafeAreaInsets: () => ({ top: 24, bottom: 24 }) };
     if (id === './ui') return ui;
     if (id === './BottomPanel') return { BottomPanel: function BottomPanel({ closeRequested, onClose, children, ...props }) {
@@ -334,10 +337,10 @@ test('client trip, completion, rating and thanks use dark surfaces when selected
 });
 
 test('driver keeps contacts and the stage slider visible while trip details collapse', async t => {
-  let renderer; const accepted = [], actions = [], ratings = [];
+  let renderer; const accepted = [], actions = [], ratings = [], closedOrders = []; let done = 0;
   const offer = { id: 'offer', status: 'SEARCHING', pickup: point('A'), dropoff: point('B'), price: 321, distanceMeters: 4800, durationSeconds: 720, tariff: { name: 'Эконом' }, clientRating: 4.75 };
   const approach = { route: { distanceMeters: 2500, durationSeconds: 420 } };
-  const props = { user: { role: 'DRIVER', language: 'ru', driverProfile: { verified: true, online: true } }, order: null, offer, approach, busy: false, coming: false, navigation: { progress: { remainingSeconds: 60, remainingMeters: 490, arrived: false }, gpsStatus: '', loading: false }, onAccept: x => accepted.push(x.id), onRateClient: async score => { ratings.push(score); return true; }, onAction: x => actions.push(x), onOnline() {}, onChat() {}, onDone() {} };
+  const props = { user: { role: 'DRIVER', language: 'ru', driverProfile: { verified: true, online: true } }, order: null, offer, approach, busy: false, coming: false, navigation: { progress: { remainingSeconds: 60, remainingMeters: 490, arrived: false }, gpsStatus: '', loading: false }, onAccept: x => accepted.push(x.id), onRateClient: async score => { ratings.push(score); return true; }, onAction: x => actions.push(x), onOnline() {}, onChat() {}, onDone(id) { done++; closedOrders.push(id); } };
   await act(async () => { renderer = create(React.createElement(DriverPanel, props)); });
   t.after(async () => act(async () => renderer.unmount()));
   assert.equal(renderer.root.findAllByType('ScrollView').length, 1, 'only the expandable details region scrolls');
@@ -396,11 +399,12 @@ test('driver keeps contacts and the stage slider visible while trip details coll
   assert.equal(button(renderer, 'Пропустить'), undefined);
   await tap(renderer, 'Отправить');
   assert.deepEqual(ratings, [4]);
-  assert.ok(textOf(renderer.root).includes('Заказ успешно'));
-  assert.equal(button(renderer, 'Оценить пассажира'), undefined, 'saved rating is not offered twice');
-  await act(async () => renderer.update(React.createElement(DriverPanel, { ...props, offer: null, order: { ...offer, status: 'COMPLETED', driverRating: 4 } })));
-  assert.equal(button(renderer, 'Оценить пассажира'), undefined);
-  assert.ok(button(renderer, 'Закрыть'));
+  assert.equal(done, 1, 'successful rating closes the completed order');
+  assert.deepEqual(closedOrders, ['offer'], 'the close applies only to the order that was rated');
+  assert.doesNotMatch(textOf(renderer.root), /Заказ успешно/, 'completion summary does not reopen after rating');
+  await act(async () => renderer.update(React.createElement(DriverPanel, { ...props, offer: null, order: null })));
+  assert.equal(renderer.root.findAllByProps({ testID: 'driver-completion' }).length, 0);
+  assert.match(textOf(renderer.root), /Ищем заказы рядом.*Новый заказ появится здесь/s);
 });
 
 test('driver can skip feedback; a failed rating stays selected for retry', async t => {
@@ -419,14 +423,14 @@ test('driver can skip feedback; a failed rating stays selected for retry', async
   assert.equal(renderer.root.findAllByType('Icon').filter(node => node.props.name === 'star').length, 3, 'failure retains the selected score');
   await tap(renderer, 'Отправить');
   assert.equal(attempts, 2);
-  assert.ok(textOf(renderer.root).includes('Заказ успешно'));
-  assert.equal(done, 0);
+  assert.equal(done, 1);
+  assert.doesNotMatch(textOf(renderer.root), /Заказ успешно/);
 
   await act(async () => renderer.update(React.createElement(DriverPanel, { ...props, order: { ...order, id: 'driver-skip' } })));
   await tap(renderer, 'Оценить пассажира');
   assert.equal(renderer.root.findAllByType('Icon').filter(node => node.props.name === 'star-outline').length, 5);
   await tap(renderer, 'Пропустить');
-  assert.equal(done, 1);
+  assert.equal(done, 2);
   assert.equal(attempts, 2, 'skipping never submits a rating');
 });
 
@@ -487,7 +491,24 @@ test('dark driver order and completion sheets keep their rating controls legible
   assert.ok(button(renderer, 'Пропустить'));
   await tap(renderer, 'Оценка 3');
   assert.equal(renderer.root.findAllByType('Icon').filter(node => node.props.name === 'star' && node.props.color === '#FFFFFF').length, 3);
+  const send = button(renderer, 'Отправить');
+  assert.equal(send.props.style({ pressed: false })[0].backgroundColor, '#FFFFFF');
   assert.ok(button(renderer, 'Отправить'));
+});
+
+test('cancelled client trip has separate retry and full reset actions', async t => {
+  let renderer, retry = 0, reset = 0;
+  const order = { id: 'cancelled-trip', status: 'CANCELLED', pickup: point('A'), dropoff: point('B'), price: 100, tariff: { name: 'Стандарт' } };
+  await act(async () => { renderer = create(React.createElement(ClientTripPanel, {
+    order, user: { role: 'CLIENT', language: 'ru' }, busy: false, coming: false,
+    onAction() {}, onChat() {}, onDone() { retry++; }, onReset() { reset++; }, onRating: async () => true, onHeight() {},
+  })); });
+  t.after(async () => act(async () => renderer.unmount()));
+  await tap(renderer, 'Заказать снова');
+  assert.equal(retry, 1);
+  assert.equal(reset, 0);
+  await tap(renderer, 'Закрыть');
+  assert.equal(reset, 1);
 });
 
 test('legacy driver trip panel also masks client name and photo', async t => {

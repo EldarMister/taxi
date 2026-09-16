@@ -129,7 +129,7 @@ export class AdminService {
       const vehicle={make:dto.carMake===undefined?car?.make:validateText(dto.carMake,'Автомобиль'),color:dto.carColor===undefined?car?.color:validateText(dto.carColor,'Цвет'),plate:dto.carPlate===undefined?car?.plate:validateText(dto.carPlate,'Госномер').toUpperCase()};
       if(!vehicle.make||!vehicle.color||!vehicle.plate)throw new BadRequestException('Заполните данные автомобиля');
       await tx.user.update({where:{id},data:{...(dto.phone?{phone:dto.phone}:{}),...(dto.name===undefined?{}:{name:validateText(dto.name,'Имя')})}});
-      await tx.driverProfile.update({where:{userId:id},data:{...(dto.verified===undefined?{}:{verified:dto.verified}),online:false}});
+      await tx.driverProfile.update({where:{userId:id},data:{...(dto.verified===undefined?{}:{verified:dto.verified}),online:false,locationLatitude:null,locationLongitude:null,locationAccuracyM:null,locationMeasuredAt:null}});
       await tx.vehicle.upsert({where:{driverId:id},create:{driverId:id,make:vehicle.make,color:vehicle.color,plate:vehicle.plate},update:{make:vehicle.make,color:vehicle.color,plate:vehicle.plate}});
       if(dto.phone&&dto.phone!==user.phone) {
         await tx.refreshSession.updateMany({where:{userId:id,revokedAt:null},data:{revokedAt:new Date()}});

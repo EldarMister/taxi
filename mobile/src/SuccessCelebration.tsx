@@ -78,7 +78,7 @@ export function SuccessCelebration({ size = 190, variant = 'order', onAnimationE
         pointerEvents="none"
         style={[
           styles.halo,
-          isDark && { backgroundColor: '#242424', borderColor: '#393939' },
+          isDark && { backgroundColor: '#123B29', borderColor: '#1B6840' },
           {
             left: center - haloSize / 2,
             top: center - haloSize / 2,
@@ -93,7 +93,7 @@ export function SuccessCelebration({ size = 190, variant = 'order', onAnimationE
         pointerEvents="none"
         style={[
           styles.pulseRing,
-          isDark && { borderColor: '#999999' },
+          isDark && { borderColor: '#49D77F' },
           {
             left: center - ringSize / 2,
             top: center - ringSize / 2,
@@ -109,7 +109,7 @@ export function SuccessCelebration({ size = 190, variant = 'order', onAnimationE
         pointerEvents="none"
         style={[
           styles.pulseRing,
-          isDark && { borderColor: '#999999' },
+          isDark && { borderColor: '#49D77F' },
           {
             left: center - ringSize / 2,
             top: center - ringSize / 2,
@@ -136,7 +136,7 @@ export function SuccessCelebration({ size = 190, variant = 'order', onAnimationE
               width,
               height: length,
               borderRadius: width / 2,
-              backgroundColor: isDark ? index % 2 ? '#FFFFFF' : '#9D9D9D' : variant === 'thankYou' && index % 3 === 0 ? '#FFC928' : color,
+              backgroundColor: variant === 'thankYou' && index % 3 === 0 ? '#FFC928' : color,
               opacity: particleOpacity,
               transform: [
                 { translateX: particles.interpolate({ inputRange: [0, 1], outputRange: [-x * .36, 0] }) },
@@ -151,7 +151,6 @@ export function SuccessCelebration({ size = 190, variant = 'order', onAnimationE
         pointerEvents="none"
         style={[
           styles.successShadow,
-          isDark && { shadowColor: '#FFFFFF' },
           {
             left: center - circleSize / 2,
             top: center - circleSize / 2,
@@ -163,16 +162,16 @@ export function SuccessCelebration({ size = 190, variant = 'order', onAnimationE
         ]}
       >
         <LinearGradient
-          colors={isDark ? ['#FFFFFF', '#E5E5E5', '#BDBDBD'] : ['#5FE18D', '#22C55E', '#10AD5F']}
+          colors={['#5FE18D', '#22C55E', '#10AD5F']}
           start={{ x: .08, y: .08 }}
           end={{ x: .92, y: .96 }}
-          style={[styles.successCircle, isDark && { borderColor: '#F0F0F0' }, { borderRadius: circleSize / 2 }]}
+          style={[styles.successCircle, { borderRadius: circleSize / 2 }]}
         >
           <Svg width="100%" height="100%" viewBox="0 0 120 120">
             <AnimatedPath
               d="M34 61 L51 78 L86 43"
               fill="none"
-              stroke={isDark ? '#050505' : '#FFFFFF'}
+              stroke="#FFFFFF"
               strokeWidth={11}
               strokeLinecap="round"
               strokeLinejoin="round"

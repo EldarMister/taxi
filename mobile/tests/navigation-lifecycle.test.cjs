@@ -44,10 +44,11 @@ async function setup(options = {}) {
       if (options.watchPending) await options.watchPending.promise;
       return { remove: () => removed++ };
     } },
-    'expo-speech': { getAvailableVoicesAsync: async () => options.voices ?? [{ identifier: 'ru', language: 'ru-RU' }], stop: async () => { stops++; }, speak: (text, options) => { speaks.push(text); speechOptions = options; } },
+    'expo-speech': { getAvailableVoicesAsync: async () => options.voices ?? [{ identifier: 'ru', language: 'ru-RU' }], stop: async () => { stops++; if (options.speechStopPending && speaks.length) await options.speechStopPending.promise; }, speak: (text, options) => { speaks.push(text); speechOptions = options; } },
     'expo-keep-awake': { activateKeepAwakeAsync: async () => {}, deactivateKeepAwake: async () => {} },
     './api': { messageOf: error => error.message, api: { request: async (path, init) => {
       const body = JSON.parse(init.body); requests.push({ path, init, body });
+      if (options.routeFailureAt === requests.length) throw new Error('Сеть недоступна');
       if (options.routePending) return options.routePending.promise;
       const start = body.pickup, end = body.dropoff;
       return { ...route, geometry: [start,end], distanceMeters: navigation.distanceBetween(start,end), steps: [mkStep('depart', start, [start,end]), mkStep('arrive', end, [end])] };
@@ -211,6 +212,21 @@ test('speech failure leaves a cue eligible for the next GPS update', async () =>
     assert.equal(app.speaks.length, first + 1);
   } finally { await app.close(); }
 });
+test('a queued instruction refreshes its distance immediately before speech starts', async () => {
+  const speechStopPending = deferred(), app = await setup({ speechStopPending });
+  try {
+    await app.gps({ ...a, latitude: 42.8705 });
+    await app.speechStarted();
+    await app.advance(10000);
+    await app.gps({ ...a, latitude: 42.8732 });
+    assert.equal(app.speaks.length, 1, 'the new cue waits while the old speech queue is cleared');
+    await app.advance(10000);
+    await app.gps({ ...a, latitude: 42.8741 });
+    await app.run(() => speechStopPending.resolve());
+    assert.match(app.speaks.at(-1), /100 метров/);
+    assert.doesNotMatch(app.speaks.at(-1), /200 метров/);
+  } finally { await app.close(); }
+});
 test('a GPS gap cancels stale speech and rebuilds guidance from the fresh fix', async () => {
   const app = await setup();
   try {
@@ -263,5 +279,18 @@ test('three distinct accurate off-route fixes and cooldown are required to rerou
     await app.gps(away); await app.advance(1000); assert.equal(app.requests.length, 1);
     await app.gps(away); assert.equal(app.requests.length, 1);
     await app.gps(away); assert.equal(app.requests.length, 2);
+  } finally { await app.close(); }
+});
+test('a failed reroute retains the previous geometry and reports the unavailable service', async () => {
+  const app = await setup({ routeFailureAt: 2 });
+  try {
+    await app.gps(a);
+    const original = app.value.route;
+    await app.advance(14000);
+    const away = { latitude: 42.87, longitude: 74.596 };
+    await app.gps(away); await app.gps(away); await app.gps(away);
+    assert.equal(app.requests.length, 2);
+    assert.equal(app.value.route, original);
+    assert.match(app.value.error, /Сеть недоступна/);
   } finally { await app.close(); }
 });

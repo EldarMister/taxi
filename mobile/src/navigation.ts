@@ -11,7 +11,40 @@ export type PreparedRoute = { route: DrivingRoute; cumulative: number[]; total: 
 export type NavigationProgress = {
   along: number; offRouteMeters: number; remainingMeters: number; remainingSeconds: number;
   stepIndex: number; maneuverDistance: number; instruction: string; arrived: boolean;
+  maneuverPassed: boolean; speedMps?: number; pendingStepIndex?: number; pendingStepCount?: number;
 };
+export const navigationConfig = {
+  offRouteMeters: 45,
+  rerouteFixes: 3,
+  turnConfirmationMeters: 35,
+  turnConfirmationFixes: 2,
+} as const;
+export type NormalizedManeuver = {
+  kind: 'depart' | 'arrive' | 'roundabout' | 'exit-roundabout' | 'merge' | 'fork' | 'off-ramp' | 'uturn' | 'turn' | 'continue';
+  side: 'left' | 'right' | 'straight' | 'uturn';
+  intensity: 'slight' | 'normal' | 'sharp';
+  exit?: number;
+};
+export function bearingDelta(before: number, after: number): number {
+  return ((after - before + 540) % 360) - 180;
+}
+/** OSRM's maneuver is the sole source for the arrow, visible text and speech. */
+export function normalizeManeuver(step: RouteStep): NormalizedManeuver {
+  const { type, modifier, bearingBefore, bearingAfter, exit } = step.maneuver;
+  const kind: NormalizedManeuver['kind'] = type === 'arrive' || type === 'depart' ? type
+    : ['roundabout', 'rotary', 'roundabout turn'].includes(type) ? 'roundabout'
+    : ['exit roundabout', 'exit rotary'].includes(type) ? 'exit-roundabout'
+    : type === 'merge' ? 'merge' : type === 'fork' ? 'fork' : type === 'off ramp' ? 'off-ramp'
+    : modifier === 'uturn' || type === 'uturn' ? 'uturn'
+    : ['turn', 'end of road', 'on ramp'].includes(type) ? 'turn' : 'continue';
+  const delta = bearingDelta(bearingBefore, bearingAfter);
+  const side: NormalizedManeuver['side'] = kind === 'uturn' ? 'uturn'
+    : modifier?.includes('left') ? 'left' : modifier?.includes('right') ? 'right'
+    : kind === 'turn' && Math.abs(delta) > .01 ? delta < 0 ? 'left' : 'right' : 'straight';
+  const intensity: NormalizedManeuver['intensity'] = modifier?.startsWith('slight') ? 'slight' : modifier?.startsWith('sharp') ? 'sharp'
+    : !modifier && Math.abs(delta) < 40 ? 'slight' : !modifier && Math.abs(delta) > 135 ? 'sharp' : 'normal';
+  return { kind, side, intensity, ...(exit == null ? {} : { exit }) };
+}
 const rad = Math.PI / 180;
 export function distanceBetween(a: Coordinate, b: Coordinate) {
   const dLat = (b.latitude - a.latitude) * rad, dLon = (b.longitude - a.longitude) * rad;
@@ -113,13 +146,13 @@ function routeTurnContradiction(step: RouteStep, along: number, line: Coordinate
   const after = pointAlong(line, cumulative, along + 18);
   if (distanceBetween(before, at) < 8 || distanceBetween(at, after) < 8) return false;
   const lineDelta = (course(at, after) - course(before, at) + 540) % 360 - 180;
-  const bearingDelta = (step.maneuver.bearingAfter - step.maneuver.bearingBefore + 540) % 360 - 180;
-  if (Math.abs(lineDelta) < 40 || Math.abs(lineDelta) > 150 || Math.abs(bearingDelta) < 40 || Math.abs(bearingDelta) > 150) return false;
+  const turnDelta = bearingDelta(step.maneuver.bearingBefore, step.maneuver.bearingAfter);
+  if (Math.abs(lineDelta) < 40 || Math.abs(lineDelta) > 150 || Math.abs(turnDelta) < 40 || Math.abs(turnDelta) > 150) return false;
   const claimed = modifier.includes('right') ? 1 : -1;
   // A map camera bearing is never involved. Reject an internally conflicting
   // provider step only when its bearings AND route line agree against modifier;
   // never silently swap a spoken left/right command based on a rendered line.
-  return Math.sign(lineDelta) === Math.sign(bearingDelta) && Math.sign(lineDelta) !== claimed;
+  return Math.sign(lineDelta) === Math.sign(turnDelta) && Math.sign(lineDelta) !== claimed;
 }
 export function prepareRoute(route: DrivingRoute): PreparedRoute {
   if (route.provider !== 'osrm' || route.geometry.length < 2 || !route.steps.length) throw new Error('Маршрут не содержит данных навигации.');
@@ -144,29 +177,32 @@ export function prepareRoute(route: DrivingRoute): PreparedRoute {
   return { route, cumulative, total, offsets };
 }
 function maneuverAction(step: RouteStep, language: Language): string {
-  const { type, modifier, exit } = step.maneuver;
+  const { kind, side, intensity, exit } = normalizeManeuver(step);
   if (language === 'ky') {
-    if (type === 'arrive') return 'Бара турган жериңиз алдыда';
-    if (type === 'depart') return 'Маршрут боюнча жүрө баштаңыз';
-    if (['roundabout', 'rotary', 'roundabout turn'].includes(type)) return exit ? `Айланма жолдон ${exit}-чыгууну тандаңыз` : 'Айланма жолго кириңиз';
-    if (['exit roundabout', 'exit rotary'].includes(type)) return 'Айланма жолдон чыгыңыз';
-    if (modifier === 'uturn') return 'Артка бурулуңуз';
-    if (type === 'merge') return modifier?.includes('left') ? 'Сол тилкеге өтүңүз' : modifier?.includes('right') ? 'Оң тилкеге өтүңүз' : 'Жол агымына кошулуңуз';
-    if (type === 'fork') return modifier?.includes('left') ? 'Сол жакты кармаңыз' : modifier?.includes('right') ? 'Оң жакты кармаңыз' : 'Түз жүрүңүз';
-    if (type === 'off ramp') return modifier?.includes('left') ? 'Сол жактагы чыгууга түшүңүз' : modifier?.includes('right') ? 'Оң жактагы чыгууга түшүңүз' : 'Чыгууга түшүңүз';
-    const turns: Record<string, string> = { left: 'Солго бурулуңуз', right: 'Оңго бурулуңуз', 'slight left': 'Акырын солго бурулуңуз', 'slight right': 'Акырын оңго бурулуңуз', 'sharp left': 'Кескин солго бурулуңуз', 'sharp right': 'Кескин оңго бурулуңуз' };
-    return turns[modifier || ''] || 'Түз жүрүңүз';
+    if (kind === 'arrive') return 'Бара турган жериңиз алдыда';
+    if (kind === 'depart') return 'Маршрут боюнча жүрө баштаңыз';
+    if (kind === 'roundabout') return exit ? `Айланма жолдон ${exit}-чыгууну тандаңыз` : 'Айланма жолго кириңиз';
+    if (kind === 'exit-roundabout') return 'Айланма жолдон чыгыңыз';
+    if (kind === 'uturn') return 'Артка бурулуңуз';
+    if (kind === 'merge') return side === 'left' ? 'Сол тилкеге өтүңүз' : side === 'right' ? 'Оң тилкеге өтүңүз' : 'Жол агымына кошулуңуз';
+    if (kind === 'fork') return side === 'left' ? 'Сол жакты кармаңыз' : side === 'right' ? 'Оң жакты кармаңыз' : 'Түз жүрүңүз';
+    if (kind === 'off-ramp') return side === 'left' ? 'Сол жактагы чыгууга түшүңүз' : side === 'right' ? 'Оң жактагы чыгууга түшүңүз' : 'Чыгууга түшүңүз';
+    if (kind !== 'turn' || side === 'straight') return 'Түз жүрүңүз';
+    return intensity === 'slight' ? `Акырын ${side === 'left' ? 'солго' : 'оңго'} бурулуңуз`
+      : intensity === 'sharp' ? `Кескин ${side === 'left' ? 'солго' : 'оңго'} бурулуңуз`
+      : side === 'left' ? 'Солго бурулуңуз' : 'Оңго бурулуңуз';
   }
-  if (type === 'arrive') return 'Пункт назначения впереди';
-  if (type === 'depart') return 'Начните движение по маршруту';
-  if (['roundabout', 'rotary', 'roundabout turn'].includes(type)) return exit ? `На круговом движении выберите съезд ${exit}` : 'Въезжайте на круговое движение';
-  if (['exit roundabout', 'exit rotary'].includes(type)) return 'Съезжайте с кругового движения';
-  if (modifier === 'uturn') return 'Развернитесь';
-  if (type === 'merge') return modifier?.includes('left') ? 'Перестройтесь левее' : modifier?.includes('right') ? 'Перестройтесь правее' : 'Вливайтесь в поток';
-  if (type === 'fork') return modifier?.includes('left') ? 'Держитесь левее' : modifier?.includes('right') ? 'Держитесь правее' : 'Двигайтесь прямо';
-  if (type === 'off ramp') return modifier?.includes('left') ? 'Съезжайте налево' : modifier?.includes('right') ? 'Съезжайте направо' : 'Следуйте на съезд';
-  const turns: Record<string, string> = { left: 'Поверните налево', right: 'Поверните направо', 'slight left': 'Плавно поверните налево', 'slight right': 'Плавно поверните направо', 'sharp left': 'Резко поверните налево', 'sharp right': 'Резко поверните направо' };
-  return turns[modifier || ''] || 'Двигайтесь прямо';
+  if (kind === 'arrive') return 'Пункт назначения впереди';
+  if (kind === 'depart') return 'Начните движение по маршруту';
+  if (kind === 'roundabout') return exit ? `На круговом движении выберите съезд ${exit}` : 'Въезжайте на круговое движение';
+  if (kind === 'exit-roundabout') return 'Съезжайте с кругового движения';
+  if (kind === 'uturn') return 'Развернитесь';
+  if (kind === 'merge') return side === 'left' ? 'Перестройтесь левее' : side === 'right' ? 'Перестройтесь правее' : 'Вливайтесь в поток';
+  if (kind === 'fork') return side === 'left' ? 'Держитесь левее' : side === 'right' ? 'Держитесь правее' : 'Двигайтесь прямо';
+  if (kind === 'off-ramp') return side === 'left' ? 'Съезжайте налево' : side === 'right' ? 'Съезжайте направо' : 'Следуйте на съезд';
+  if (kind !== 'turn' || side === 'straight') return 'Двигайтесь прямо';
+  const ending = side === 'left' ? 'налево' : 'направо';
+  return intensity === 'slight' ? `Плавно поверните ${ending}` : intensity === 'sharp' ? `Резко поверните ${ending}` : `Поверните ${ending}`;
 }
 export function maneuverText(step: RouteStep, language: Language = 'ru'): string {
   const action = maneuverAction(step, language);
@@ -191,30 +227,48 @@ export function maneuverText(step: RouteStep, language: Language = 'ru'): string
   const street = roadType ? name.replace(roadType.pattern, '') : name;
   return `${action} ${along ? roadType?.along || 'по улице' : roadType?.onto || 'на улицу'} ${street}`;
 }
-export function routeProgress(prepared: PreparedRoute, fix: NavigationFix, previous?: { along: number; timestamp: number }, language: Language = 'ru'): NavigationProgress {
+export type PreviousRouteProgress = { along: number; timestamp: number; stepIndex?: number; pendingStepIndex?: number; pendingStepCount?: number };
+export function routeProgress(prepared: PreparedRoute, fix: NavigationFix, previous?: PreviousRouteProgress, language: Language = 'ru'): NavigationProgress {
   const { route, cumulative, total, offsets } = prepared;
   const elapsed = previous ? Math.max(1, (fix.timestamp - previous.timestamp) / 1000) : 0;
   // Limit forward jumps across crossings/parallel streets. A long GPS gap is rerouted from the new fix.
   const max = previous ? previous.along + Math.max(100, Math.min(1000, elapsed * 55)) : 100;
-  const projection = project(fix, route.geometry, cumulative, Math.max(0, (previous?.along || 0) - 35), max);
-  const along = projection.distance <= 60 ? Math.max(previous?.along || 0, projection.along) : previous?.along || 0;
+  const projection = project(fix, route.geometry, cumulative, Math.max(0, (previous?.along ?? 0) - 35), max);
+  const along = projection.distance <= navigationConfig.offRouteMeters ? Math.max(previous?.along ?? 0, projection.along) : previous?.along ?? 0;
   let stepIndex = offsets.findIndex((offset, index) => index > 0 && offset >= along - 8);
   if (stepIndex < 0) stepIndex = route.steps.length - 1;
+  let pendingStepIndex: number | undefined, pendingStepCount: number | undefined;
+  if (previous?.stepIndex != null && stepIndex > previous.stepIndex) {
+    const passedBy = along - offsets[previous.stepIndex];
+    const confirmations = previous.pendingStepIndex === stepIndex ? (previous.pendingStepCount ?? 0) + 1 : 1;
+    if (passedBy < navigationConfig.turnConfirmationMeters && confirmations < navigationConfig.turnConfirmationFixes) {
+      pendingStepIndex = stepIndex; pendingStepCount = confirmations; stepIndex = previous.stepIndex;
+    } else stepIndex = Math.min(stepIndex, previous.stepIndex + 1);
+  }
   const remainingGeometry = Math.max(0, total - along);
   const arrived = remainingGeometry <= 25 && distanceBetween(fix, route.geometry[route.geometry.length - 1]) <= 35 && projection.distance <= 35;
   const fraction = total > 0 ? remainingGeometry / total : 0;
   return { along, offRouteMeters: projection.distance, remainingMeters: Math.round(route.distanceMeters * fraction), remainingSeconds: Math.ceil(route.durationSeconds * fraction), stepIndex,
-    maneuverDistance: Math.max(0, offsets[stepIndex] - along), instruction: arrived ? language === 'ky' ? 'Жеттиңиз' : 'Вы прибыли' : maneuverText(route.steps[stepIndex], language), arrived };
+    maneuverDistance: Math.max(0, offsets[stepIndex] - along), maneuverPassed: along > offsets[stepIndex] + 2,
+    speedMps: fix.speed,
+    pendingStepIndex, pendingStepCount,
+    instruction: arrived ? language === 'ky' ? 'Жеттиңиз' : 'Вы прибыли' : maneuverText(route.steps[stepIndex], language), arrived };
 }
 export function displayDistance(meters: number) {
   return meters >= 1000 ? `${(meters / 1000).toFixed(1)} км` : `${Math.max(0, Math.round(meters / 10) * 10)} м`;
 }
-export type GuidanceCue = { key: string; text: string; priority: number };
-export function guidanceCue(progress: NavigationProgress, language: Language = 'ru'): GuidanceCue | null {
-  if (progress.arrived) return { key: 'arrived', text: language === 'ky' ? 'Бара турган жериңизге жеттиңиз.' : 'Вы прибыли в пункт назначения.', priority: 4 };
+export type GuidanceCue = { key: string; text: string; priority: number; stage: number; supersedes: string[] };
+export function guidanceCue(progress: NavigationProgress, language: Language = 'ru', routeVersion = 0, legIndex = 0): GuidanceCue | null {
+  const prefix = `${routeVersion}:${legIndex}:${progress.stepIndex}`;
+  if (progress.arrived) return { key: `${prefix}:arrived`, text: language === 'ky' ? 'Бара турган жериңизге жеттиңиз.' : 'Вы прибыли в пункт назначения.', priority: 4, stage: 0, supersedes: [`${prefix}:500`, `${prefix}:200`, `${prefix}:0`] };
+  if (progress.maneuverPassed || progress.offRouteMeters > navigationConfig.offRouteMeters) return null;
   const meters = progress.maneuverDistance;
   if (meters > 550) return null;
-  const stage = meters <= 50 ? 0 : meters <= 150 ? 100 : 500;
+  const speed = Math.max(0, progress.speedMps ?? 0);
+  const nearThreshold = Math.max(50, Math.min(75, speed * 3));
+  const approachThreshold = Math.max(200, Math.min(280, speed * 9));
+  const stage = meters <= nearThreshold ? 0 : meters <= approachThreshold ? 200 : 500;
   const distance = meters >= 100 ? Math.round(meters / 50) * 50 : Math.max(50, Math.round(meters / 10) * 10);
-  return { key: `${progress.stepIndex}:${stage}`, text: stage === 0 ? `${progress.instruction}.` : language === 'ky' ? `${distance} метрден кийин ${progress.instruction[0].toLowerCase() + progress.instruction.slice(1)}.` : `Через ${distance} метров ${progress.instruction[0].toLocaleLowerCase('ru') + progress.instruction.slice(1)}.`, priority: stage === 0 ? 3 : stage === 100 ? 2 : 1 };
+  const supersedes = stage === 0 ? [`${prefix}:500`, `${prefix}:200`] : stage === 200 ? [`${prefix}:500`] : [];
+  return { key: `${prefix}:${stage}`, text: stage === 0 ? `${progress.instruction}.` : language === 'ky' ? `${distance} метрден кийин ${progress.instruction[0].toLowerCase() + progress.instruction.slice(1)}.` : `Через ${distance} метров ${progress.instruction[0].toLocaleLowerCase('ru') + progress.instruction.slice(1)}.`, priority: stage === 0 ? 3 : stage === 200 ? 2 : 1, stage, supersedes };
 }

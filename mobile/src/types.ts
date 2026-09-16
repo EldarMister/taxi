@@ -55,10 +55,27 @@ export type OrderStatus =
   | "CANCELLED"
   | "NO_DRIVER";
 export type DriverLocation = Coordinate & { driverId: string; timestamp: number; receivedAt: number; accuracy: number; heading?: number; speed?: number;
-  tripId?: string; trackingSessionId?: string; trackingStartedAt?: number; sequence?: number; measuredAt?: number; accuracyM?: number; speedMps?: number; bearingDeg?: number };
+  tripId?: string; trackingSessionId?: string; trackingStartedAt?: number; sequence?: number; measuredAt?: number; accuracyM?: number; speedMps?: number; bearingDeg?: number;
+  schemaVersion?: 1; orderId?: string; assignmentId?: string; trackingStartedAtMs?: number; measuredAtMs?: number; courseDeg?: number | null;
+  stateVersion?: number; receivedAtMs?: number };
+export type DriverLocationUpdate = {
+  schemaVersion: 1;
+  orderId: string;
+  assignmentId: string;
+  trackingSessionId: string;
+  trackingStartedAtMs: number;
+  sequence: number;
+  latitude: number;
+  longitude: number;
+  accuracyM: number | null;
+  speedMps: number | null;
+  courseDeg: number | null;
+  measuredAtMs: number;
+};
 export type Order = {
   driverLocation?: DriverLocation | null;
   id: string;
+  assignmentId?: string | null;
   status: OrderStatus;
   pickup: Point;
   dropoff: Point;
@@ -70,6 +87,7 @@ export type Order = {
   passenger?: { name: string; phone?: string } | null;
   createdAt: string;
   updatedAt?: string;
+  completedAt?: string | null;
   driver?: User | null;
   client?: User;
   searchExpiresAt?: string;
