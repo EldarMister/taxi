@@ -148,10 +148,15 @@ export function DriverPanel({ user, order, offer, busy, coming, onAccept, onRate
   const confirmation = surface === 'cancel';
   const showComment = surface === 'comment';
   const displayed = order || offer;
+  const delivery = !!displayed && displayed.kind !== undefined && displayed.kind !== 'RIDE';
   const [detailsExpanded, setDetailsExpanded] = useState(true);
   useEffect(() => { reset(); }, [order?.id, order?.status]);
   useEffect(() => { setDetailsExpanded(!(order && ['ASSIGNED', 'IN_PROGRESS'].includes(order.status))); }, [displayed?.id, order?.status]);
-  const active = order && order.status in nextAction ? nextAction[order.status as keyof typeof nextAction] : null;
+  const active = order && order.status in nextAction ? delivery ? ({
+    ASSIGNED: { title: 'Следуйте к отправителю', button: 'Прибыл за грузом', action: 'arrive' },
+    ARRIVED: { title: 'Ожидайте отправителя', button: 'Забрал груз', action: 'start' },
+    IN_PROGRESS: { title: 'Доставка началась', button: 'Завершить доставку', action: 'complete' },
+  } as const)[order.status as keyof typeof nextAction] : nextAction[order.status as keyof typeof nextAction] : null;
   const complete = order?.status === 'COMPLETED';
   const terminal = !!order && ['CANCELLED', 'NO_DRIVER'].includes(order.status);
   const title = active?.title || 'Заказ отменён';
@@ -168,9 +173,9 @@ export function DriverPanel({ user, order, offer, busy, coming, onAccept, onRate
         {!!user.driverProfile?.verified && !user.driverProfile.online && <Action label={t('Выйти на линию')} onPress={onOnline} busy={busy}/>}
       </View> : <View style={{ gap: 13 }}>
         {offer ? <View style={d.offerLead}>
-          <Text style={d.approachLabel}>{t('До клиента')}</Text>
-          <View style={d.offerTools}><Deadline order={offer} language={user.language}/><Pressable accessibilityRole="button" accessibilityLabel={t(detailsExpanded ? 'Свернуть детали поездки' : 'Раскрыть детали поездки')} accessibilityState={{ expanded: detailsExpanded }} onPress={() => setDetailsExpanded(value => !value)} style={d.offerToggle}><Icon name={detailsExpanded ? 'chevron-up' : 'chevron-down'} color={palette.muted} size={19}/></Pressable></View>
-        </View> : <View style={d.row}><Pressable accessibilityRole="button" accessibilityLabel={t(detailsExpanded ? 'Свернуть детали поездки' : 'Раскрыть детали поездки')} accessibilityState={{ expanded: detailsExpanded }} onPress={() => setDetailsExpanded(value => !value)} style={d.titleToggle}><Text style={[d.title, { flex: 1 }]}>{t(title)}</Text><Icon name={detailsExpanded ? 'chevron-up' : 'chevron-down'} color={palette.muted} size={18}/></Pressable></View>}
+          <Text style={d.approachLabel}>{t(delivery ? 'До отправителя' : 'До клиента')}</Text>
+          <View style={d.offerTools}><Deadline order={offer} language={user.language}/><Pressable accessibilityRole="button" accessibilityLabel={t(detailsExpanded ? delivery ? 'Свернуть детали доставки' : 'Свернуть детали поездки' : delivery ? 'Раскрыть детали доставки' : 'Раскрыть детали поездки')} accessibilityState={{ expanded: detailsExpanded }} onPress={() => setDetailsExpanded(value => !value)} style={d.offerToggle}><Icon name={detailsExpanded ? 'chevron-up' : 'chevron-down'} color={palette.muted} size={19}/></Pressable></View>
+        </View> : <View style={d.row}><Pressable accessibilityRole="button" accessibilityLabel={t(detailsExpanded ? delivery ? 'Свернуть детали доставки' : 'Свернуть детали поездки' : delivery ? 'Раскрыть детали доставки' : 'Раскрыть детали поездки')} accessibilityState={{ expanded: detailsExpanded }} onPress={() => setDetailsExpanded(value => !value)} style={d.titleToggle}><Text style={[d.title, { flex: 1 }]}>{t(title)}</Text><Icon name={detailsExpanded ? 'chevron-up' : 'chevron-down'} color={palette.muted} size={18}/></Pressable></View>}
         {offer && <View testID="driver-offer-approach" style={d.approach}>
           <Text numberOfLines={1} adjustsFontSizeToFit style={[d.approachTitle, !approach?.route && d.approachPlaceholder]}>{approach?.route ? `${approach.route.distanceMeters >= 1000 ? km(approach.route.distanceMeters) : `${Math.round(approach.route.distanceMeters)} м`} · ${mins(approach.route.durationSeconds, user.language)}` : approach?.loading ? t('Строим маршрут до клиента…') : approach?.error || t('Ожидаем GPS водителя')}</Text>
           <View style={d.approachTags}>
@@ -180,9 +185,9 @@ export function DriverPanel({ user, order, offer, busy, coming, onAccept, onRate
         </View>}
         {order && !terminal && !backgroundReady && onBackground && <Pressable accessibilityRole="button" onPress={onBackground} style={d.background}><Icon name="volume-high-outline" color={palette.accent} size={20}/><Text style={d.backgroundText}>Включить навигацию и положение в фоне</Text><Icon name="chevron-forward" color={palette.accent} size={16}/></Pressable>}
         {order?.client && !terminal && <View style={d.row}>
-          <View style={d.activePassengerIcon}><Icon name="person" size={27} color="white"/></View><View style={{ flex: 1, gap: 3 }}><Text style={d.person} numberOfLines={1}>{order.passenger?.name || t('Пассажир')}</Text><Text style={d.caption}>{coming && order.status === 'ARRIVED' ? `${t('Пассажир выходит')} · ` : ''}{order.passenger ? order.passenger.phone : order.clientRating != null ? `★ ${Number(order.clientRating).toFixed(2).replace('.', ',')}` : t('Пока нет оценок')}</Text></View>
-          <Pressable accessibilityRole="button" accessibilityLabel={t('Позвонить пассажиру')} disabled={!(order.passenger?.phone || order.client.phone)} onPress={() => { const phone = order.passenger?.phone || order.client?.phone; if (phone) void Linking.openURL(`tel:${phone}`); }} style={d.contact}><Icon name="call-outline" color={palette.accent} size={24}/></Pressable>
-          <Pressable accessibilityRole="button" accessibilityLabel={t(order.passenger ? 'Чат с заказчиком' : 'Чат с пассажиром')} onPress={onChat} style={d.contact}><Icon name="chatbubble-outline" color={palette.accent} size={24}/></Pressable>
+          <View style={d.activePassengerIcon}><Icon name={delivery ? 'cube' : 'person'} size={27} color="white"/></View><View style={{ flex: 1, gap: 3 }}><Text style={d.person} numberOfLines={1}>{delivery ? order.client.name || t('Отправитель') : order.passenger?.name || t('Пассажир')}</Text><Text style={d.caption}>{coming && order.status === 'ARRIVED' ? `${t(delivery ? 'Отправитель выходит' : 'Пассажир выходит')} · ` : ''}{delivery ? order.client.phone : order.passenger ? order.passenger.phone : order.clientRating != null ? `★ ${Number(order.clientRating).toFixed(2).replace('.', ',')}` : t('Пока нет оценок')}</Text></View>
+          <Pressable accessibilityRole="button" accessibilityLabel={t(delivery ? 'Позвонить отправителю' : 'Позвонить пассажиру')} disabled={!(order.passenger?.phone || order.client.phone)} onPress={() => { const phone = order.passenger?.phone || order.client?.phone; if (phone) void Linking.openURL(`tel:${phone}`); }} style={d.contact}><Icon name="call-outline" color={palette.accent} size={24}/></Pressable>
+          <Pressable accessibilityRole="button" accessibilityLabel={t(delivery || order.passenger ? 'Чат с заказчиком' : 'Чат с пассажиром')} onPress={onChat} style={d.contact}><Icon name="chatbubble-outline" color={palette.accent} size={24}/></Pressable>
         </View>}
         {showNavigationMetrics && <View testID="driver-trip-metrics" style={d.liveStats}>
           <View style={d.liveStat}><Text numberOfLines={1} adjustsFontSizeToFit style={d.liveValue}>{progress ? progress.arrived ? '0 мин' : `${Math.max(1, Math.ceil(progress.remainingSeconds / 60))} мин` : '—'}</Text><Text style={d.liveLabel}>осталось</Text></View>
@@ -194,13 +199,14 @@ export function DriverPanel({ user, order, offer, busy, coming, onAccept, onRate
         {detailsExpanded && <ScrollView testID="driver-trip-details" style={{ maxHeight: Math.max(96, Math.min(230, screenHeight * .22)) }} contentContainerStyle={d.detailsBody} showsVerticalScrollIndicator={false} nestedScrollEnabled>
           <RouteDetails order={displayed} language={user.language} offer={!!offer}/>
           <View style={d.stats}>
-            <View style={d.stat}><Text numberOfLines={1} adjustsFontSizeToFit style={d.statValue}>{km(displayed.distanceMeters)}</Text><Text style={d.caption}>{t('Маршрут поездки')}</Text></View><View style={d.divider}/>
-            <View style={d.stat}><Text numberOfLines={1} adjustsFontSizeToFit style={d.statValue}>{tripTime(displayed.durationSeconds, user.language)}</Text><Text style={d.caption}>{t('Время поездки')}</Text></View><View style={d.divider}/>
+            <View style={d.stat}><Text numberOfLines={1} adjustsFontSizeToFit style={d.statValue}>{km(displayed.distanceMeters)}</Text><Text style={d.caption}>{t(delivery ? 'Маршрут доставки' : 'Маршрут поездки')}</Text></View><View style={d.divider}/>
+            <View style={d.stat}><Text numberOfLines={1} adjustsFontSizeToFit style={d.statValue}>{tripTime(displayed.durationSeconds, user.language)}</Text><Text style={d.caption}>{t(delivery ? 'Время доставки' : 'Время поездки')}</Text></View><View style={d.divider}/>
             <View style={d.stat}><Text numberOfLines={1} adjustsFontSizeToFit style={[d.statValue, { color: palette.accent }]}>{money(displayed.price)}</Text><Text style={d.caption}>{t('Наличные')}</Text></View>
           </View>
-          {!!displayed.comment && <Pressable accessibilityRole="button" accessibilityLabel={t('Комментарий пассажира')} onPress={() => navigate('comment')} style={d.comment}><Icon name="chatbox-outline" color={palette.accent} size={22}/><Text numberOfLines={2} style={d.commentText}>{displayed.comment}</Text><Icon name="chevron-forward" color={palette.muted} size={16}/></Pressable>}
+          {delivery && displayed.deliveryDetails?.goodsDescription && <View style={d.comment}><Icon name="cube-outline" color={palette.accent} size={22}/><Text numberOfLines={3} style={d.commentText}>{displayed.deliveryDetails.goodsDescription}{displayed.deliveryDetails.doorToDoor ? ' · от двери до двери' : ''}{displayed.deliveryDetails.loaders ? ` · грузчики: ${displayed.deliveryDetails.loaders}` : ''}</Text></View>}
+          {!!displayed.comment && <Pressable accessibilityRole="button" accessibilityLabel={t(delivery ? 'Комментарий заказчика' : 'Комментарий пассажира')} onPress={() => navigate('comment')} style={d.comment}><Icon name="chatbox-outline" color={palette.accent} size={22}/><Text numberOfLines={2} style={d.commentText}>{displayed.comment}</Text><Icon name="chevron-forward" color={palette.muted} size={16}/></Pressable>}
         </ScrollView>}
-        {offer && <View style={d.offerPassenger}><View style={d.offerPassengerIcon}><Icon name="person" size={20} color="white"/></View><Text style={[d.person, { flex: 1 }]}>{offer.passenger?.name || t('Пассажир')}</Text>{!offer.passenger && <><Icon name="star" size={17} color={isDark ? '#FFFFFF' : '#E7A324'}/><Text style={d.ratingValue}>{offer.clientRating != null ? Number(offer.clientRating).toFixed(2).replace('.', ',') : t('Пока нет оценок')}</Text></>}</View>}
+        {offer && <View style={d.offerPassenger}><View style={d.offerPassengerIcon}><Icon name={delivery ? 'cube' : 'person'} size={20} color="white"/></View><Text style={[d.person, { flex: 1 }]}>{delivery ? t('Доставка груза') : offer.passenger?.name || t('Пассажир')}</Text>{!offer.passenger && <><Icon name="star" size={17} color={isDark ? '#FFFFFF' : '#E7A324'}/><Text style={d.ratingValue}>{offer.clientRating != null ? Number(offer.clientRating).toFixed(2).replace('.', ',') : t('Пока нет оценок')}</Text></>}</View>}
         {offer && <SlideToConfirm label={t('Взять заказ')} hint={t('Проведите вправо')} onConfirm={() => onAccept(offer)} busy={busy} resetKey={`${offer.id}:accept`}/>}
         {active && order && <SlideToConfirm label={t(active.button)} hint={t('Проведите вправо')} onConfirm={() => onAction(active.action)} busy={busy} resetKey={`${order.id}:${order.status}`}/>}
         {order && !terminal && order.status !== 'IN_PROGRESS' && <Pressable accessibilityRole="button" disabled={busy} onPress={() => navigate('cancel')} style={d.cancel}><Text style={d.caption}>{t('Отменить заказ')}</Text></Pressable>}

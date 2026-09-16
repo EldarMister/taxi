@@ -9,6 +9,7 @@ import { PrismaService } from './prisma.service';
 import { RoutingService } from './providers';
 import { visibleDriverLocation } from './tracking';
 import { nextDriver, OFFER_SECONDS, POSITION_MAX_AGE_MS } from './dispatch-ranking';
+import { driverCanTake } from './driver-eligibility';
 
 @Injectable()
 export class OrdersService {
@@ -21,7 +22,7 @@ export class OrdersService {
     if (haversine(dto.pickup,dto.dropoff)<30) throw new BadRequestException('Укажите разные точки маршрута');
     const route = await this.routing.route(dto.pickup,dto.dropoff);
     const fare = calculateFare(tariff,route.distanceMeters,route.durationSeconds);
-    const quote = await this.db.quote.create({data:{userId:actor.id,tariffId:tariff.id,pickup:{...dto.pickup},dropoff:{...dto.dropoff},geometry:route.geometry,distanceMeters:route.distanceMeters,durationSeconds:route.durationSeconds,...fare,routeProvider:route.provider,expiresAt:new Date(Date.now()+300000)}});
+    const quote = await this.db.quote.create({data:{userId:actor.id,tariffId:tariff.id,kind:tariff.kind,pickup:{...dto.pickup},dropoff:{...dto.dropoff},geometry:route.geometry,distanceMeters:route.distanceMeters,durationSeconds:route.durationSeconds,...fare,routeProvider:route.provider,expiresAt:new Date(Date.now()+300000)}});
     return {...quote,currency:'KGS',paymentMethod:'CASH',tariff,development:route.provider.startsWith('development')};
   }
   async create(actor:Actor,dto:CreateOrderDto) {
@@ -35,14 +36,17 @@ export class OrdersService {
       if(currentUser?.role!=='CLIENT')throw new ForbiddenException('Заказ доступен клиенту');
       const existing = await tx.order.findUnique({where:{clientId_idempotencyKey:{clientId:actor.id,idempotencyKey:dto.idempotencyKey}}});
       if(existing) {
-        if(existing.quoteId !== dto.quoteId || existing.comment !== (dto.comment?.trim()??'') || existing.passengerName !== (passenger?.name??null) || existing.passengerPhone !== (passenger?.phone??null)) throw new ConflictException('Ключ повтора уже использован с другими данными');
+        if(existing.quoteId !== dto.quoteId || existing.comment !== (dto.comment?.trim()??'') || existing.passengerName !== (passenger?.name??null) || existing.passengerPhone !== (passenger?.phone??null) || this.stable(existing.deliveryDetails)!==this.stable(this.deliveryDetails(existing.kind,dto,false))) throw new ConflictException('Ключ повтора уже использован с другими данными');
         return existing;
       }
       if(await tx.order.findFirst({where:{clientId:actor.id,status:{in:ACTIVE_STATUSES}}})) throw new ConflictException('У вас уже есть активный заказ');
       const quote = await tx.quote.findFirst({where:{id:dto.quoteId,userId:actor.id,expiresAt:{gt:new Date()}},include:{order:true}});
       if(!quote) throw new BadRequestException('Расчёт стоимости истёк. Постройте маршрут ещё раз.');
       if(quote.order) throw new ConflictException('Этот расчёт уже использован');
-      const created = await tx.order.create({data:{clientId:actor.id,quoteId:quote.id,idempotencyKey:dto.idempotencyKey,pickup:quote.pickup as Prisma.InputJsonValue,dropoff:quote.dropoff as Prisma.InputJsonValue,geometry:quote.geometry as Prisma.InputJsonValue,distanceMeters:quote.distanceMeters,durationSeconds:quote.durationSeconds,price:quote.price,commission:quote.commission,comment:dto.comment?.trim()??'',passengerName:passenger?.name,passengerPhone:passenger?.phone,searchExpiresAt:new Date(Date.now()+OFFER_SECONDS*1000),history:{create:{status:'SEARCHING',actorId:actor.id}}}});
+      const details=this.deliveryDetails(quote.kind,dto);
+      if(quote.kind!=='RIDE'&&passenger)throw new BadRequestException('Для доставки укажите сведения о грузе вместо пассажира');
+      const dispatchAfter=details?.scheduledAt?new Date(details.scheduledAt):new Date();
+      const created = await tx.order.create({data:{clientId:actor.id,quoteId:quote.id,idempotencyKey:dto.idempotencyKey,kind:quote.kind,deliveryDetails:details?details as Prisma.InputJsonValue:Prisma.DbNull,dispatchAfter,pickup:quote.pickup as Prisma.InputJsonValue,dropoff:quote.dropoff as Prisma.InputJsonValue,geometry:quote.geometry as Prisma.InputJsonValue,distanceMeters:quote.distanceMeters,durationSeconds:quote.durationSeconds,price:quote.price,commission:quote.commission,comment:dto.comment?.trim()??'',passengerName:passenger?.name,passengerPhone:passenger?.phone,searchExpiresAt:new Date(dispatchAfter.getTime()+OFFER_SECONDS*1000),history:{create:{status:'SEARCHING',actorId:actor.id}}}});
       await this.push(tx,[actor.id],'order:created',created.id); return created;
     });
     await this.dispatchOrder(order.id); await this.publish(order.id); return this.serialize(order.id,false,actor.id);
@@ -80,7 +84,7 @@ export class OrdersService {
     const client = offer?undefined:await this.auth.user(order.clientId);
     const clientRating = await this.db.clientRating.aggregate({where:{order:{clientId:order.clientId,passengerName:null}},_avg:{score:true}});
     const safeClient = client?{id:client.id,name:client.name,phone:client.phone,photoUrl:client.photoUrl,role:client.role}:undefined;
-    return {driverLocation:offer?null:visibleDriverLocation(order),assignmentId:assignment?.id??null,id:order.id,status:order.status,pickup:order.pickup,dropoff:order.dropoff,geometry:order.geometry,distanceMeters:order.distanceMeters,durationSeconds:order.durationSeconds,price:order.price,currency:'KGS',paymentMethod:'CASH',comment:order.comment,passenger:order.passengerName?{name:order.passengerName,phone:offer?undefined:order.passengerPhone}:null,createdAt:order.createdAt,updatedAt:order.updatedAt,searchExpiresAt:order.searchExpiresAt,completedAt:order.completedAt,driver,client:safeClient,rating:order.rating?.score??null,clientRating:clientRating._avg.score??null,driverRating:order.clientRating?.score??null,tariff:order.quote.tariff,routeProvider:order.quote.routeProvider};
+    return {driverLocation:offer?null:visibleDriverLocation(order),assignmentId:assignment?.id??null,id:order.id,kind:order.kind,deliveryDetails:order.deliveryDetails,dispatchAfter:order.dispatchAfter,status:order.status,pickup:order.pickup,dropoff:order.dropoff,geometry:order.geometry,distanceMeters:order.distanceMeters,durationSeconds:order.durationSeconds,price:order.price,currency:'KGS',paymentMethod:'CASH',comment:order.comment,passenger:order.passengerName?{name:order.passengerName,phone:offer?undefined:order.passengerPhone}:null,createdAt:order.createdAt,updatedAt:order.updatedAt,searchExpiresAt:order.searchExpiresAt,completedAt:order.completedAt,driver,client:safeClient,rating:order.rating?.score??null,clientRating:clientRating._avg.score??null,driverRating:order.clientRating?.score??null,tariff:order.quote.tariff,routeProvider:order.quote.routeProvider};
   }
   async publish(id:string,additionalUsers:string[]=[]) {
     const snapshot=await this.serialize(id);
@@ -97,12 +101,14 @@ export class OrdersService {
       const order = await this.lockOrder(tx,id);
       if(order.status !== 'SEARCHING') return {offered:null as string|null,withdrawn:[] as string[],expired:false};
       const now=Date.now();
+      if(order.dispatchAfter.getTime()>now)return {offered:null,withdrawn:[],expired:false};
       const existing=await tx.orderOffer.findMany({where:{orderId:id},select:{driverId:true,skipped:true,expiresAt:true}});
       const active=existing.find(offer=>!offer.skipped&&offer.expiresAt.getTime()>now);
       if(active)return {offered:null,withdrawn:[],expired:false};
       const withdrawn=existing.filter(offer=>!offer.skipped&&offer.expiresAt.getTime()<=now).map(offer=>offer.driverId);
       if(withdrawn.length)await tx.orderOffer.updateMany({where:{orderId:id,driverId:{in:withdrawn}},data:{skipped:true}});
-      const drivers=await tx.driverProfile.findMany({where:{verified:true,online:true,deposit:{gte:Math.max(this.config.minimumDeposit,order.commission)},vehicle:{isNot:null},locationMeasuredAt:{gte:new Date(now-POSITION_MAX_AGE_MS)}}});
+      const requiredClass=(await tx.quote.findUniqueOrThrow({where:{id:order.quoteId},select:{tariff:{select:{requiredClass:true}}}})).tariff.requiredClass;
+      const drivers=(await tx.driverProfile.findMany({where:{verified:true,online:true,deposit:{gte:Math.max(this.config.minimumDeposit,order.commission)},vehicle:{isNot:null},locationMeasuredAt:{gte:new Date(now-POSITION_MAX_AGE_MS)}}})).filter(d=>driverCanTake(d,order.kind,requiredClass));
       const busy=new Set((await tx.order.findMany({where:{driverId:{in:drivers.map(d=>d.userId)},status:{in:ACTIVE_STATUSES}},select:{driverId:true}})).map(o=>o.driverId));
       const offered=new Set(existing.map(o=>o.driverId));
       const eligible=drivers.filter(d=>!busy.has(d.userId)&&!offered.has(d.userId));
@@ -135,7 +141,7 @@ export class OrdersService {
     }
   }
   async dispatchPending() {
-    const pending = await this.db.order.findMany({where:{status:'SEARCHING'},select:{id:true},take:200});
+    const pending = await this.db.order.findMany({where:{status:'SEARCHING',dispatchAfter:{lte:new Date()}},select:{id:true},take:200});
     for(const order of pending) await this.dispatchOrder(order.id);
   }
   async offers(actor:Actor) {
@@ -143,8 +149,8 @@ export class OrdersService {
     const driver = await this.db.driverProfile.findUnique({where:{userId:actor.id}});
     if(!driver?.verified || !driver.online) return [];
     if(await this.db.order.findFirst({where:{driverId:actor.id,status:{in:ACTIVE_STATUSES}}})) return [];
-    const offers = await this.db.orderOffer.findMany({where:{driverId:actor.id,skipped:false,expiresAt:{gt:new Date()},order:{status:'SEARCHING',commission:{lte:driver.deposit}}},include:{order:true},orderBy:{createdAt:'desc'},take:50});
-    const valid = offers.filter(()=>driver.deposit>=this.config.minimumDeposit);
+    const offers = await this.db.orderOffer.findMany({where:{driverId:actor.id,skipped:false,expiresAt:{gt:new Date()},order:{status:'SEARCHING',commission:{lte:driver.deposit}}},include:{order:{include:{quote:{include:{tariff:true}}}}},orderBy:{createdAt:'desc'},take:50});
+    const valid = offers.filter(offer=>driver.deposit>=this.config.minimumDeposit&&driverCanTake(driver,offer.order.kind,offer.order.quote.tariff.requiredClass));
     return Promise.all(valid.map(async offer=>({...await this.serialize(offer.orderId,true),searchExpiresAt:offer.expiresAt})));
   }
   async accept(actor:Actor,id:string) {
@@ -156,6 +162,8 @@ export class OrdersService {
       await tx.$queryRaw`SELECT "userId" FROM "DriverProfile" WHERE "userId"=${actor.id}::uuid FOR UPDATE`;
       const driver = await tx.driverProfile.findUnique({where:{userId:actor.id},include:{vehicle:true}});
       if(!driver?.verified||!driver.online||!driver.vehicle) throw new ForbiddenException('Водитель не подтверждён или не на линии');
+      const requiredClass=(await tx.quote.findUniqueOrThrow({where:{id:order.quoteId},select:{tariff:{select:{requiredClass:true}}}})).tariff.requiredClass;
+      if(!driverCanTake(driver,order.kind,requiredClass))throw new ForbiddenException('Этот вид заказа не разрешён водителю');
       if(driver.deposit<Math.max(order.commission,this.config.minimumDeposit)) throw new BadRequestException('Недостаточно средств на депозите');
       const offer = await tx.orderOffer.findUnique({where:{orderId_driverId:{orderId:id,driverId:actor.id}}});
       if(!offer||offer.skipped||offer.expiresAt.getTime()<=Date.now()) throw new ForbiddenException('Предложение истекло или заказ не был предложен вам');
@@ -260,6 +268,20 @@ export class OrdersService {
       if(rating) {if(rating.score!==score||rating.comment!==normalizedComment) throw new ConflictException('Поездка уже оценена');return rating;}
       return tx.rating.create({data:{orderId:id,score,comment:normalizedComment}});
     });
+  }
+  private stable(value:unknown):string {
+    return JSON.stringify(value,(_,item)=>item&&typeof item==='object'&&!Array.isArray(item)?Object.fromEntries(Object.keys(item).sort().map(key=>[key,item[key]])):item);
+  }
+  private deliveryDetails(kind:Order['kind'],dto:CreateOrderDto,validateSchedule=true) {
+    if(kind==='RIDE'){
+      if(dto.delivery)throw new BadRequestException('Параметры доставки не относятся к поездке');
+      return null;
+    }
+    if(!dto.delivery?.goodsDescription.trim()||dto.delivery.goodsDescription.trim().length<3)throw new BadRequestException('Опишите груз для доставки');
+    const scheduledAt=dto.delivery.scheduledAt?new Date(dto.delivery.scheduledAt):null;
+    if(validateSchedule&&scheduledAt&&(kind!=='DELIVERY_TRUCK'||scheduledAt.getTime()<Date.now()+300000||scheduledAt.getTime()>Date.now()+7*86400000))throw new BadRequestException('Запланировать грузовой заказ можно от 5 минут до 7 дней');
+    if(kind==='DELIVERY_CAR'&&(dto.delivery.bodyType||dto.delivery.loaders))throw new BadRequestException('Грузчики и тип кузова доступны только для грузовой машины');
+    return {goodsDescription:dto.delivery.goodsDescription.trim(),doorToDoor:!!dto.delivery.doorToDoor,...(scheduledAt?{scheduledAt:scheduledAt.toISOString()}:{}),...(kind==='DELIVERY_TRUCK'?{bodyType:dto.delivery.bodyType??'VAN',loaders:dto.delivery.loaders??0}:{})};
   }
   async rateClient(actor:Actor,id:string,score:number,comment?:string) {
     const normalizedComment=comment?.trim()??'';

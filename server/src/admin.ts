@@ -14,8 +14,12 @@ const taxiInclude={client:{select:person},driver:{select:{...person,driverProfil
 const driverSelect={...person,createdAt:true,driverProfile:{include:{vehicle:true}}} as const;
 const pageResult=<T>(items:T[],total:number,query:AdminPageDto)=>({items,total,page:query.page,pageSize:query.pageSize});
 function validateText(value:string,label:string) {if(!value.trim())throw new BadRequestException(`Заполните поле «${label}»`);return value.trim();}
+function validateTariffClass(kind:'RIDE'|'DELIVERY_CAR'|'DELIVERY_TRUCK',requiredClass:'ECONOMY'|'COMFORT'|'TRUCK') {
+  if(kind==='DELIVERY_CAR'&&requiredClass!=='ECONOMY'||kind==='DELIVERY_TRUCK'&&requiredClass!=='TRUCK'||kind==='RIDE'&&requiredClass==='TRUCK')throw new BadRequestException('Выбранный класс автомобиля не подходит этому виду заказа');
+}
 function driverView(row:{id:string;name:string;phone:string;createdAt:Date;driverProfile:any}) {
-  return {...row,verified:row.driverProfile?.verified??false,online:row.driverProfile?.online??false,deposit:row.driverProfile?.deposit??0,carMake:row.driverProfile?.vehicle?.make??'',carColor:row.driverProfile?.vehicle?.color??'',carPlate:row.driverProfile?.vehicle?.plate??''};
+  const profile=row.driverProfile,vehicle=profile?.vehicle;
+  return {...row,verified:profile?.verified??false,online:profile?.online??false,deposit:profile?.deposit??0,transportClass:profile?.transportClass??'ECONOMY',requestedTransportClass:profile?.requestedTransportClass??null,acceptsEconomy:profile?.acceptsEconomy??false,acceptsComfort:profile?.acceptsComfort??false,acceptsDeliveryCar:profile?.acceptsDeliveryCar??false,acceptsDeliveryTruck:profile?.acceptsDeliveryTruck??false,carMake:vehicle?.make??'',carColor:vehicle?.color??'',carPlate:vehicle?.plate??'',carPhotoUrl:vehicle?.photoUpdatedAt?`/vehicles/${vehicle.id}/photo?v=${vehicle.photoUpdatedAt.getTime()}`:null};
 }
 @Injectable()
 export class AdminService {
@@ -75,7 +79,7 @@ export class AdminService {
   }
   async tariffs(actor:Actor) {assertAdmin(actor);const items=await this.db.tariff.findMany({orderBy:[{active:'desc'},{basePrice:'asc'},{id:'asc'}]});return {items,total:items.length,page:1,pageSize:items.length};}
   async createTariff(actor:Actor,dto:AdminTariffDto) {
-    assertAdmin(actor);const data={...dto,name:validateText(dto.name,'Название'),description:dto.description.trim()};
+    assertAdmin(actor);validateTariffClass(dto.kind,dto.requiredClass);const data={...dto,name:validateText(dto.name,'Название'),description:dto.description.trim()};
     const result=await this.db.$transaction(async tx=>{const row=await tx.tariff.create({data});await this.audit.record(tx,actor,'tariff.create','tariffs',row.id,{after:row});return row;});
     this.events.adminChanged('tariffs',result.id);this.events.contentChanged('tariffs');return result;
   }
@@ -85,6 +89,7 @@ export class AdminService {
     const result=await this.db.$transaction(async tx=>{
       await tx.$queryRaw`SELECT "id" FROM "Tariff" WHERE "id"=${id} FOR UPDATE`;
       const before=await tx.tariff.findUnique({where:{id}});if(!before)throw new NotFoundException('Тариф не найден');
+      validateTariffClass(dto.kind??before.kind,dto.requiredClass??before.requiredClass);
       const row=await tx.tariff.update({where:{id},data});await this.audit.record(tx,actor,'tariff.update','tariffs',id,{before,after:row});return row;
     });
     this.events.adminChanged('tariffs',id);this.events.contentChanged('tariffs');return result;
@@ -113,7 +118,7 @@ export class AdminService {
         await tx.user.update({where:{id:user.id},data:{name,role:'DRIVER'}});
         await tx.refreshSession.updateMany({where:{userId:user.id,revokedAt:null},data:{revokedAt:new Date()}});
       } else user=await tx.user.create({data:{phone:dto.phone,name,role:'DRIVER'},select:{id:true,role:true}});
-      await tx.driverProfile.create({data:{userId:user.id,verified:dto.verified,vehicle:{create:vehicle}}});
+      await tx.driverProfile.create({data:{userId:user.id,verified:dto.verified,transportClass:dto.transportClass,acceptsEconomy:dto.transportClass!=='TRUCK',acceptsComfort:dto.transportClass==='COMFORT',acceptsDeliveryTruck:dto.transportClass==='TRUCK',vehicle:{create:vehicle}}});
       await this.audit.record(tx,actor,'driver.create','drivers',user.id,{phone:dto.phone,name,vehicle,verified:dto.verified});return user.id;
     });
     this.events.adminChanged('drivers',id);return this.driver(actor,id);
@@ -129,7 +134,9 @@ export class AdminService {
       const vehicle={make:dto.carMake===undefined?car?.make:validateText(dto.carMake,'Автомобиль'),color:dto.carColor===undefined?car?.color:validateText(dto.carColor,'Цвет'),plate:dto.carPlate===undefined?car?.plate:validateText(dto.carPlate,'Госномер').toUpperCase()};
       if(!vehicle.make||!vehicle.color||!vehicle.plate)throw new BadRequestException('Заполните данные автомобиля');
       await tx.user.update({where:{id},data:{...(dto.phone?{phone:dto.phone}:{}),...(dto.name===undefined?{}:{name:validateText(dto.name,'Имя')})}});
-      await tx.driverProfile.update({where:{userId:id},data:{...(dto.verified===undefined?{}:{verified:dto.verified}),online:false,locationLatitude:null,locationLongitude:null,locationAccuracyM:null,locationMeasuredAt:null}});
+      const transportClass=dto.transportClass??user.driverProfile.transportClass;
+      const classDefaults=dto.transportClass===undefined?{}:{transportClass,acceptsEconomy:transportClass!=='TRUCK',acceptsComfort:transportClass==='COMFORT',acceptsDeliveryCar:false,acceptsDeliveryTruck:transportClass==='TRUCK'};
+      await tx.driverProfile.update({where:{userId:id},data:{...(dto.verified===undefined?{}:{verified:dto.verified}),...classDefaults,online:false,locationLatitude:null,locationLongitude:null,locationAccuracyM:null,locationMeasuredAt:null}});
       await tx.vehicle.upsert({where:{driverId:id},create:{driverId:id,make:vehicle.make,color:vehicle.color,plate:vehicle.plate},update:{make:vehicle.make,color:vehicle.color,plate:vehicle.plate}});
       if(dto.phone&&dto.phone!==user.phone) {
         await tx.refreshSession.updateMany({where:{userId:id,revokedAt:null},data:{revokedAt:new Date()}});

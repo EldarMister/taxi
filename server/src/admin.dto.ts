@@ -27,6 +27,8 @@ export class AdminTariffDto {
   @IsInt() @Min(0) @Max(1000000) minimumPrice!:number;
   @IsInt() @Min(0) @Max(10000) commissionBps!:number;
   @IsBoolean() active!:boolean;
+  @IsIn(['RIDE','DELIVERY_CAR','DELIVERY_TRUCK']) kind:'RIDE'|'DELIVERY_CAR'|'DELIVERY_TRUCK'='RIDE';
+  @IsIn(['ECONOMY','COMFORT','TRUCK']) requiredClass:'ECONOMY'|'COMFORT'|'TRUCK'='ECONOMY';
 }
 export class AdminTariffPatchDto {
   @IsOptional() @IsString() @MinLength(1) @MaxLength(80) name?:string;
@@ -37,6 +39,8 @@ export class AdminTariffPatchDto {
   @IsOptional() @IsInt() @Min(0) @Max(1000000) minimumPrice?:number;
   @IsOptional() @IsInt() @Min(0) @Max(10000) commissionBps?:number;
   @IsOptional() @IsBoolean() active?:boolean;
+  @IsOptional() @IsIn(['RIDE','DELIVERY_CAR','DELIVERY_TRUCK']) kind?:'RIDE'|'DELIVERY_CAR'|'DELIVERY_TRUCK';
+  @IsOptional() @IsIn(['ECONOMY','COMFORT','TRUCK']) requiredClass?:'ECONOMY'|'COMFORT'|'TRUCK';
 }
 export class AdminDriverDto {
   @Matches(/^\+[1-9]\d{7,14}$/) phone!:string;
@@ -45,6 +49,7 @@ export class AdminDriverDto {
   @IsString() @MinLength(1) @MaxLength(40) carColor!:string;
   @IsString() @MinLength(2) @MaxLength(20) carPlate!:string;
   @IsBoolean() verified!:boolean;
+  @IsIn(['ECONOMY','COMFORT','TRUCK']) transportClass:'ECONOMY'|'COMFORT'|'TRUCK'='ECONOMY';
 }
 export class AdminDriverPatchDto {
   @IsOptional() @Matches(/^\+[1-9]\d{7,14}$/) phone?:string;
@@ -53,6 +58,7 @@ export class AdminDriverPatchDto {
   @IsOptional() @IsString() @MinLength(1) @MaxLength(40) carColor?:string;
   @IsOptional() @IsString() @MinLength(2) @MaxLength(20) carPlate?:string;
   @IsOptional() @IsBoolean() verified?:boolean;
+  @IsOptional() @IsIn(['ECONOMY','COMFORT','TRUCK']) transportClass?:'ECONOMY'|'COMFORT'|'TRUCK';
   @IsOptional() @IsIn([false]) online?:false;
 }
 export class AdminCancelDto {

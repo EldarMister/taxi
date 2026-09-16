@@ -23,6 +23,16 @@ enum LedgerKind {
   TOPUP
   COMMISSION
 }
+enum OrderKind {
+  RIDE
+  DELIVERY_CAR
+  DELIVERY_TRUCK
+}
+enum TransportClass {
+  ECONOMY
+  COMFORT
+  TRUCK
+}
 model User {
   id String @id @default(uuid()) @db.Uuid
   phone String @unique
@@ -50,6 +60,12 @@ model DriverProfile {
   verified Boolean @default(false)
   online Boolean @default(false)
   deposit Int @default(0)
+  transportClass TransportClass @default(ECONOMY)
+  requestedTransportClass TransportClass?
+  acceptsEconomy Boolean @default(true)
+  acceptsComfort Boolean @default(false)
+  acceptsDeliveryCar Boolean @default(false)
+  acceptsDeliveryTruck Boolean @default(false)
   locationLatitude Float?
   locationLongitude Float?
   locationAccuracyM Float?
@@ -65,11 +81,16 @@ model Vehicle {
   make String
   color String
   plate String @unique
+  photoData Bytes?
+  photoMime String?
+  photoUpdatedAt DateTime?
 }
 model Tariff {
   id String @id
   name String
   description String
+  kind OrderKind @default(RIDE)
+  requiredClass TransportClass @default(ECONOMY)
   basePrice Int
   pricePerKm Int
   pricePerMinute Int
@@ -77,6 +98,7 @@ model Tariff {
   commissionBps Int
   active Boolean @default(true)
   quotes Quote[]
+  @@index([kind,active])
 }
 model Quote {
   id String @id @default(uuid()) @db.Uuid
@@ -84,6 +106,7 @@ model Quote {
   user User @relation(fields:[userId],references:[id])
   tariffId String
   tariff Tariff @relation(fields:[tariffId],references:[id])
+  kind OrderKind @default(RIDE)
   pickup Json
   dropoff Json
   geometry Json
@@ -107,6 +130,9 @@ model Order {
   quote Quote @relation(fields:[quoteId],references:[id])
   idempotencyKey String
   status OrderStatus @default(SEARCHING)
+  kind OrderKind @default(RIDE)
+  deliveryDetails Json?
+  dispatchAfter DateTime @default(now())
   driverLocation Json?
   pickup Json
   dropoff Json
@@ -130,6 +156,7 @@ model Order {
   offers OrderOffer[]
   @@unique([clientId,idempotencyKey])
   @@index([status,searchExpiresAt])
+  @@index([kind,status,searchExpiresAt])
   @@index([driverId,createdAt])
   @@index([clientId,createdAt])
 }

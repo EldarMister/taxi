@@ -104,6 +104,13 @@ export function AccountScreen({ page, user, config, onUser, onError, onOnline, o
     catch (error) { onError(messageOf(error)); }
     finally { setSaving(false); }
   }
+  async function updatePreferences(patch: Partial<Pick<NonNullable<User['driverProfile']>, 'acceptsEconomy' | 'acceptsComfort' | 'acceptsDeliveryCar' | 'acceptsDeliveryTruck'>>) {
+    if (!user.driverProfile) return;
+    setSaving(true);
+    try { onUser(await api.patch<User>('/driver/preferences', patch)); }
+    catch (error) { onError(messageOf(error)); }
+    finally { setSaving(false); }
+  }
   async function chooseAvatar() {
     if (user.role !== 'DRIVER' || avatarSaving) return;
     setAvatarSaving(true);
@@ -200,6 +207,13 @@ export function AccountScreen({ page, user, config, onUser, onError, onOnline, o
     </> : <Empty icon="wallet-outline" title={loading ? t('Подключаемся…') : t('Баланс')}/>}</>}
 
     {page === 'settings' && <>
+      {driverProfile && <View style={[s.card, isDark && styles.darkSettingsCard, { gap: 4 }]}>
+        <View style={{ gap: 4, paddingBottom: 9 }}><Text style={[s.h3, isDark && styles.darkSettingsText]}>{local('Какие заказы принимать', 'Кайсы буюртмаларды кабыл алуу')}</Text><Text style={s.caption}>{local(`Назначенный класс: ${driverProfile.transportClass === 'COMFORT' ? 'Комфорт' : driverProfile.transportClass === 'TRUCK' ? 'Грузовой' : 'Эконом'}`, `Унаа классы: ${driverProfile.transportClass}`)}</Text></View>
+        {driverProfile.transportClass !== 'TRUCK' && <PreferenceRow title="Эконом" caption="Обычные поездки" value={!!driverProfile.acceptsEconomy} disabled={saving} onChange={acceptsEconomy => void updatePreferences({ acceptsEconomy })}/>}
+        <PreferenceRow title="Комфорт" caption={driverProfile.transportClass === 'COMFORT' ? 'Поездки Комфорт' : 'Доступ назначает администратор'} value={!!driverProfile.acceptsComfort} disabled={saving || driverProfile.transportClass !== 'COMFORT'} onChange={acceptsComfort => void updatePreferences({ acceptsComfort })}/>
+        {driverProfile.transportClass !== 'TRUCK' && <PreferenceRow title="Доставка на машине" caption="Небольшие чистые грузы" value={!!driverProfile.acceptsDeliveryCar} disabled={saving} onChange={acceptsDeliveryCar => void updatePreferences({ acceptsDeliveryCar })}/>}
+        {driverProfile.transportClass === 'TRUCK' && <PreferenceRow title="Грузовая доставка" caption="Крупные грузы" value={!!driverProfile.acceptsDeliveryTruck} disabled={saving} onChange={acceptsDeliveryTruck => void updatePreferences({ acceptsDeliveryTruck })}/>}
+      </View>}
       <View style={[s.card, isDark && styles.darkSettingsCard, { gap: 11 }]}>
         <View style={s.spread}>
           <View style={s.row}>
@@ -250,6 +264,12 @@ export function AccountScreen({ page, user, config, onUser, onError, onOnline, o
     {page === 'payment' && <><View style={[s.card, s.row]}><View style={s.emptyIcon}><Icon name="cash" color={isDark ? '#FFFFFF' : colors.green} size={32}/></View><View style={{ flex: 1 }}><Text style={s.h2}>{t('Наличные')}</Text><Text style={s.muted}>{t('Оплата водителю')}</Text></View><Icon name="checkmark-circle" color={palette.accent}/></View><Text style={s.muted}>{t('Все поездки оплачиваются наличными в сомах после завершения. Стоимость фиксируется перед заказом.')}</Text></>}
     {page === 'support' && <><Empty icon="headset-outline" title={t('Поддержка')} subtitle={t('Если возникла проблема с поездкой, сообщите время заказа и номер телефона аккаунта.')}/>{config?.supportPhone ? <Button label={config.supportPhone} icon="call-outline" onPress={() => void Linking.openURL(`tel:${config.supportPhone}`)}/> : <View style={s.card}><Text style={s.muted}>{t('Контакт поддержки пока не настроен. Обратитесь к диспетчеру сервиса.')}</Text></View>}<View style={[s.card, { gap: 12 }]}><Text style={s.h3}>{user.role === 'DRIVER' ? 'Atlas pro' : 'Atlas'}</Text><Text style={s.caption}>{t('Карты — OpenStreetMap, маршруты — OSRM.')}</Text><Pressable accessibilityRole="link" onPress={() => void Linking.openURL('https://www.openstreetmap.org/copyright')}><Text style={{ color: palette.accent }}>{t('© Участники OpenStreetMap ↗')}</Text></Pressable>{process.env.EXPO_PUBLIC_PRIVACY_URL && <Pressable accessibilityRole="link" onPress={() => void Linking.openURL(process.env.EXPO_PUBLIC_PRIVACY_URL!)}><Text style={{ color: palette.accent }}>{t('Политика конфиденциальности ↗')}</Text></Pressable>}</View></>}
   </ScrollView>;
+}
+
+function PreferenceRow({ title, caption, value, disabled, onChange }: { title: string; caption: string; value: boolean; disabled: boolean; onChange: (value: boolean) => void }) {
+  const s = useAccountUi();
+  const { palette } = useTheme();
+  return <View style={[s.spread, { minHeight: 58, gap: 12 }]}><View style={{ flex: 1, gap: 3 }}><Text style={[s.body, { color: palette.ink, fontWeight: '600' }]}>{title}</Text><Text style={s.caption}>{caption}</Text></View><ToggleSwitch label={title} value={value} disabled={disabled} onValueChange={onChange}/></View>;
 }
 
 export function MenuRow({ icon, label, onPress }: { icon: React.ComponentProps<typeof Icon>['name']; label: string; onPress: () => void }) {

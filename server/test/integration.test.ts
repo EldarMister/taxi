@@ -59,6 +59,10 @@ before(async()=>{
   await db.$executeRawUnsafe('TRUNCATE TABLE "AdminAudit", "AdminCredential", "Banner", "MediaAsset", "FoodStatusHistory", "FoodOrder", "FoodRestaurant", "PushJob", "PushToken", "RateLimit", "SmsChallenge", "RefreshSession", "Rating", "Message", "StatusHistory", "OrderOffer", "LedgerEntry", "Order", "Quote", "Vehicle", "DriverProfile", "Tariff", "User" CASCADE');
   for(const [sortOrder,restaurant] of DEMO_FOOD_RESTAURANTS.entries())await db.foodRestaurant.create({data:{id:restaurant.id,catalog:JSON.parse(JSON.stringify(restaurant)),active:true,isDemo:true,sortOrder}});
   await db.tariff.create({data:{id:'economy',name:'Эконом',description:'Тестовый тариф',basePrice:60,pricePerKm:14,pricePerMinute:2,minimumPrice:100,commissionBps:1000}});
+  await db.tariff.createMany({data:[
+    {id:'delivery-car',name:'Доставка',description:'Мелкие грузы',kind:'DELIVERY_CAR',requiredClass:'ECONOMY',basePrice:22,pricePerKm:16,pricePerMinute:2,minimumPrice:22,commissionBps:1000},
+    {id:'delivery-truck',name:'Грузовой',description:'Крупные грузы',kind:'DELIVERY_TRUCK',requiredClass:'TRUCK',basePrice:257,pricePerKm:35,pricePerMinute:4,minimumPrice:257,commissionBps:1000},
+  ]});
   for(const [phone,role] of [['+996700123456','CLIENT'],['+996700123457','CLIENT'],['+996700111111','DRIVER'],['+996700222222','DRIVER'],['+996700999999','ADMIN']] as const) {
     const user=await db.user.create({data:{phone,role,name:role}});
     if(role==='DRIVER')await db.driverProfile.create({data:{userId:user.id,verified:true,deposit:1000,vehicle:{create:{make:'Toyota',color:'Белый',plate:phone}}}});
@@ -127,6 +131,33 @@ test('avatar upload is driver-only, validates bytes and serves versioned public 
 
   const replaced=await api.post('/api/users/me/avatar').set(headers(driver1)).attach('avatar',pngAvatar,{filename:'avatar.png',contentType:'image/png'}).expect(201);
   assert.notEqual(replaced.body.photoUrl,uploaded.body.photoUrl);
+});
+test('Atlas pro self-registration stays pending until admin assigns a class; truck delivery reaches only truck drivers',async()=>{
+  const applicant=await login('+996700444444');
+  await api.post('/api/driver/register').set(headers(applicant)).field('firstName','Талант').field('lastName','Айдоочев').field('carMake','Mercedes Sprinter').field('carPlate','01 KG 444 CCC').field('requestedTransportClass','TRUCK').expect(400);
+  const registered=await api.post('/api/driver/register').set(headers(applicant))
+    .field('firstName','Талант').field('lastName','Айдоочев').field('carMake','Mercedes Sprinter').field('carPlate','01 KG 444 CCC').field('carColor','Белый').field('requestedTransportClass','TRUCK')
+    .attach('vehiclePhoto',pngAvatar,{filename:'vehicle.png',contentType:'image/png'}).attach('profilePhoto',pngAvatar,{filename:'profile.png',contentType:'image/png'}).expect(201);
+  assert.equal(registered.body.role,'DRIVER');assert.equal(registered.body.driverProfile.verified,false);assert.equal(registered.body.driverProfile.requestedTransportClass,'TRUCK');assert.equal(registered.body.driverProfile.transportClass,'ECONOMY');
+  assert.match(registered.body.driverProfile.carPhotoUrl,/^\/vehicles\/[0-9a-f-]+\/photo\?v=\d+$/i);
+  await api.get(`/api${registered.body.driverProfile.carPhotoUrl}`).expect(200).expect('Content-Type',/image\/jpeg/);
+  await api.patch('/api/driver/online').set(headers(applicant)).send({online:true}).expect(403);
+  const approved=(await api.patch(`/api/admin/drivers/${applicant.user.id}`).set(headers(admin)).send({transportClass:'TRUCK',verified:true}).expect(200)).body;
+  assert.equal(approved.transportClass,'TRUCK');assert.equal(approved.acceptsDeliveryTruck,true);
+  await api.post(`/api/admin/drivers/${applicant.user.id}/topup`).set(headers(admin)).send({amount:1000,idempotencyKey:randomUUID(),note:'Стартовый депозит'}).expect(201);
+  await setOnline(applicant);
+  const listed=(await api.get('/api/tariffs?kind=DELIVERY_TRUCK').expect(200)).body;
+  assert.deepEqual(listed.map((item:any)=>item.id),['delivery-truck']);
+  assert.ok((await api.get('/api/tariffs').expect(200)).body.every((item:any)=>item.kind==='RIDE'));
+  const quote=(await api.post('/api/orders/quote').set(headers(client2)).send({pickup,dropoff,tariffId:'delivery-truck'}).expect(201)).body;
+  const delivery=(await api.post('/api/orders').set(headers(client2)).send({quoteId:quote.id,idempotencyKey:randomUUID(),delivery:{goodsDescription:'Диван и пять коробок',doorToDoor:true,bodyType:'VAN',loaders:1}}).expect(201)).body;
+  assert.equal(delivery.kind,'DELIVERY_TRUCK');assert.equal(delivery.deliveryDetails.loaders,1);
+  assert.equal((await api.get('/api/driver/offers').set(headers(applicant)).expect(200)).body[0].id,delivery.id);
+  assert.equal((await api.get('/api/driver/offers').set(headers(driver1)).expect(200)).body.length,0);
+  await api.post(`/api/orders/${delivery.id}/accept`).set(headers(driver1)).expect(403);
+  await api.post(`/api/orders/${delivery.id}/accept`).set(headers(applicant)).expect(201);
+  await api.post(`/api/orders/${delivery.id}/cancel`).set(headers(client2)).expect(201);
+  await setOnline(applicant,false);
 });
 test('driver tracking is scoped to the assigned passenger, rejects replay and ends with the trip', async()=>{
   await setOnline(driver1); await setOnline(driver2);

@@ -1,5 +1,5 @@
 import { Type } from 'class-transformer';
-import { IsBoolean, IsDefined, IsIn, IsInt, IsNumber, IsOptional, IsString, IsUUID, Matches, Max, MaxLength, Min, MinLength, ValidateNested } from 'class-validator';
+import { IsBoolean, IsDefined, IsIn, IsInt, IsISO8601, IsNumber, IsOptional, IsString, IsUUID, Matches, Max, MaxLength, Min, MinLength, ValidateNested } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 export class PhoneDto {
   @ApiProperty({example:'+996700123456'}) @Matches(/^\+[1-9]\d{7,14}$/) phone!:string;
@@ -32,11 +32,19 @@ export class OrderPassengerDto {
   @ApiProperty({example:'Айдана'}) @IsString() @MinLength(2) @MaxLength(80) name!:string;
   @ApiProperty({example:'+996700123456'}) @IsString() @Matches(/^(?=(?:\D*\d){7,15}\D*$)\+?[\d ()-]{7,24}$/) phone!:string;
 }
+export class DeliveryDetailsDto {
+  @ApiProperty() @IsString() @MinLength(3) @MaxLength(500) goodsDescription!:string;
+  @ApiPropertyOptional() @IsOptional() @IsBoolean() doorToDoor?:boolean;
+  @ApiPropertyOptional() @IsOptional() @IsISO8601() scheduledAt?:string;
+  @ApiPropertyOptional() @IsOptional() @IsIn(['VAN','OPEN','BOX']) bodyType?:'VAN'|'OPEN'|'BOX';
+  @ApiPropertyOptional() @IsOptional() @IsInt() @Min(0) @Max(2) loaders?:number;
+}
 export class CreateOrderDto {
   @ApiProperty() @IsUUID() quoteId!:string;
   @ApiPropertyOptional() @IsOptional() @IsString() @MaxLength(500) comment?:string;
   @ApiPropertyOptional({type:OrderPassengerDto}) @IsOptional() @ValidateNested() @Type(()=>OrderPassengerDto) passenger?:OrderPassengerDto;
   @ApiProperty() @IsString() @MinLength(8) @MaxLength(100) idempotencyKey!:string;
+  @ApiPropertyOptional() @IsOptional() @ValidateNested() @Type(()=>DeliveryDetailsDto) delivery?:DeliveryDetailsDto;
 }
 export class OnlineDto { @ApiProperty() @IsBoolean() online!:boolean; }
 export class DriverPositionDto {
@@ -44,6 +52,20 @@ export class DriverPositionDto {
   @ApiProperty() @IsNumber() @Min(-180) @Max(180) longitude!:number;
   @ApiProperty() @IsNumber() @Min(0) @Max(100) accuracyM!:number;
   @ApiProperty() @IsInt() @Min(1) measuredAtMs!:number;
+}
+export class DriverPreferencesDto {
+  @ApiPropertyOptional() @IsOptional() @IsBoolean() acceptsEconomy?:boolean;
+  @ApiPropertyOptional() @IsOptional() @IsBoolean() acceptsComfort?:boolean;
+  @ApiPropertyOptional() @IsOptional() @IsBoolean() acceptsDeliveryCar?:boolean;
+  @ApiPropertyOptional() @IsOptional() @IsBoolean() acceptsDeliveryTruck?:boolean;
+}
+export class DriverRegisterDto {
+  @IsString() @MinLength(2) @MaxLength(60) firstName!:string;
+  @IsString() @MinLength(2) @MaxLength(60) lastName!:string;
+  @IsString() @MinLength(2) @MaxLength(80) carMake!:string;
+  @IsString() @MinLength(2) @MaxLength(20) carPlate!:string;
+  @IsOptional() @IsString() @MaxLength(40) carColor?:string;
+  @IsIn(['ECONOMY','TRUCK']) requestedTransportClass!:'ECONOMY'|'TRUCK';
 }
 export class MessageDto {
   @ApiProperty() @IsString() @MinLength(1) @MaxLength(1000) text!:string;

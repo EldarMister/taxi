@@ -27,9 +27,11 @@ import NetInfo from "@react-native-community/netinfo";
 import { io, Socket } from "socket.io-client";
 import { api, ApiError, messageOf, requestId } from "./src/api";
 import { AuthScreen } from "./src/AuthScreen";
+import { DriverRegistrationScreen } from "./src/DriverRegistrationScreen";
 import { AccountScreen, MenuRow, Page } from "./src/AccountScreens";
 import { AddressPicker, ChatOverlay } from "./src/Overlays";
 import { BookingPanel, emptyRideDetails, rideComment } from "./src/BookingPanel";
+import { DeliveryPanel, emptyDeliveryDetails } from "./src/DeliveryPanel";
 import { useRideQuotes } from "./src/useRideQuotes";
 import { statusText } from "./src/TripPanel";
 import { DriverOfferSkip, DriverPanel } from "./src/DriverPanel";
@@ -41,7 +43,7 @@ import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { ClientTripPanel } from "./src/ClientTripPanel";
 import { PermissionOnboarding } from "./src/PermissionOnboarding";
 import { WrongAppScreen } from "./src/WrongAppScreen";
-import { isRoleAllowed } from "./src/appVariant";
+import { appVariant, isRoleAllowed } from "./src/appVariant";
 import { FoodExperience, FoodEntry } from "./src/food/FoodExperience";
 import {
   Avatar,
@@ -148,7 +150,7 @@ function TaxiApp() {
   const [offers, setOffers] = useState<Order[]>([]);
   const [page, setPage] = useState<Page>("home");
   const [historyDetailId, setHistoryDetailId] = useState<string | null>(null);
-  const [service, setService] = useState<'hub' | 'taxi'>('hub');
+  const [service, setService] = useState<'hub' | 'taxi' | 'delivery'>('hub');
   const [foodEntry, setFoodEntry] = useState<FoodEntry>({ screen: 'home', key: 0 });
   const [contentRevision, setContentRevision] = useState(0);
   const [foodOrderRevision, setFoodOrderRevision] = useState(0);
@@ -179,6 +181,9 @@ function TaxiApp() {
   const [recenter, setRecenter] = useState(0);
   const [tariffs, setTariffs] = useState<Tariff[]>([]);
   const [tariffId, setTariffId] = useState("");
+  const [deliveryTariffs, setDeliveryTariffs] = useState<Tariff[]>([]);
+  const [deliveryKind, setDeliveryKind] = useState<'DELIVERY_CAR' | 'DELIVERY_TRUCK'>('DELIVERY_TRUCK');
+  const [deliveryDetails, setDeliveryDetails] = useState(emptyDeliveryDetails);
   const [rideDetails, setRideDetails] = useState(emptyRideDetails);
   const [bookingHeight, setBookingHeight] = useState(166);
   const [driverCompletionHeight, setDriverCompletionHeight] = useState(520);
@@ -211,7 +216,9 @@ function TaxiApp() {
   const tracking = useClientDriverTracking(order, user?.role === "CLIENT");
   const mapSelection = !driver && !order ? mapField : null;
   const browsingPickup = !driver && !order && !dropoff && !mapSelection && !pickupChosenManually;
-  const { quote, quotes, calculating, quoteError, refresh: refreshQuotes, clear: clearQuotes } = useRideQuotes(pickup, dropoff, tariffs, tariffId, !!user && !driver && !order, user?.id);
+  const { quote, quotes, calculating, quoteError, refresh: refreshQuotes, clear: clearQuotes } = useRideQuotes(pickup, dropoff, tariffs, tariffId, !!user && !driver && !order && service === 'taxi', user?.id);
+  const deliveryTariffId=deliveryTariffs.find(item=>item.kind===deliveryKind)?.id||'';
+  const { quote: deliveryQuote, quotes: deliveryQuotes, calculating: deliveryCalculating, quoteError: deliveryQuoteError, refresh: refreshDeliveryQuotes, clear: clearDeliveryQuotes } = useRideQuotes(pickup, dropoff, deliveryTariffs, deliveryTariffId, !!user && !driver && !order && service === 'delivery', user?.id);
   const updateUser = (next: User | null) => {
     driverSounds.setUser(next);
     userRef.current = next;
@@ -256,7 +263,7 @@ function TaxiApp() {
     }
   }, []);
   async function rejectMismatchedRole(profile: User) {
-    if (isRoleAllowed(profile.role)) return false;
+    if (isRoleAllowed(profile.role) || appVariant === 'driver' && profile.role === 'CLIENT') return false;
     updateUser(null);
     applyOrder(null);
     setOffers([]);
@@ -393,12 +400,16 @@ function TaxiApp() {
   useEffect(() => {
     if (!user) return;
     let subscribed = true;
-    const refreshTariffs = () => { void api
-      .request<Tariff[]>("/tariffs")
-      .then((result) => {
+    const refreshTariffs = () => { void Promise.all([
+      api.request<Tariff[]>("/tariffs"),
+      api.request<Tariff[]>("/tariffs?kind=DELIVERY_CAR"),
+      api.request<Tariff[]>("/tariffs?kind=DELIVERY_TRUCK"),
+    ])
+      .then(([result,deliveryCars,deliveryTrucks]) => {
         if (!subscribed) return;
         setTariffs(result);
         setTariffId((current) => result.some(tariff => tariff.id === current) ? current : result[0]?.id || "");
+        setDeliveryTariffs([...deliveryCars,...deliveryTrucks]);
       })
       .catch((e) => { if (subscribed) setError(messageOf(e)); }); };
     const socket = io(api.socketUrl, {
@@ -548,7 +559,9 @@ function TaxiApp() {
         markManualPickup(false);
         setDropoff(null);
         setRideDetails(emptyRideDetails);
+        setDeliveryDetails(emptyDeliveryDetails);
         clearQuotes();
+        clearDeliveryQuotes();
       }
     });
   const online = (value: boolean) =>
@@ -728,6 +741,29 @@ function TaxiApp() {
 
       clearQuotes();
     });
+  const bookDelivery = () =>
+    run(async () => {
+      if (!deliveryQuote) return;
+      if (deliveryDetails.goodsDescription.trim().length < 3) throw new Error('Опишите груз для доставки.');
+      if (Date.now() >= new Date(deliveryQuote.expiresAt).getTime()) { refreshDeliveryQuotes(); return; }
+      if (orderKey.current?.quoteId !== deliveryQuote.id) orderKey.current = { quoteId: deliveryQuote.id, key: requestId() };
+      const created = await api.post<Order>('/orders', {
+        quoteId: deliveryQuote.id,
+        comment: deliveryDetails.comment.trim(),
+        delivery: {
+          goodsDescription: deliveryDetails.goodsDescription.trim(),
+          doorToDoor: deliveryDetails.doorToDoor,
+          ...(deliveryKind === 'DELIVERY_TRUCK' ? {
+            bodyType: deliveryDetails.bodyType,
+            loaders: deliveryDetails.loaders,
+            ...(deliveryDetails.scheduled ? { scheduledAt: new Date(Date.now() + 30 * 60_000).toISOString() } : {}),
+          } : {}),
+        },
+        idempotencyKey: orderKey.current.key,
+      });
+      applyOrder(created);
+      clearDeliveryQuotes();
+    });
   const action = (name: string) =>
     run(async () => {
       const current = orderRef.current;
@@ -752,7 +788,7 @@ function TaxiApp() {
       if (driver) setPage('home');
       else {
         setPage('home');
-        setService('taxi');
+        setService(current.kind?.startsWith('DELIVERY_') ? 'delivery' : 'taxi');
         setMapField(null);
         setMapFocus(null);
         setAddressField(null);
@@ -760,9 +796,11 @@ function TaxiApp() {
         setRecenter(value => value + 1);
       }
       clearQuotes();
+      clearDeliveryQuotes();
       orderKey.current = null;
       setComing(false);
       setRideDetails(emptyRideDetails);
+      setDeliveryDetails(emptyDeliveryDetails);
       await sync();
     });
   };
@@ -862,7 +900,7 @@ function TaxiApp() {
   const displayed = order || offer;
   const approachScope = driver && offer ? `offer:${offer.id}` : !driver && order?.status === 'ASSIGNED' ? `client:${order.id}:${order.driver?.id}` : '';
   const approach = useApproachRoute(driver ? navigation.position : tracking.ageSeconds != null && tracking.ageSeconds <= 15 ? tracking.position : null, driver ? offer?.pickup : order?.pickup, approachScope);
-  const mapRoutes = tripMapRoutes({ driver, order, offer, quote, navigationRoute: navigation.route, approachRoute: approach.route });
+  const mapRoutes = tripMapRoutes({ driver, order, offer, quote: service === 'delivery' ? deliveryQuote : quote, navigationRoute: navigation.route, approachRoute: approach.route });
 
 
   if (wrongAppLanguage)
@@ -896,6 +934,17 @@ function TaxiApp() {
       </SafeAreaView>
     );
   if (!user) return <AuthScreen onLogin={login} />;
+  if (appVariant === 'driver' && user.role === 'CLIENT') return <DriverRegistrationScreen onRegistered={async profile => {
+    updateUser(profile);
+    setPermissionStep(await readPermissionIntro(profile.id));
+    setPermissionError('');
+    setPermissionNeedsSettings(false);
+  }} onLogout={async () => {
+    try { await api.post('/auth/logout',{refreshToken:api.getTokens()?.refreshToken}); } catch {}
+    await api.clear();
+    updateUser(null);
+    setPermissionStep('loading');
+  }}/>;
   if (permissionStep === "loading")
     return <SafeAreaView style={{ flex: 1, alignItems: "center", justifyContent: "center", backgroundColor: palette.background }}><ActivityIndicator size="large" color={palette.accent}/></SafeAreaView>;
   if (permissionStep !== "done")
@@ -1057,7 +1106,7 @@ function TaxiApp() {
           </View>
           {driver && order?.status === 'COMPLETED' && <View style={{ height: Math.max(0, driverCompletionHeight - 30) }}/>}
           {driver && <DriverPanel key={order?.id || offer?.id || 'idle'} user={user} order={order} offer={offer} busy={busy} coming={coming} approach={approach} navigation={navigation} backgroundReady={navigation.backgroundReady} onBackground={navigation.enableBackground} onAccept={accept} onRateClient={rateClient} onCompletionHeight={setDriverCompletionHeight} onOnline={() => online(true)} onAction={action} onChat={() => setChat(true)} onDone={done}/>}
-          {!driver && !order && <>
+          {!driver && !order && service === 'taxi' && <>
             {!mapSelection && <View style={{ height: Math.max(0, bookingHeight - 30) }}/>}
             <BookingPanel pickup={pickup} dropoff={dropoff} tariffs={tariffs} tariffId={tariffId}
               quote={quote} quotes={quotes} calculating={calculating} quoteError={quoteError} bookingError={error} busy={busy}
@@ -1066,6 +1115,19 @@ function TaxiApp() {
               onSwap={() => { setPickup(dropoff); setDropoff(pickup); setRideDetails(current => ({ ...current, entrance: '' })); }}
               onBook={book}
               onRefresh={() => { if (tariffs.length) refreshQuotes(); else void run(async () => { const list = await api.request<Tariff[]>("/tariffs"); setTariffs(list); setTariffId(list[0]?.id || ""); }); }}
+            />
+          </>}
+          {!driver && !order && service === 'delivery' && <>
+            {!mapSelection ? <View style={{ height: Math.max(0, bookingHeight - 30) }}/> : null}
+            <DeliveryPanel pickup={pickup} dropoff={dropoff} tariffs={deliveryTariffs} selectedKind={deliveryKind}
+              quote={deliveryQuote} quotes={deliveryQuotes} calculating={deliveryCalculating} error={error || deliveryQuoteError} busy={busy}
+              details={deliveryDetails} onDetails={setDeliveryDetails} onKind={kind => { setDeliveryKind(kind); setError(''); }}
+              onAddress={setAddressField} hidden={!!mapSelection || !!addressField} onHeight={setBookingHeight}
+              onBook={bookDelivery}
+              onRefresh={() => { if (deliveryTariffs.length) refreshDeliveryQuotes(); else void run(async () => {
+                const [cars,trucks]=await Promise.all([api.request<Tariff[]>('/tariffs?kind=DELIVERY_CAR'),api.request<Tariff[]>('/tariffs?kind=DELIVERY_TRUCK')]);
+                setDeliveryTariffs([...cars,...trucks]);
+              }); }}
             />
           </>}
           {!driver && order && <>
@@ -1137,7 +1199,7 @@ function TaxiApp() {
         <View style={{ height: insets.bottom, backgroundColor: palette.surface }} />
       )}
       {!driver && <View pointerEvents={showingServices ? 'auto' : 'none'} style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, zIndex: 20, display: showingServices ? 'flex' : 'none' }}>
-        <FoodExperience key={user.id} userId={user.id} contentRevision={contentRevision} orderRevision={foodOrderRevision} active={showingServices} entry={foodEntry} defaultAddress={pickup?.address || ''} onTaxi={() => { setService('taxi'); setError(''); }} onTaxiSearch={() => { setService('taxi'); setAddressField('dropoff'); setError(''); }} onMenu={() => setDrawer(true)} />
+        <FoodExperience key={user.id} userId={user.id} contentRevision={contentRevision} orderRevision={foodOrderRevision} active={showingServices} entry={foodEntry} defaultAddress={pickup?.address || ''} onTaxi={() => { setService('taxi'); setError(''); }} onTruck={() => { setDeliveryKind('DELIVERY_TRUCK'); setService('delivery'); setError(''); }} onTaxiSearch={() => { setService('taxi'); setAddressField('dropoff'); setError(''); }} onMenu={() => setDrawer(true)} />
       </View>}
       </View>
       <Modal
@@ -1181,6 +1243,7 @@ function TaxiApp() {
               {!driver && <>
                 <MenuRow icon="home-outline" label={t("Главная")} onPress={() => openServices('home')} />
                 <MenuRow icon="car-outline" label={t("Заказать такси")} onPress={() => { setDrawer(false); setPage('home'); setService('taxi'); }} />
+                <MenuRow icon="cube-outline" label={t("Доставка и грузовой")} onPress={() => { setDrawer(false); setPage('home'); setService('delivery'); }} />
                 <MenuRow icon="restaurant-outline" label={t("Доставка еды")} onPress={() => openServices('restaurants')} />
                 <MenuRow icon="bag-handle-outline" label={t("Мои заказы еды")} onPress={() => openServices('history')} />
                 <View style={[s.divider, { backgroundColor: palette.line }]} />

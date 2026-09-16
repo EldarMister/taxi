@@ -32,6 +32,7 @@ export function DriverCompletionPanel({ order, user, busy, onDone, onRateClient,
   const { height: screenHeight } = useWindowDimensions();
   const insets = useSafeAreaInsets();
   const ky = user.language === 'ky';
+  const delivery = order.kind !== undefined && order.kind !== 'RIDE';
   const say = (ru: string, kyrgyz: string) => ky ? kyrgyz : ru;
   const { stage, navigate: navigateStage, reset: resetStage, exit: exitStage, translateY: stageTranslateY } = useSheetStageTransition<'success' | 'rating'>('success');
   const [score, setScore] = useState(0);
@@ -84,11 +85,11 @@ export function DriverCompletionPanel({ order, user, busy, onDone, onRateClient,
             <View style={s.metric}><Text style={s.metricLabel}>{say('Время в пути', 'Жолдогу убакыт')}</Text><Text style={s.metricValue}>{tripTime(order.durationSeconds, user.language)}</Text></View>
           </View>
           <View style={s.fareCard}><Icon name="cash" size={25} color={isDark ? '#FFFFFF' : palette.accent}/><Text style={s.fareLabel} numberOfLines={1}>{say('Наличные', 'Накталай')} · {order.tariff?.name || say('Стандарт', 'Стандарт')}</Text><Text style={s.price}>{money(order.price)}</Text></View>
-          {!rated && <MainButton label={say('Оценить пассажира', 'Жүргүнчүнү баалоо')} onPress={() => { setScore(0); setRatingError(false); navigateStage('rating'); }} busy={busy}/>}
+          {!rated && <MainButton label={say(delivery ? 'Оценить заказчика' : 'Оценить пассажира', 'Жүргүнчүнү баалоо')} onPress={() => { setScore(0); setRatingError(false); navigateStage('rating'); }} busy={busy}/>}
           <Pressable accessibilityRole="button" accessibilityLabel={say('Закрыть', 'Жабуу')} accessibilityState={{ disabled: busy }} disabled={busy} onPress={closeCompletion} style={s.close}><Text style={s.closeText}>{say('Закрыть', 'Жабуу')}</Text></Pressable>
         </> : <>
           <Text style={s.ratingTitle}>{say('Как всё прошло?', 'Баары кандай өттү?')}</Text>
-          <Text style={s.ratingSubtitle}>{say('Оцените пассажира', 'Жүргүнчүнү баалаңыз')}</Text>
+          <Text style={s.ratingSubtitle}>{say(delivery ? 'Оцените заказчика' : 'Оцените пассажира', 'Жүргүнчүнү баалаңыз')}</Text>
           <View style={s.stars}>{[1, 2, 3, 4, 5].map(value => <Pressable key={value} accessibilityRole="button" accessibilityLabel={`${say('Оценка', 'Баа')} ${value}`} accessibilityState={{ selected: score === value }} disabled={busy || submitting} onPress={() => { setScore(value); setRatingError(false); }} hitSlop={6} style={s.star}><Icon name={value <= score ? 'star' : 'star-outline'} size={40} color={value <= score ? isDark ? '#FFFFFF' : '#FFBE12' : isDark ? '#777777' : '#AEBED2'}/></Pressable>)}</View>
           {ratingError && <Text accessibilityRole="alert" style={s.ratingError}>{say('Не удалось сохранить отзыв. Попробуйте ещё раз.', 'Пикир сакталган жок. Кайра аракет кылыңыз.')}</Text>}
           <MainButton label={score ? say('Отправить', 'Жөнөтүү') : say('Пропустить', 'Өткөрүп жиберүү')} onPress={score ? () => void submit() : closeCompletion} busy={busy || submitting}/>

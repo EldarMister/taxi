@@ -39,6 +39,7 @@ export function ClientCompletionPanel({ order, user, busy, onDone, onRating, onH
   const reducedMotion = useMotionPreference();
   const insets = useSafeAreaInsets();
   const ky = user.language === 'ky';
+  const delivery = order.kind !== undefined && order.kind !== 'RIDE';
   const say = (ru: string, kyrgyz: string) => ky ? kyrgyz : ru;
   const { stage, navigate: navigateStage, reset: resetStage, exit: exitStage, translateY: stageTranslateY } = useSheetStageTransition<Stage>(order.rating ? 'thankYou' : 'success');
   const [score, setScore] = useState(5);
@@ -103,7 +104,7 @@ export function ClientCompletionPanel({ order, user, busy, onDone, onRating, onH
 
   return <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={s.host} pointerEvents="box-none">
     <Animated.View onLayout={event => measure(event.nativeEvent.layout.height)} style={[s.sheet, isDark && s.darkSheet, { paddingBottom: Math.max(insets.bottom, 14), transform: [{ translateY: stageTranslateY }, { translateY: drag.translateY }] }]}>
-      {stage === 'rating' && <View {...drag.panHandlers} style={s.handleTouch}><Pressable accessibilityRole="button" accessibilityLabel={say('Вернуться к поездке', 'Сапарга кайтуу')} accessibilityState={{ disabled: submitting || busy }} disabled={submitting || busy} onPress={swipeHandle} hitSlop={10}><View style={[s.handle, isDark && s.darkHandle]}/></Pressable></View>}
+      {stage === 'rating' && <View {...drag.panHandlers} style={s.handleTouch}><Pressable accessibilityRole="button" accessibilityLabel={say(delivery ? 'Вернуться к доставке' : 'Вернуться к поездке', 'Сапарга кайтуу')} accessibilityState={{ disabled: submitting || busy }} disabled={submitting || busy} onPress={swipeHandle} hitSlop={10}><View style={[s.handle, isDark && s.darkHandle]}/></Pressable></View>}
       <ScrollView contentContainerStyle={stage === 'success' ? s.successContent : s.ratingContent} showsVerticalScrollIndicator={false} bounces={false} keyboardShouldPersistTaps="handled" style={{ flexGrow: 0, maxHeight: screenHeight - insets.top - 36 }}>
         {stage === 'success' ? <>
           <SuccessCelebration key={`success-${order.id}`} size={132} testID="order-success-celebration"/>
@@ -114,14 +115,14 @@ export function ClientCompletionPanel({ order, user, busy, onDone, onRating, onH
             <View style={s.routeRow}><Icon name="flag" size={22} color={isDark ? '#FFFFFF' : colors.ink}/><Text style={[s.routeText, isDark && s.darkInk]} numberOfLines={2}>{shortAddress(order.dropoff.address)}</Text></View>
           </View>
           <View style={[s.fareCard, isDark && s.darkInset]}><Icon name="cash" size={25} color={isDark ? '#FFFFFF' : colors.blue}/><Text style={[s.fareLabel, isDark && s.darkInk]} numberOfLines={1}>{say('Наличные', 'Накталай')} · {order.tariff?.name || say('Стандарт', 'Стандарт')}</Text><Text style={[s.price, isDark && s.darkInk]}>{money(order.price)}</Text></View>
-          <PrimaryButton label={say('Оценить поездку', 'Сапарды баалоо')} icon="star" onPress={() => navigateStage('rating')}/>
+          <PrimaryButton label={say(delivery ? 'Оценить доставку' : 'Оценить поездку', 'Сапарды баалоо')} icon="star" onPress={() => navigateStage('rating')}/>
           <Pressable accessibilityRole="button" accessibilityLabel={say('Закрыть', 'Жабуу')} onPress={closeCompletion} style={s.close}><Text style={[s.closeText, isDark && s.darkInk]}>{say('Закрыть', 'Жабуу')}</Text></Pressable>
         </> : <>
-          <Text style={[s.ratingTitle, isDark && s.darkInk]}>{say('Оцените поездку', 'Сапарды баалаңыз')}</Text>
-          <Text style={[s.ratingSubtitle, isDark && s.darkMuted]}>{say('Как прошла ваша поездка\nс водителем?', 'Айдоочу менен сапарыңыз\nкандай өттү?')}</Text>
+          <Text style={[s.ratingTitle, isDark && s.darkInk]}>{say(delivery ? 'Оцените доставку' : 'Оцените поездку', 'Сапарды баалаңыз')}</Text>
+          <Text style={[s.ratingSubtitle, isDark && s.darkMuted]}>{say(delivery ? 'Как прошла доставка\nс водителем?' : 'Как прошла ваша поездка\nс водителем?', 'Айдоочу менен сапарыңыз\nкандай өттү?')}</Text>
           <View style={s.stars}>{[1, 2, 3, 4, 5].map(value => <Pressable key={value} accessibilityRole="button" accessibilityLabel={`${say('Оценка', 'Баа')} ${value}`} accessibilityState={{ selected: score === value }} onPress={() => setScore(value)} hitSlop={5} style={s.star}><Icon name={value <= score ? 'star' : 'star-outline'} size={39} color={isDark ? '#FFFFFF' : '#FFBE12'}/></Pressable>)}</View>
           <View style={s.compliments}>{compliments.map(item => <Pressable key={item.ru} accessibilityRole="checkbox" accessibilityLabel={say(item.ru, item.ky)} accessibilityState={{ checked: selected.includes(item.ru) }} onPress={() => setSelected(current => current.includes(item.ru) ? current.filter(value => value !== item.ru) : [...current, item.ru])} style={[s.compliment, isDark && s.darkCompliment, selected.includes(item.ru) && s.complimentSelected, isDark && selected.includes(item.ru) && s.darkComplimentSelected]}><View style={[s.complimentIcon, { backgroundColor: isDark ? '#FFFFFF' : item.color }]}><Icon name={item.icon} size={16} color={isDark ? '#050505' : '#FFFFFF'}/></View><Text style={[s.complimentText, isDark && s.darkInk]}>{say(item.ru, item.ky)}</Text></Pressable>)}</View>
-          <TextInput accessibilityLabel={say('Комментарий к поездке', 'Сапар тууралуу пикир')} placeholder={say('Оставьте комментарий (необязательно)', 'Пикириңизди калтырыңыз (милдеттүү эмес)')} placeholderTextColor={isDark ? '#A0A0A0' : '#8391A7'} selectionColor={isDark ? '#FFFFFF' : undefined} multiline maxLength={400} value={comment} onChangeText={setComment} textAlignVertical="top" style={[s.comment, isDark && s.darkComment]}/>
+          <TextInput accessibilityLabel={say(delivery ? 'Комментарий к доставке' : 'Комментарий к поездке', 'Сапар тууралуу пикир')} placeholder={say('Оставьте комментарий (необязательно)', 'Пикириңизди калтырыңыз (милдеттүү эмес)')} placeholderTextColor={isDark ? '#A0A0A0' : '#8391A7'} selectionColor={isDark ? '#FFFFFF' : undefined} multiline maxLength={400} value={comment} onChangeText={setComment} textAlignVertical="top" style={[s.comment, isDark && s.darkComment]}/>
           <PrimaryButton label={say('Отправить', 'Жөнөтүү')} onPress={() => void submit()} disabled={submitting || busy} busy={submitting || busy}/>
         </>}
       </ScrollView>

@@ -13,6 +13,13 @@ export type DriverProfile = {
   carPlate: string;
   rating: number | null;
   completedTrips?: number;
+  transportClass: "ECONOMY" | "COMFORT" | "TRUCK";
+  requestedTransportClass?: "ECONOMY" | "TRUCK" | null;
+  acceptsEconomy: boolean;
+  acceptsComfort: boolean;
+  acceptsDeliveryCar: boolean;
+  acceptsDeliveryTruck: boolean;
+  carPhotoUrl?: string | null;
 };
 export type User = {
   id: string;
@@ -34,6 +41,8 @@ export type Tariff = {
   pricePerKm?: number;
   pricePerMinute?: number;
   minimumPrice: number;
+  kind?: "RIDE" | "DELIVERY_CAR" | "DELIVERY_TRUCK";
+  requiredClass?: "ECONOMY" | "COMFORT" | "TRUCK";
 };
 export type Quote = {
   id: string;
@@ -45,6 +54,7 @@ export type Quote = {
   currency: string;
   development?: boolean;
   routeProvider?: string;
+  tariff?: Tariff;
 };
 export type OrderStatus =
   | "SEARCHING"
@@ -77,6 +87,15 @@ export type Order = {
   id: string;
   assignmentId?: string | null;
   status: OrderStatus;
+  kind?: "RIDE" | "DELIVERY_CAR" | "DELIVERY_TRUCK";
+  deliveryDetails?: {
+    goodsDescription: string;
+    doorToDoor: boolean;
+    scheduledAt?: string;
+    bodyType?: "VAN" | "OPEN" | "BOX";
+    loaders?: number;
+  } | null;
+  dispatchAfter?: string;
   pickup: Point;
   dropoff: Point;
   price: number;

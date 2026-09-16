@@ -20,8 +20,8 @@ const toggle = (values: string[], id: string) => values.includes(id) ? values.fi
 const foodError = (error: unknown) => error instanceof ApiError && error.status === 404
   ? 'Доставка временно недоступна. Попробуйте обновить раздел немного позже.' : messageOf(error);
 
-export function FoodExperience({ userId, active, entry, defaultAddress, onTaxi, onTaxiSearch, onMenu, contentRevision = 0, orderRevision = 0 }: {
-  userId: string; active: boolean; entry: FoodEntry; defaultAddress: string; onTaxi: () => void; onTaxiSearch: () => void; onMenu: () => void; contentRevision?: number; orderRevision?: number;
+export function FoodExperience({ userId, active, entry, defaultAddress, onTaxi, onTruck, onTaxiSearch, onMenu, contentRevision = 0, orderRevision = 0 }: {
+  userId: string; active: boolean; entry: FoodEntry; defaultAddress: string; onTaxi: () => void; onTruck: () => void; onTaxiSearch: () => void; onMenu: () => void; contentRevision?: number; orderRevision?: number;
 }) {
   const theme = useTheme();
   const [screen, setScreen] = useState<Screen>('home');
@@ -300,7 +300,7 @@ export function FoodExperience({ userId, active, entry, defaultAddress, onTaxi, 
 
   let content: React.ReactNode;
   let routeKey: string;
-  if (screen === 'home') { routeKey = 'home'; content = <ServiceHomeScreen active={active} onTaxi={onTaxi} onSearch={onTaxiSearch} onFood={() => navigate('restaurants')} onMenu={onMenu} onOrders={() => {
+  if (screen === 'home') { routeKey = 'home'; content = <ServiceHomeScreen active={active} onTaxi={onTaxi} onTruck={onTruck} onSearch={onTaxiSearch} onFood={() => navigate('restaurants')} onMenu={onMenu} onOrders={() => {
     if (activeOrder) { setSelectedOrder(activeOrder); orderOrigin.current = 'home'; navigate('order'); } else navigate('history');
   }} hasOrder={!!activeOrder} banners={banners} onBanner={banner => {
     if (banner.actionType === 'TAXI') onTaxi();

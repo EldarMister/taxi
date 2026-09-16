@@ -8,7 +8,9 @@ async function main() {
     await db.foodRestaurant.upsert({where:{id:restaurant.id},create:{id:restaurant.id,catalog:restaurant as unknown as Prisma.InputJsonValue,isDemo:true,active:true,sortOrder},update:{}});
   }
   await db.tariff.upsert({where:{id:'economy'},create:{id:'economy',name:'Эконом',description:'Быстро и доступно',basePrice:60,pricePerKm:14,pricePerMinute:2,minimumPrice:100,commissionBps:1000},update:{}});
-  await db.tariff.upsert({where:{id:'comfort'},create:{id:'comfort',name:'Комфорт',description:'Больше места и комфорта',basePrice:90,pricePerKm:19,pricePerMinute:3,minimumPrice:150,commissionBps:1000},update:{}});
+  await db.tariff.upsert({where:{id:'comfort'},create:{id:'comfort',name:'Комфорт',description:'Больше места и комфорта',basePrice:90,pricePerKm:19,pricePerMinute:3,minimumPrice:150,commissionBps:1000,requiredClass:'COMFORT'},update:{requiredClass:'COMFORT'}});
+  await db.tariff.upsert({where:{id:'delivery-car'},create:{id:'delivery-car',name:'Доставка',description:'Небольшие чистые грузы на легковой машине',basePrice:22,pricePerKm:16,pricePerMinute:2,minimumPrice:22,commissionBps:1000,kind:'DELIVERY_CAR'},update:{kind:'DELIVERY_CAR',requiredClass:'ECONOMY'}});
+  await db.tariff.upsert({where:{id:'delivery-truck'},create:{id:'delivery-truck',name:'Грузовой',description:'Крупные и тяжёлые грузы',basePrice:257,pricePerKm:35,pricePerMinute:4,minimumPrice:257,commissionBps:1000,kind:'DELIVERY_TRUCK',requiredClass:'TRUCK'},update:{kind:'DELIVERY_TRUCK',requiredClass:'TRUCK'}});
   await db.user.upsert({where:{phone:'+996700123456'},create:{phone:'+996700123456',name:'Айдана',role:'CLIENT'},update:{}});
   await db.user.upsert({where:{phone:'+996700999999'},create:{phone:'+996700999999',name:'Администратор',role:'ADMIN'},update:{}});
   for(const data of [{phone:'+996700111111',name:'Азамат',make:'Toyota Camry',color:'Белый',plate:'01 KG 777 AAA',latitude:42.8756,longitude:74.6040},{phone:'+996700222222',name:'Бакыт',make:'Hyundai Sonata',color:'Серебристый',plate:'01 KG 888 BBB',latitude:42.8742,longitude:74.6015}]) {

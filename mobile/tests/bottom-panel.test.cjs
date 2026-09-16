@@ -211,6 +211,7 @@ test('every BottomPanel caller hides its underlying accessibility tree', () => {
     'AddressPicker.tsx',
     'BookingPanel.tsx',
     'ClientTripPanel.tsx',
+    'DeliveryPanel.tsx',
     'DriverPanel.tsx',
     'food/CatalogScreens.tsx',
     'food/CheckoutScreens.tsx',
@@ -219,6 +220,7 @@ test('every BottomPanel caller hides its underlying accessibility tree', () => {
   const expectations = [
     ['BookingPanel.tsx', 'accessibilityElementsHidden={surface !== \'summary\'}', "importantForAccessibility={surface === 'summary' ? 'auto' : 'no-hide-descendants'}"],
     ['ClientTripPanel.tsx', 'accessibilityElementsHidden={surface !== \'summary\'}', "importantForAccessibility={surface === 'summary' ? 'auto' : 'no-hide-descendants'}"],
+    ['DeliveryPanel.tsx', 'accessibilityElementsHidden={expanded}', "importantForAccessibility={expanded ? 'no-hide-descendants' : 'auto'}"],
     ['DriverPanel.tsx', 'accessibilityElementsHidden={!!(confirmation || showComment)}', "importantForAccessibility={confirmation || showComment ? 'no-hide-descendants' : 'auto'}"],
     ['food/CatalogScreens.tsx', 'accessibilityElementsHidden={showInfo}', "importantForAccessibility={showInfo ? 'no-hide-descendants' : 'auto'}"],
     ['food/CheckoutScreens.tsx', 'accessibilityElementsHidden={editingAddress}', "importantForAccessibility={editingAddress ? 'no-hide-descendants' : 'auto'}"],

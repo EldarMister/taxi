@@ -1,5 +1,5 @@
-import { ArgumentsHost, BadRequestException, Body, Catch, Controller, Delete, ExceptionFilter, ForbiddenException, Get, HttpException, HttpStatus, NotFoundException, Param, ParseUUIDPipe, Patch, Post, Query, Req, Res, UploadedFile, UseGuards, UseInterceptors, ValidationPipe } from '@nestjs/common';
-import { FileInterceptor } from '@nestjs/platform-express';
+import { ArgumentsHost, BadRequestException, Body, Catch, Controller, Delete, ExceptionFilter, ForbiddenException, Get, HttpException, HttpStatus, NotFoundException, Param, ParseUUIDPipe, Patch, Post, Query, Req, Res, UploadedFile, UploadedFiles, UseGuards, UseInterceptors, ValidationPipe } from '@nestjs/common';
+import { FileFieldsInterceptor, FileInterceptor } from '@nestjs/platform-express';
 import { ApiBearerAuth, ApiBody, ApiConsumes, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { Request, Response } from 'express';
 import { Prisma } from '@prisma/client';
@@ -7,12 +7,13 @@ import sharp from 'sharp';
 import { Actor, AuthGuard, AuthService, RateLimits } from './auth';
 import { AppConfig } from './config';
 import { DriverService } from './driver';
-import { CreateOrderDto, DriverPositionDto, HistoryDto, MessageDto, OnlineDto, PhoneDto, ProfileDto, PushTokenDto, QuoteDto, RatingDto, RefreshDto, RemovePushTokenDto, TopupDto, VerifyDriverDto, VerifyDto } from './dto';
+import { CreateOrderDto, DriverPositionDto, DriverPreferencesDto, DriverRegisterDto, HistoryDto, MessageDto, OnlineDto, PhoneDto, ProfileDto, PushTokenDto, QuoteDto, RatingDto, RefreshDto, RemovePushTokenDto, TopupDto, VerifyDriverDto, VerifyDto } from './dto';
 import { OrdersService } from './orders';
 import { PrismaService } from './prisma.service';
 import { AdminGuard } from './admin.security';
 type AuthedRequest=Request&{actor:Actor};
 type AvatarFile={buffer:Buffer;mimetype:string;size:number};
+type RegistrationFiles={vehiclePhoto?:AvatarFile[];profilePhoto?:AvatarFile[]};
 export const MAX_AVATAR_BYTES=5*1024*1024;
 export const MAX_AVATAR_PIXELS=20_000_000;
 export const AVATAR_SIZE=720;
@@ -111,7 +112,26 @@ export class OrdersController {
 @ApiTags('driver') @ApiBearerAuth() @UseGuards(AuthGuard) @Controller('driver')
 export class DriverController {
   constructor(private readonly driver:DriverService,private readonly orders:OrdersService) {}
+  @Post('register') @ApiConsumes('multipart/form-data')
+  @ApiBody({schema:{type:'object',required:['firstName','lastName','carMake','carPlate','requestedTransportClass','vehiclePhoto'],properties:{firstName:{type:'string'},lastName:{type:'string'},carMake:{type:'string'},carPlate:{type:'string'},carColor:{type:'string'},requestedTransportClass:{type:'string',enum:['ECONOMY','TRUCK']},vehiclePhoto:{type:'string',format:'binary'},profilePhoto:{type:'string',format:'binary'}}}})
+  @UseInterceptors(FileFieldsInterceptor([{name:'vehiclePhoto',maxCount:1},{name:'profilePhoto',maxCount:1}],{limits:{fileSize:MAX_AVATAR_BYTES,files:2,fields:10},fileFilter:(_request,file,callback)=>{
+    if(!avatarMimes.has(file.mimetype.toLowerCase()))return callback(new BadRequestException('Разрешены только фотографии JPEG, PNG или WEBP.'),false);
+    callback(null,true);
+  }}))
+  async register(@Req() req:AuthedRequest,@Body() dto:DriverRegisterDto,@UploadedFiles() files:RegistrationFiles) {
+    const vehicle=files?.vehiclePhoto?.[0],profile=files?.profilePhoto?.[0];
+    if(!vehicle?.buffer?.length)throw new BadRequestException('Добавьте фотографию машины.');
+    const normalize=async(file:AvatarFile|undefined)=>{
+      if(!file)return undefined;
+      if(file.buffer.length>MAX_AVATAR_BYTES)throw new HttpException('Файл фотографии должен быть не больше 5 МБ.',HttpStatus.PAYLOAD_TOO_LARGE);
+      const detected=detectAvatarMime(file.buffer);
+      if(!detected||detected!==file.mimetype.toLowerCase())throw new BadRequestException('Тип файла не соответствует содержимому фотографии.');
+      return normalizeAvatar(file.buffer);
+    };
+    return this.driver.register(req.actor,dto,(await normalize(vehicle))!,await normalize(profile));
+  }
   @Patch('online') online(@Req() req:AuthedRequest,@Body() dto:OnlineDto) {return this.driver.online(req.actor,dto.online);}
+  @Patch('preferences') preferences(@Req() req:AuthedRequest,@Body() dto:DriverPreferencesDto) {return this.driver.preferences(req.actor,dto);}
   @Patch('position') position(@Req() req:AuthedRequest,@Body() dto:DriverPositionDto) {return this.driver.position(req.actor,dto);}
   @Get('offers') offers(@Req() req:AuthedRequest) {return this.orders.offers(req.actor);}
   @Get('balance') balance(@Req() req:AuthedRequest) {return this.driver.balance(req.actor);}
@@ -127,7 +147,11 @@ export class PublicController {
   constructor(private readonly db:PrismaService,private readonly config:AppConfig) {}
   @Get('health') async health() {await this.db.$queryRaw`SELECT 1`;return {status:'ok'};}
   @Get('config') configValue() {return {currency:'KGS',development:this.config.development,supportPhone:process.env.SUPPORT_PHONE??'+996700000000'};}
-  @Get('tariffs') tariffs() {return this.db.tariff.findMany({where:{active:true},orderBy:{basePrice:'asc'}});}
+  @Get('tariffs') tariffs(@Query('kind') kind:string|undefined) {
+    const normalized=kind??'RIDE';
+    if(!['RIDE','DELIVERY_CAR','DELIVERY_TRUCK'].includes(normalized))throw new BadRequestException('Неизвестный вид тарифа.');
+    return this.db.tariff.findMany({where:{active:true,kind:normalized as 'RIDE'|'DELIVERY_CAR'|'DELIVERY_TRUCK'},orderBy:{basePrice:'asc'}});
+  }
   @Get('avatars/:id') async avatar(@Param('id',ParseUUIDPipe) id:string,@Query('v') version:string|undefined,@Res() response:Response) {
     const stored=await this.db.user.findUnique({where:{id},select:{avatarData:true,avatarMime:true,avatarUpdatedAt:true}});
     if(!stored?.avatarData||!stored.avatarMime||!stored.avatarUpdatedAt)throw new NotFoundException('Фотография не найдена.');
@@ -138,6 +162,18 @@ export class PublicController {
     response.setHeader('Content-Length',String(data.length));
     response.setHeader('Cache-Control',version===currentVersion?'public, max-age=31536000, immutable':'public, max-age=0, must-revalidate');
     response.setHeader('ETag',`"avatar-${id}-${currentVersion}"`);
+    return response.send(data);
+  }
+  @Get('vehicles/:id/photo') async vehiclePhoto(@Param('id',ParseUUIDPipe) id:string,@Query('v') version:string|undefined,@Res() response:Response) {
+    const stored=await this.db.vehicle.findUnique({where:{id},select:{photoData:true,photoMime:true,photoUpdatedAt:true}});
+    if(!stored?.photoData||!stored.photoMime||!stored.photoUpdatedAt)throw new NotFoundException('Фотография не найдена.');
+    const data=Buffer.from(stored.photoData);
+    if(!avatarMimes.has(stored.photoMime)||detectAvatarMime(data)!==stored.photoMime)throw new NotFoundException('Фотография не найдена.');
+    const currentVersion=String(stored.photoUpdatedAt.getTime());
+    response.setHeader('Content-Type',stored.photoMime);
+    response.setHeader('Content-Length',String(data.length));
+    response.setHeader('Cache-Control',version===currentVersion?'public, max-age=31536000, immutable':'public, max-age=0, must-revalidate');
+    response.setHeader('ETag',`"vehicle-${id}-${currentVersion}"`);
     return response.send(data);
   }
 }

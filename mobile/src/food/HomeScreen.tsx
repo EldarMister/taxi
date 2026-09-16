@@ -12,6 +12,7 @@ import type { HomeBanner } from './types';
 
 type Props = {
   onTaxi: () => void;
+  onTruck: () => void;
   onSearch: () => void;
   onFood: () => void;
   onBanner: (banner: HomeBanner) => void;
@@ -111,7 +112,7 @@ function SavedPlace({ icon, title, onPress }: { icon: React.ComponentProps<typeo
   </SpringPressable>;
 }
 
-export function ServiceHomeScreen({ onTaxi, onSearch, onFood, onBanner, banners, onMenu, onOrders, hasOrder, active }: Props) {
+export function ServiceHomeScreen({ onTaxi, onTruck, onSearch, onFood, onBanner, banners, onMenu, onOrders, hasOrder, active }: Props) {
   const theme = useTheme();
   const styles = useFoodStyles(baseStyles);
   const { width, height } = useWindowDimensions();
@@ -131,7 +132,7 @@ export function ServiceHomeScreen({ onTaxi, onSearch, onFood, onBanner, banners,
 
       <View style={styles.services}>
         <View style={[styles.serviceColumn, { height: cardHeight }]}><ServiceCard title="Такси" description="Быстро и комфортно" source={require('../../assets/home/taxi-yellow.png')} colors={['#FFF3D3', '#E2F3FF']} onPress={onTaxi} imageScale={1.13}/></View>
-        <View style={[styles.serviceColumn, { height: cardHeight }]}><ServiceCard title="Грузовой" description="Для больших задач" source={require('../../assets/home/truck-white.png')} colors={['#DBEFFF', '#E8F4FF']} comingSoon imageScale={1.17}/></View>
+        <View style={[styles.serviceColumn, { height: cardHeight }]}><ServiceCard title="Грузовой" description="Доставка больших грузов" source={require('../../assets/home/truck-white.png')} colors={['#DBEFFF', '#E8F4FF']} onPress={onTruck} imageScale={1.17}/></View>
         <View style={[styles.serviceColumn, { height: cardHeight }]}><ServiceCard title="Доставка еды" description="Любимые рестораны рядом" source={require('../../assets/home/food-bag-burger.png')} colors={['#DEF6EC', '#E2FAF5']} onPress={onFood} imageScale={1.05}/></View>
       </View>
 
