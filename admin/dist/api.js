@@ -2,10 +2,24 @@
 // be attached later without rebuilding the frontend or widening CORS.
 export const API = `${window.location.origin}/api`;
 const KEY = 'taxigo.control.session';
+const REMEMBER_KEY = 'taxigo.control.remember';
+const USERNAME_KEY = 'taxigo.control.username';
 let current = null, rotation = null, epoch = 0;
-try { const saved = JSON.parse(sessionStorage.getItem(KEY) || 'null'); if (saved?.user?.role === 'ADMIN' && saved?.refreshToken) current = saved; } catch {}
+let persistence = sessionStorage;
+for (const storage of [localStorage, sessionStorage]) {
+  try {
+    const saved = JSON.parse(storage.getItem(KEY) || 'null');
+    if (saved?.user?.role === 'ADMIN' && saved?.refreshToken) { current = saved; persistence = storage; break; }
+  } catch {}
+}
 export const session = () => current;
-function keep(value) { current = value; if (value) sessionStorage.setItem(KEY, JSON.stringify(value)); else sessionStorage.removeItem(KEY); }
+export const rememberedUsername = () => { try { return localStorage.getItem(USERNAME_KEY) || ''; } catch { return ''; } };
+export const rememberEnabled = () => { try { return localStorage.getItem(REMEMBER_KEY) !== '0'; } catch { return true; } };
+function keep(value) {
+  current = value;
+  if (value) persistence.setItem(KEY, JSON.stringify(value));
+  else { localStorage.removeItem(KEY); sessionStorage.removeItem(KEY); }
+}
 export function clearSession() { ++epoch; keep(null); window.dispatchEvent(new Event('admin:signed-out')); }
 async function request(path, { method = 'GET', body, token = current?.accessToken } = {}) {
   const controller = new AbortController(), timeout = setTimeout(() => controller.abort(), 20000);
@@ -45,7 +59,17 @@ export async function api(path, options = {}) {
     return request(path, options);
   }
 }
-export async function signIn(username, password) { const result = await request('/admin/auth/login', { method: 'POST', body: { username, password }, token: null }); if (result?.user?.role !== 'ADMIN') throw new Error('Доступ разрешён только администратору.'); ++epoch; keep(result); return result; }
+export async function signIn(username, password, remember = true) {
+  const result = await request('/admin/auth/login', { method: 'POST', body: { username, password }, token: null });
+  if (result?.user?.role !== 'ADMIN') throw new Error('Доступ разрешён только администратору.');
+  ++epoch;
+  localStorage.removeItem(KEY); sessionStorage.removeItem(KEY);
+  persistence = remember ? localStorage : sessionStorage;
+  if (remember) { localStorage.setItem(USERNAME_KEY, username); localStorage.setItem(REMEMBER_KEY, '1'); }
+  else { localStorage.removeItem(USERNAME_KEY); localStorage.setItem(REMEMBER_KEY, '0'); }
+  keep(result);
+  return result;
+}
 export async function signOut() { const saved = current; try { if (saved) await request('/auth/logout', { method: 'POST', body: { refreshToken: saved.refreshToken }, token: saved.accessToken }); } finally { clearSession(); } }
 export async function upload(file) { if (!file || file.size > 5 * 1024 * 1024) throw new Error('Выберите изображение до 5 МБ.'); const body = new FormData(); body.append('image', file); return api('/admin/media', { method: 'POST', body }); }
 export function mediaUrl(value) { if (!value) return ''; if (String(value).startsWith('/')) return `${API}${value}`; try { const u = new URL(value, new URL(API).origin); return ['http:', 'https:'].includes(u.protocol) ? u.href : ''; } catch { return ''; } }

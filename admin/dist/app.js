@@ -1,4 +1,4 @@
-import { API, api, session, signIn, signOut, refresh, upload } from './api.js';
+import { API, api, session, signIn, signOut, refresh, upload, rememberedUsername, rememberEnabled } from './api.js';
 import { esc, money, date, shortId, statuses, badge, icon, button, field, empty, loading, errorBox, photo, pager } from './ui.js';
 import { tariffEditor, driverEditor, restaurantEditor, bannerEditor, menuDishEditor, menuOptionEditor, menuCategoryEditor, readEditor, readMenuDish, readMenuOption, readMenuCategory, newRestaurant } from './editors.js';
 
@@ -17,7 +17,7 @@ function toast(text) { const node = document.querySelector('#toast'); node.textC
 function brand() { return `<div class="brand"><span class="brand-symbol">${icon('drivers', 23)}</span><span>Taxi <em>GO</em></span></div>`; }
 function connectionStatus() { document.querySelectorAll('[data-connection]').forEach(n => { n.className = `connection ${connected ? 'online' : ''}`; n.textContent = connected ? 'В реальном времени' : 'Обновление каждые 30 с'; }); }
 function loginView() {
-  app.innerHTML = `<main class="auth-page"><section class="auth-box"><h1>Панель управления</h1><form id="login-form">${field('Логин', 'username', '', { required: true, maxLength: 64 })}${field('Пароль', 'password', '', { type: 'password', required: true })}<div class="auth-error" id="login-error" role="alert"></div><button class="button primary" type="submit">Войти ${icon('arrow', 17)}</button></form></section></main>`;
+  app.innerHTML = `<main class="auth-page"><section class="auth-box"><h1>Панель управления</h1><form id="login-form" autocomplete="on">${field('Логин', 'username', rememberedUsername(), { required: true, maxLength: 64 })}${field('Пароль', 'password', '', { type: 'password', required: true })}<label class="remember-login"><input type="checkbox" name="remember" ${rememberEnabled() ? 'checked' : ''}><span>Запомнить вход на этом устройстве</span></label><div class="auth-error" id="login-error" role="alert"></div><button class="button primary" type="submit">Войти ${icon('arrow', 17)}</button></form></section></main>`;
   app.querySelector('[name=username]').autocomplete = 'username'; app.querySelector('[name=password]').autocomplete = 'current-password';
 }
 function shell() {
@@ -394,7 +394,7 @@ async function handleAction(target) {
 }
 function setPath(object, path, value) { const keys = path.split('.'); let current = object; for (const key of keys.slice(0, -1)) current = current[key]; if (value === undefined) delete current[keys.at(-1)]; else current[keys.at(-1)] = value; }
 document.addEventListener('click', event => { const navigation = event.target.closest('[data-nav]'), tab = event.target.closest('[data-kind]:not([data-action])'), target = event.target.closest('[data-action]'); if (navigation) void navigate(navigation.dataset.nav); else if (tab) { kind = tab.dataset.kind; filter = ''; page = 1; data = null; loadError = ''; void load(); } else if (target && !target.disabled) void handleAction(target).catch(e => toast(e.message)); });
-document.addEventListener('submit', event => { event.preventDefault(); if (event.target.id === 'login-form') { const form = event.target, f = new FormData(form), b = form.querySelector('button'); b.disabled = true; b.textContent = 'Входим…'; document.querySelector('#login-error').textContent = ''; void signIn(String(f.get('username')).trim(), String(f.get('password'))).then(() => { shell(); connect(); return load(); }).catch(e => { document.querySelector('#login-error').textContent = e.message; b.disabled = false; b.textContent = 'Войти'; }); } else if (event.target.id === 'editor-form') void saveEditor(event.target); });
+document.addEventListener('submit', event => { event.preventDefault(); if (event.target.id === 'login-form') { const form = event.target, f = new FormData(form), b = form.querySelector('button'); b.disabled = true; b.textContent = 'Входим…'; document.querySelector('#login-error').textContent = ''; void signIn(String(f.get('username')).trim(), String(f.get('password')), f.get('remember') === 'on').then(() => { shell(); connect(); return load(); }).catch(e => { document.querySelector('#login-error').textContent = e.message; b.disabled = false; b.textContent = 'Войти'; }); } else if (event.target.id === 'editor-form') void saveEditor(event.target); });
 document.addEventListener('input', event => {
   if (event.target.closest('#editor-form') && editor) editor.dirty = true;
   if (event.target.matches('#editor-form input[name="optionIds"]')) updateMenuOptionLimit(event.target.form);
