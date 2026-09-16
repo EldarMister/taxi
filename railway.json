@@ -5,6 +5,7 @@
     "dockerfilePath": "Dockerfile.railway",
     "watchPatterns": [
       "/server/**",
+      "/admin/**",
       "/Dockerfile.railway",
       "/railway.json"
     ]

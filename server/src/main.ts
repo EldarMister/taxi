@@ -4,6 +4,8 @@ import { NestFactory } from '@nestjs/core';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import helmet from 'helmet';
 import { json, urlencoded } from 'express';
+import { static as serveStatic } from 'express';
+import { join } from 'node:path';
 import { AppModule } from './app.module';
 import { AppConfig } from './config';
 import { ApiExceptionFilter, apiValidation } from './http';
@@ -15,6 +17,8 @@ async function bootstrap() {
   const config=app.get(AppConfig);
   app.setGlobalPrefix('api');
   app.use(helmet());
+  app.use('/admin',serveStatic(join(process.cwd(),'admin'),{index:'index.html',fallthrough:false}));
+  app.getHttpAdapter().get('/',(_request:unknown,response:{redirect:(path:string)=>void})=>response.redirect('/admin/'));
   app.enableCors({origin:config.origins,credentials:false});
   app.useGlobalPipes(apiValidation());
   app.useGlobalFilters(new ApiExceptionFilter());

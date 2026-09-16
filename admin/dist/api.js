@@ -1,4 +1,6 @@
-export const API = 'https://api-production-3839.up.railway.app/api';
+// The panel is shipped with the API service, so a custom Railway domain can
+// be attached later without rebuilding the frontend or widening CORS.
+export const API = `${window.location.origin}/api`;
 const KEY = 'taxigo.control.session';
 let current = null, rotation = null, epoch = 0;
 try { const saved = JSON.parse(sessionStorage.getItem(KEY) || 'null'); if (saved?.user?.role === 'ADMIN' && saved?.refreshToken) current = saved; } catch {}
