@@ -32,7 +32,8 @@
     "test:food": "node --test tests/food-cart.test.cjs tests/food-flow.test.cjs tests/food-banners.test.cjs tests/screen-transition.test.cjs",
     "test:auth": "node --test tests/auth-flow.test.cjs",
     "test:booking": "node --test tests/address-format.test.cjs tests/address-search.test.cjs tests/booking-flow.test.cjs tests/booking-panels.test.cjs tests/bottom-panel.test.cjs tests/sheet-stage-transition.test.cjs",
-    "test:navigation": "node --test tests/navigation.test.cjs tests/navigation-lifecycle.test.cjs tests/driver-background.test.cjs"
+    "test:navigation": "node --test tests/navigation.test.cjs tests/navigation-lifecycle.test.cjs tests/driver-background.test.cjs",
+    "test:registration": "node --test tests/registration-flow.test.cjs"
   },
   "dependencies": {
     "@expo-google-fonts/inter": "^0.4.2",
@@ -43,10 +44,13 @@
     "expo-asset": "~12.0.13",
     "expo-audio": "~1.1.1",
     "expo-build-properties": "~1.0.10",
+    "expo-camera": "~17.0.10",
     "expo-constants": "~18.0.14",
     "expo-contacts": "~15.0.11",
     "expo-dev-client": "~6.0.21",
     "expo-device": "~8.0.10",
+    "expo-document-picker": "~14.0.8",
+    "expo-file-system": "~19.0.24",
     "expo-font": "~14.0.12",
     "expo-image-manipulator": "~14.0.8",
     "expo-image-picker": "~17.0.11",

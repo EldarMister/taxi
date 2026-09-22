@@ -81,18 +81,22 @@ test('both production app variants configure MapLibre without a legacy map key',
 });
 
 
-test('driver avatar uses the system gallery without camera or broad storage permissions', () => {
+test('profile editing uses the gallery while only the driver registration build receives camera access', () => {
   const config = read('app.config.ts');
   const manifest = read('android/app/src/main/AndroidManifest.xml');
+  const gradle = read('android/app/build.gradle');
   const account = read('src/AccountScreens.tsx');
   assert.match(account, /user\.role !== 'DRIVER'/);
   assert.match(account, /launchImageLibraryAsync/);
   assert.doesNotMatch(account, /launchCameraAsync|Фотография — ссылка HTTPS/);
-  assert.match(config, /cameraPermission: false/);
-  for (const permission of ['CAMERA', 'READ_EXTERNAL_STORAGE', 'WRITE_EXTERNAL_STORAGE']) {
+  assert.match(config, /cameraPermission: variant === 'driver'/);
+  assert.match(config, /variant === 'client' \? \['android\.permission\.CAMERA'\] : \[\]/);
+  assert.match(gradle, /\["ACCESS_BACKGROUND_LOCATION", "FOREGROUND_SERVICE_LOCATION", "CAMERA"\]/);
+  for (const permission of ['READ_EXTERNAL_STORAGE', 'WRITE_EXTERNAL_STORAGE']) {
     assert.match(config, new RegExp(`blockedPermissions:[\\s\\S]*android\\.permission\\.${permission}`));
     assert.match(manifest, new RegExp(`android\\.permission\\.${permission}[^>]+tools:node="remove"`));
   }
+  assert.match(manifest, /android\.permission\.CAMERA[^>]+tools:node="remove"/);
 });
 
 test('an ambiguous driver accept keeps the offer until authoritative reconciliation', () => {
@@ -138,6 +142,15 @@ test('permission onboarding gates automatic push registration and persists each 
   assert.match(app, /getNotificationPermissionState/);
   assert.match(app, /<PermissionOnboarding/);
   assert.match(store, /taxi\.permissionIntro\.v1\.\$\{userId\}/);
+});
+
+test('driver bootstrap recovers actionable registration status without blocking offline home', () => {
+  const app = read('App.tsx');
+  assert.match(app, /api\.request<unknown>\('\/driver\/registration'\)/);
+  assert.match(app, /void refreshRegistrationAttention\(profile, true\)/);
+  assert.match(app, /autoOpen && attention && !attention\.hasOperational/);
+  assert.match(app, /Registration status is advisory here:[\s\S]*offline check must never hide an existing driver home/);
+  assert.match(app, /registrationAttention[\s\S]*navigate\('registration'\)/);
 });
 
 test('Android auth and chat explicitly keep focused inputs above the keyboard', () => {

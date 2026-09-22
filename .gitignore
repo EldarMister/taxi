@@ -9,6 +9,7 @@ coverage/
 .gradle/
 **/local.properties
 **/build/
+mobile/builds/
 **/Pods/
 **/*.keystore
 **/*.jks

@@ -28,6 +28,7 @@ import { io, Socket } from "socket.io-client";
 import { api, ApiError, messageOf, requestId } from "./src/api";
 import { AuthScreen } from "./src/AuthScreen";
 import { DriverRegistrationScreen } from "./src/DriverRegistrationScreen";
+import { registrationAttentionFromResponse, type RegistrationAttention } from "./src/registration/attention";
 import { AccountScreen, MenuRow, Page } from "./src/AccountScreens";
 import { AddressPicker, ChatOverlay } from "./src/Overlays";
 import { BookingPanel, emptyRideDetails, rideComment } from "./src/BookingPanel";
@@ -149,11 +150,14 @@ function TaxiApp() {
   const dismissedOrderIds = useRef(new Set<string>());
   const [offers, setOffers] = useState<Order[]>([]);
   const [page, setPage] = useState<Page>("home");
+  const [registrationDeepLink, setRegistrationDeepLink] = useState<{ event: string; slotKey?: string } | null>(null);
   const [historyDetailId, setHistoryDetailId] = useState<string | null>(null);
   const [service, setService] = useState<'hub' | 'taxi' | 'delivery'>('hub');
   const [foodEntry, setFoodEntry] = useState<FoodEntry>({ screen: 'home', key: 0 });
   const [contentRevision, setContentRevision] = useState(0);
   const [foodOrderRevision, setFoodOrderRevision] = useState(0);
+  const [registrationRevision, setRegistrationRevision] = useState(0);
+  const [registrationAttention, setRegistrationAttention] = useState<RegistrationAttention | null>(null);
   const [drawer, setDrawer] = useState(false);
   const [chat, setChat] = useState(false);
   const [incoming, setIncoming] = useState<ChatMessage | null>(null);
@@ -223,7 +227,24 @@ function TaxiApp() {
     driverSounds.setUser(next);
     userRef.current = next;
     setUser(next);
+    if (!next) setRegistrationAttention(null);
   };
+  const refreshRegistrationAttention = useCallback(async (profile: User, autoOpen: boolean) => {
+    if (appVariant !== 'driver' || profile.role !== 'DRIVER') { setRegistrationAttention(null); return; }
+    const accountId = profile.id;
+    try {
+      const response = await api.request<unknown>('/driver/registration');
+      if (userRef.current?.id !== accountId) return;
+      const attention = registrationAttentionFromResponse(response);
+      setRegistrationAttention(attention);
+      if (autoOpen && attention && !attention.hasOperational) {
+        setRegistrationDeepLink(null);
+        setPage('registration');
+      }
+    } catch {
+      // Registration status is advisory here: an offline check must never hide an existing driver home.
+    }
+  }, []);
   const refreshLocationPermission = useCallback(async () => {
     const version = ++locationPermissionVersion.current;
     const state = await getLocationPermissionState();
@@ -316,6 +337,7 @@ function TaxiApp() {
         if (await rejectMismatchedRole(profile)) return;
         setPermissionStep(await readPermissionIntro(profile.id));
         updateUser(profile);
+        void refreshRegistrationAttention(profile, true);
         const active = await api.request<Order | null>("/orders/active");
         if (active) applyOrder(active);
         else {
@@ -435,6 +457,11 @@ function TaxiApp() {
     });
     socket.on("tariffs:changed", refreshTariffs);
     socket.on("food:order:updated", () => setFoodOrderRevision(value => value + 1));
+    socket.on("registration:updated", () => {
+      setRegistrationRevision(value => value + 1);
+      const profile = userRef.current;
+      if (profile?.role === 'DRIVER') void refreshRegistrationAttention(profile, true);
+    });
     socket.on("disconnect", () => setConnected(false));
     socket.on("connect_error", () => setConnected(false));
     socket.on("session:expired", () => {
@@ -473,13 +500,18 @@ function TaxiApp() {
       socket.disconnect();
       if (socketRef.current === socket) socketRef.current = null;
     };
-  }, [user?.id]);
+  }, [refreshRegistrationAttention, user?.id]);
   useEffect(() => {
     driverSounds.offers(offers, order);
   }, [offers, order, user?.id, user?.notifications, user?.driverProfile?.online, clock]);
   useEffect(() => onNotificationReceived(data => {
     if (AppState.currentState !== "active" || !userRef.current) return;
     void sync();
+    if (typeof data.event === 'string' && data.event.startsWith('registration:')) {
+      setRegistrationRevision(value => value + 1);
+      const profile = userRef.current;
+      if (profile.role === 'DRIVER') void refreshRegistrationAttention(profile, true);
+    }
     // If the socket was interrupted, recover chat from the authoritative list.
     if (data.event === "chat:message" && data.orderId === orderRef.current?.id) {
       const accountId = userRef.current.id;
@@ -490,7 +522,7 @@ function TaxiApp() {
         if (latest) setIncoming(latest);
       }).catch(() => undefined);
     }
-  }), []);
+  }), [refreshRegistrationAttention]);
   useEffect(() => {
     if (user?.notifications && permissionStep === "done") {
       const accountId = user.id;
@@ -505,12 +537,24 @@ function TaxiApp() {
   }, [user?.id, user?.notifications, permissionStep]);
   useEffect(
     () =>
-      onNotificationOpened(() => {
-        setPage("home");
+      onNotificationOpened((_orderId, data) => {
+        const registrationEvent = appVariant === 'driver' && typeof data.event === 'string' && data.event.startsWith('registration:');
+        if (registrationEvent) setRegistrationRevision(value => value + 1);
+        setRegistrationDeepLink(registrationEvent ? { event: data.event as string, ...(typeof data.slotKey === 'string' ? { slotKey: data.slotKey } : {}) } : null);
+        setPage(registrationEvent ? 'registration' : 'home');
         void sync();
       }),
     [],
   );
+  useEffect(() => {
+    const registrationVisible = appVariant === 'driver' && !!user && (user.role === 'CLIENT' || page === 'registration');
+    if (!registrationVisible || !user?.notifications) return;
+    let active = true;
+    void getNotificationPermissionState()
+      .then(permission => active && permission.granted ? registerPushNotifications() : null)
+      .catch(() => undefined);
+    return () => { active = false; };
+  }, [page, user?.id, user?.notifications, user?.role]);
   async function run(work: () => Promise<void>) {
     if (busyRef.current) return;
     busyRef.current = true;
@@ -542,6 +586,7 @@ function TaxiApp() {
     setPage("home");
     setService('hub');
     setFoodEntry(value => ({ screen: 'home', key: value.key + 1 }));
+    void refreshRegistrationAttention(profile, true);
   }
   const logout = () =>
     run(async () => {
@@ -866,6 +911,7 @@ function TaxiApp() {
 
     setDrawer(false);
     setHistoryDetailId(null);
+    if (next === 'registration') setRegistrationDeepLink(null);
     setPage(next);
     setError("");
   };
@@ -934,8 +980,11 @@ function TaxiApp() {
       </SafeAreaView>
     );
   if (!user) return <AuthScreen onLogin={login} />;
-  if (appVariant === 'driver' && user.role === 'CLIENT') return <DriverRegistrationScreen onRegistered={async profile => {
+  if (appVariant === 'driver' && (user.role === 'CLIENT' || page === 'registration')) return <DriverRegistrationScreen user={user} deepLink={registrationDeepLink} statusRevision={registrationRevision} onRegistered={async profile => {
     updateUser(profile);
+    setRegistrationDeepLink(null);
+    setPage('home');
+    void refreshRegistrationAttention(profile, false);
     setPermissionStep(await readPermissionIntro(profile.id));
     setPermissionError('');
     setPermissionNeedsSettings(false);
@@ -944,7 +993,7 @@ function TaxiApp() {
     await api.clear();
     updateUser(null);
     setPermissionStep('loading');
-  }}/>;
+  }} onClose={user.role === 'DRIVER' ? () => { setRegistrationDeepLink(null); setPage('profile'); void refreshRegistrationAttention(user, false); } : undefined}/>;
   if (permissionStep === "loading")
     return <SafeAreaView style={{ flex: 1, alignItems: "center", justifyContent: "center", backgroundColor: palette.background }}><ActivityIndicator size="large" color={palette.accent}/></SafeAreaView>;
   if (permissionStep !== "done")
@@ -966,6 +1015,7 @@ function TaxiApp() {
     settings: "Настройки",
     support: "Поддержка",
     payment: "Способы оплаты",
+    registration: "Допуски и документы",
   };
   return (
     <View style={{ flex: 1, backgroundColor: palette.background }}>
@@ -991,6 +1041,26 @@ function TaxiApp() {
           )}
         </View>
       </View>
+      {driver && registrationAttention ? (
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={`${registrationAttention.message}. Открыть допуски и документы`}
+          onPress={() => navigate('registration')}
+          style={{
+            marginTop: page === 'home' ? insets.top + 56 : 0,
+            paddingHorizontal: 16,
+            paddingVertical: 10,
+            backgroundColor: registrationAttention.status === 'BLOCKED' ? (isDark ? '#331B20' : '#FFF0F1') : (isDark ? '#342A14' : '#FFF6DE'),
+            flexDirection: 'row',
+            alignItems: 'center',
+            gap: 10,
+          }}
+        >
+          <Icon name={registrationAttention.status === 'BLOCKED' ? 'close-circle-outline' : 'alert-circle-outline'} color={registrationAttention.status === 'BLOCKED' ? colors.danger : '#A46900'}/>
+          <View style={{ flex: 1 }}><Text style={{ color: palette.ink, fontSize: 13, fontWeight: '700' }}>{t(registrationAttention.message)}</Text><Text style={{ color: palette.muted, fontSize: 11, marginTop: 2 }}>{t('Открыть допуски и документы')}</Text></View>
+          <Icon name="chevron-forward" size={18} color={palette.muted}/>
+        </Pressable>
+      ) : null}
       {!showingServices && !(driver && order?.status === 'COMPLETED') && (offline || !connected) && (
         <Pressable
           onPress={() => void sync()}

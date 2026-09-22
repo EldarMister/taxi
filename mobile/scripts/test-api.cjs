@@ -92,8 +92,8 @@ test('a build without a local .env reaches the hosted API, including sockets', a
   let requested;
   const { api } = setup(async url => { requested = url; return reply(200, { status: 'ok' }); }, { env: {} });
   await api.request('/health');
-  assert.equal(requested, 'https://api-production-3839.up.railway.app/api/health');
-  assert.equal(api.socketUrl, 'https://api-production-3839.up.railway.app');
+  assert.equal(requested, 'https://api-production-47be.up.railway.app/api/health');
+  assert.equal(api.socketUrl, 'https://api-production-47be.up.railway.app');
 });
 
 test('an API origin or whitespace in .env resolves to the correct API path', () => {
@@ -119,7 +119,7 @@ test('release configuration rejects placeholder and device-local servers', () =>
     assert.throws(() => resolveApiUrl(value, true));
   }
   assert.equal(resolveApiUrl('http://10.0.2.2:3000/api/', false), 'http://10.0.2.2:3000/api');
-  assert.equal(resolveApiUrl(undefined, true), 'https://api-production-3839.up.railway.app/api');
+  assert.equal(resolveApiUrl(undefined, true), 'https://api-production-47be.up.railway.app/api');
 });
 
 test('server rejection is shown without reporting a lost network or replaying an SMS', async () => {

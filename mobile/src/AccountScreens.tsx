@@ -10,7 +10,7 @@ import type { AppConfig, Balance, Language, Order, User } from './types';
 import { Avatar, Button, Car, colors, Empty, Icon, km, mins, money, Route, s as lightUi, shortAddress, ToggleSwitch, tr } from './ui';
 import { ClientHistoryRow, ClientTripHistoryDetail } from './ClientTripHistory';
 
-export type Page = 'home' | 'profile' | 'history' | 'balance' | 'settings' | 'support' | 'payment';
+export type Page = 'home' | 'profile' | 'history' | 'balance' | 'settings' | 'support' | 'payment' | 'registration';
 const completedOrders = (orders: Order[]) => orders.filter(order => order.status === 'COMPLETED');
 const income = (orders: Order[]) => completedOrders(orders).reduce((total, order) => total + Number(order.price), 0);
 const orderStatus = { COMPLETED: 'Завершён', CANCELLED: 'Отменён', IN_PROGRESS: 'В пути', ASSIGNED: 'Найден', ARRIVED: 'Ожидание', SEARCHING: 'Поиск', NO_DRIVER: 'Нет водителя' };
@@ -183,7 +183,7 @@ export function AccountScreen({ page, user, config, onUser, onError, onOnline, o
         </View>
         <Button label={t('История операций')} onPress={() => onNavigate('balance')}/>
       </View>}
-      <View style={[styles.profileCard, { paddingVertical: 2 }]}><MenuRow icon="settings-outline" label={t('Настройки')} onPress={() => onNavigate('settings')}/><View style={styles.menuDivider}/><MenuRow icon="help-circle-outline" label={t('Поддержка')} onPress={() => onNavigate('support')}/><View style={styles.menuDivider}/><MenuRow icon="receipt-outline" label={user.role === 'DRIVER' ? t('История заказов') : t('Способы оплаты')} onPress={() => onNavigate(user.role === 'DRIVER' ? 'history' : 'payment')}/></View>
+      <View style={[styles.profileCard, { paddingVertical: 2 }]}>{user.role === 'DRIVER' ? <><MenuRow icon="shield-checkmark-outline" label={t('Допуски и документы')} onPress={() => onNavigate('registration')}/><View style={styles.menuDivider}/></> : null}<MenuRow icon="settings-outline" label={t('Настройки')} onPress={() => onNavigate('settings')}/><View style={styles.menuDivider}/><MenuRow icon="help-circle-outline" label={t('Поддержка')} onPress={() => onNavigate('support')}/><View style={styles.menuDivider}/><MenuRow icon="receipt-outline" label={user.role === 'DRIVER' ? t('История заказов') : t('Способы оплаты')} onPress={() => onNavigate(user.role === 'DRIVER' ? 'history' : 'payment')}/></View>
     </>}
 
     {page === 'history' && user.role === 'CLIENT' && historyDetailId ? (
@@ -210,7 +210,7 @@ export function AccountScreen({ page, user, config, onUser, onError, onOnline, o
       {driverProfile && <View style={[s.card, isDark && styles.darkSettingsCard, { gap: 4 }]}>
         <View style={{ gap: 4, paddingBottom: 9 }}><Text style={[s.h3, isDark && styles.darkSettingsText]}>{local('Какие заказы принимать', 'Кайсы буюртмаларды кабыл алуу')}</Text><Text style={s.caption}>{local(`Назначенный класс: ${driverProfile.transportClass === 'COMFORT' ? 'Комфорт' : driverProfile.transportClass === 'TRUCK' ? 'Грузовой' : 'Эконом'}`, `Унаа классы: ${driverProfile.transportClass}`)}</Text></View>
         {driverProfile.transportClass !== 'TRUCK' && <PreferenceRow title="Эконом" caption="Обычные поездки" value={!!driverProfile.acceptsEconomy} disabled={saving} onChange={acceptsEconomy => void updatePreferences({ acceptsEconomy })}/>}
-        <PreferenceRow title="Комфорт" caption={driverProfile.transportClass === 'COMFORT' ? 'Поездки Комфорт' : 'Доступ назначает администратор'} value={!!driverProfile.acceptsComfort} disabled={saving || driverProfile.transportClass !== 'COMFORT'} onChange={acceptsComfort => void updatePreferences({ acceptsComfort })}/>
+        <PreferenceRow title="Комфорт" caption={driverProfile.transportClass === 'COMFORT' ? local('Поездки Комфорт', 'Комфорт сапарлары') : local('Недоступен вам', 'Сиз үчүн жеткиликсиз')} value={!!driverProfile.acceptsComfort} disabled={saving || driverProfile.transportClass !== 'COMFORT'} onChange={acceptsComfort => void updatePreferences({ acceptsComfort })}/>
         {driverProfile.transportClass !== 'TRUCK' && <PreferenceRow title="Доставка на машине" caption="Небольшие чистые грузы" value={!!driverProfile.acceptsDeliveryCar} disabled={saving} onChange={acceptsDeliveryCar => void updatePreferences({ acceptsDeliveryCar })}/>}
         {driverProfile.transportClass === 'TRUCK' && <PreferenceRow title="Грузовая доставка" caption="Крупные грузы" value={!!driverProfile.acceptsDeliveryTruck} disabled={saving} onChange={acceptsDeliveryTruck => void updatePreferences({ acceptsDeliveryTruck })}/>}
       </View>}

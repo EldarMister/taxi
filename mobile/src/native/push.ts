@@ -13,6 +13,7 @@ export async function configureNotificationChannels(): Promise<void> {
   if (Platform.OS !== 'android') return;
   const channels = [
     { id: 'orders', name: 'Заказы и поездки', sound: 'default' },
+    { id: 'registration', name: 'Регистрация и документы', sound: 'default' },
     { id: 'driver-orders-v2', name: 'Новый заказ', sound: 'driver_new_order.wav' },
     { id: 'driver-messages-v1', name: 'Сообщения пассажира', sound: 'driver_passenger_message.wav' },
     { id: 'driver-completed-v1', name: 'Завершение поездки', sound: 'driver_trip_completed.wav' },
@@ -100,17 +101,19 @@ export async function unregisterPushNotifications(): Promise<void> {
   await SecureStore.deleteItemAsync(PUSH_TOKEN_KEY);
 }
 
-export function onNotificationOpened(handler: (orderId: string | undefined) => void): () => void {
+export function onNotificationOpened(handler: (orderId: string | undefined, data: Record<string, unknown>) => void): () => void {
   let active = true;
   void Notifications.getLastNotificationResponseAsync().then(response => {
     if (!active || !response) return;
-    const id = response.notification.request.content.data.orderId;
-    handler(typeof id === 'string' ? id : undefined);
+    const data = response.notification.request.content.data;
+    const id = data.orderId;
+    handler(typeof id === 'string' ? id : undefined, data);
     void Notifications.clearLastNotificationResponseAsync();
   });
   const subscription = Notifications.addNotificationResponseReceivedListener((response) => {
-    const id = response.notification.request.content.data.orderId;
-    handler(typeof id === 'string' ? id : undefined);
+    const data = response.notification.request.content.data;
+    const id = data.orderId;
+    handler(typeof id === 'string' ? id : undefined, data);
   });
   return () => { active = false; subscription.remove(); };
 }

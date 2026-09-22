@@ -4,7 +4,21 @@ import type { Tokens } from './types';
 const { resolveApiUrl } = require('../config/api.cjs') as { resolveApiUrl: (value?: string) => string };
 
 export class ApiError extends Error {
-  constructor(public status: number, message: string) { super(message); this.name = 'ApiError'; }
+  readonly code?: string;
+  readonly requestId?: string;
+  readonly fieldErrors: Array<{ field: string; code?: string; message: string }>;
+  constructor(public status: number, message: string, details?: { code?: unknown; requestId?: unknown; fieldErrors?: unknown }) {
+    super(message); this.name = 'ApiError';
+    this.code = typeof details?.code === 'string' ? details.code : undefined;
+    this.requestId = typeof details?.requestId === 'string' ? details.requestId : undefined;
+    this.fieldErrors = Array.isArray(details?.fieldErrors) ? details.fieldErrors.flatMap(item => {
+      if (!item || typeof item !== 'object') return [];
+      const value = item as Record<string, unknown>;
+      return typeof value.field === 'string' && typeof value.message === 'string'
+        ? [{ field: value.field, message: value.message, ...(typeof value.code === 'string' ? { code: value.code } : {}) }]
+        : [];
+    }) : [];
+  }
 }
 type Listener = (event: 'tokens' | 'logout' | 'online' | 'offline') => void;
 let tokens: Tokens | null = null;
@@ -25,10 +39,17 @@ async function raw<T>(path: string, init: RequestInit, accessToken?: string): Pr
   else init.signal?.addEventListener('abort', cancel, { once: true });
   try {
     const formData = typeof FormData !== 'undefined' && init.body instanceof FormData;
-    const response = await fetch(`${baseUrl}${path}`, {
-      ...init, signal: controller.signal,
-      headers: { ...(!formData && init.body !== undefined ? { 'Content-Type': 'application/json' } : {}), ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}), ...init.headers },
+    const request = (url: string) => fetch(url, {
+      ...init, cache: 'no-store', signal: controller.signal,
+      headers: { 'Cache-Control': 'no-store', Pragma: 'no-cache', ...(!formData && init.body !== undefined ? { 'Content-Type': 'application/json' } : {}), ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}), ...init.headers },
     });
+    let response = await request(`${baseUrl}${path}`);
+    // Android may keep an ETag for authenticated JSON even when the screen needs
+    // a fresh body. A 304 has no JSON to restore, so retry once with a unique URL.
+    if (response.status === 304) {
+      const separator = path.includes('?') ? '&' : '?';
+      response = await request(`${baseUrl}${path}${separator}_fresh=${Date.now()}`);
+    }
     const text = await response.text();
     emit('online');
     let body: any;
@@ -42,7 +63,7 @@ async function raw<T>(path: string, init: RequestInit, accessToken?: string): Pr
       const safeMessage = routeMissing
         ? 'Этот раздел временно недоступен. Попробуйте обновить его немного позже.'
         : typeof message === 'string' && !/<(?:html|body|!doctype)/i.test(message) ? message : undefined;
-      throw new ApiError(response.status, safeMessage || 'Сервис временно недоступен. Попробуйте ещё раз немного позже.');
+      throw new ApiError(response.status, safeMessage || 'Сервис временно недоступен. Попробуйте ещё раз немного позже.', body);
     }
     return body as T;
   } catch (error) {
@@ -104,5 +125,7 @@ export const api = {
   patch<T>(path: string, body: unknown) { return api.request<T>(path, { method: 'PATCH', body: JSON.stringify(body) }); },
 };
 
-export const messageOf = (error: unknown) => error instanceof Error ? error.message : 'Не удалось выполнить действие. Попробуйте ещё раз.';
+export const messageOf = (error: unknown) => error instanceof ApiError && error.requestId
+  ? `${error.message}\nКод обращения: ${error.requestId}`
+  : error instanceof Error ? error.message : 'Не удалось выполнить действие. Попробуйте ещё раз.';
 export const requestId = () => `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}-${Math.random().toString(36).slice(2)}`;

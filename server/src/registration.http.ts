@@ -1,4 +1,4 @@
-import { BadRequestException, Body, Controller, Delete, Get, Param, Patch, Post, Query, Req, Res, UploadedFile, UseGuards, UseInterceptors } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Delete, Get, Header, Param, Patch, Post, Query, Req, Res, UploadedFile, UseGuards, UseInterceptors } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { ApiBearerAuth, ApiBody, ApiConsumes, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { Request, Response } from 'express';
@@ -19,10 +19,12 @@ export class RegistrationController {
   constructor(private readonly registration:RegistrationService) {}
 
   @Get()
+  @Header('Cache-Control','private, no-store')
   @ApiOperation({summary:'Получить или продолжить анкету текущего исполнителя'})
   current(@Req() req:AuthedRequest) {return this.registration.current(req.actor);}
 
   @Get('config')
+  @Header('Cache-Control','private, no-store')
   @ApiOperation({summary:'Получить серверную конфигурацию динамической регистрации'})
   config() {return this.registration.config();}
 

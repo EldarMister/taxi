@@ -1,4 +1,4 @@
-const DEFAULT_API_URL = 'https://api-production-3839.up.railway.app/api';
+const DEFAULT_API_URL = 'https://api-production-47be.up.railway.app/api';
 
 function resolveApiUrl(value, production = false) {
   const configured = typeof value === 'string' ? value.trim() : '';
