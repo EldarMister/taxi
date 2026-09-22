@@ -223,7 +223,8 @@ test('регистрационные запросы не ломаются на �
   const source = fs.readFileSync(path.join(__dirname, '..', 'src', 'api.ts'), 'utf8');
   assert.match(source, /cache:\s*'no-store'/);
   assert.match(source, /response\.status\s*===\s*304/);
-  assert.match(source, /_fresh=\$\{Date\.now\(\)\}/);
+  assert.match(source, /If-Modified-Since/);
+  assert.doesNotMatch(source, /_fresh=\$\{Date\.now\(\)\}/);
 });
 
 test('недоступный Комфорт объясняется без ссылки на администратора', () => {

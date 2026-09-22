@@ -18,6 +18,18 @@ export const MAX_AVATAR_PIXELS=20_000_000;
 export const AVATAR_SIZE=720;
 const avatarMimes=new Set(['image/jpeg','image/png','image/webp']);
 
+/** Removes the cache key used only by older mobile builds after a 304 response.
+ * All other query keys remain subject to DTO validation. */
+export function stripLegacyFreshQuery(url:string):string {
+  const separator=url.indexOf('?');
+  if(separator<0)return url;
+  const pathname=url.slice(0,separator),params=new URLSearchParams(url.slice(separator+1));
+  if(!params.has('_fresh'))return url;
+  params.delete('_fresh');
+  const query=params.toString();
+  return query?`${pathname}?${query}`:pathname;
+}
+
 export function detectAvatarMime(data:Uint8Array):string|null {
   if(data.length>=3&&data[0]===0xff&&data[1]===0xd8&&data[2]===0xff)return 'image/jpeg';
   if(data.length>=8&&[0x89,0x50,0x4e,0x47,0x0d,0x0a,0x1a,0x0a].every((value,index)=>data[index]===value))return 'image/png';
