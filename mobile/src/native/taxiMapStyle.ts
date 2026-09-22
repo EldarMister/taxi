@@ -246,7 +246,7 @@ const currentStreetNameLayers: StyleLayer[] = [
     paint: { 'text-color': '#354A64', 'text-halo-color': '#FFFFFF', 'text-halo-width': 1.8 } },
   { id: 'current-osm-street-local', type: 'symbol', source: 'osm_current_labels', 'source-layer': 'street_labels', minzoom: 14,
     filter: ['all', ['any', ['has', 'name'], ['has', 'name_ru'], ['has', 'name_ky']], ['!', ['match', ['get', 'kind'], ['motorway', 'trunk', 'primary', 'secondary', 'tertiary', 'motorway_link', 'trunk_link', 'primary_link', 'secondary_link', 'tertiary_link'], true, false]]],
-    layout: { 'symbol-placement': 'line', 'text-field': currentOsmName, 'text-font': ['Noto Sans Regular'], 'text-size': ['interpolate', ['linear'], ['zoom'], 14, 10, 17, 12], 'text-padding': 3, 'symbol-spacing': 250 },
+    layout: { 'symbol-placement': 'line', 'text-field': currentOsmName, 'text-font': ['Noto Sans Regular'], 'text-size': ['interpolate', ['linear'], ['zoom'], 14, 10.5, 17, 12], 'text-padding': 2, 'symbol-spacing': 380, 'text-allow-overlap': true },
     paint: { 'text-color': '#556780', 'text-halo-color': '#FFFFFF', 'text-halo-width': 1.5 } },
   { id: 'current-osm-street-area-names', type: 'symbol', source: 'osm_current_labels', 'source-layer': 'streets_polygons_labels', minzoom: 15,
     filter: ['any', ['has', 'name'], ['has', 'name_ru'], ['has', 'name_ky']],
@@ -271,6 +271,13 @@ export const taxiMapStyle = {
       if (layer.id === 'highway-area') return [themedLayer(layer), ...currentOsmRoadPolygonLayers];
       if (layer.id === 'bridge-railway-hatching') return [themedLayer(layer), ...currentOsmRoadLayers];
       if (layer.id === 'poi_r20') return [...extraLabelLayers, themedLayer(layer)];
+      if (layer.id === 'highway-name-minor') return [{
+        ...themedLayer(layer), id: 'overview-street-local', minzoom: 13, maxzoom: detailedOsmZoom,
+        filter: ['all', ['match', ['geometry-type'], ['LineString', 'MultiLineString'], true, false], ['==', ['get', 'class'], 'minor']],
+        layout: { 'symbol-placement': 'line', 'text-field': localName, 'text-font': ['Noto Sans Regular'], 'text-rotation-alignment': 'map',
+          'text-size': ['interpolate', ['linear'], ['zoom'], 13, 10, 14, 11], 'text-padding': 2, 'symbol-spacing': 480 },
+        paint: { 'text-color': '#53667D', 'text-halo-color': '#FFFFFF', 'text-halo-width': 1.5 },
+      }];
       if (layer.id === 'highway-name-path') return currentStreetNameLayers;
       if (layer.id.startsWith('highway-name-') || layer.id.startsWith('highway-shield-') || layer.id === 'road_shield_us') return [];
       return [themedLayer(layer)];
