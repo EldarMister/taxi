@@ -228,16 +228,18 @@ const currentPoiIcon = ['case',
   'circle',
 ];
 const currentStreetNameLayers: StyleLayer[] = [
-  // Route references are useful in the overview, but disappear at street
-  // zoom so a road that is both a highway and a city street keeps its name.
-  { id: 'current-osm-road-ref', type: 'symbol', source: 'osm_current_labels', 'source-layer': 'street_labels', minzoom: 10, maxzoom: 15.5,
-    filter: ['all', ['has', 'ref'], ['<=', ['get', 'ref_cols'], 6]],
-    layout: { 'symbol-placement': 'line', 'symbol-spacing': 420, 'icon-image': ['concat', 'road_', ['to-string', ['get', 'ref_cols']]], 'icon-rotation-alignment': 'viewport', 'text-field': ['get', 'ref'], 'text-font': ['Noto Sans Regular'], 'text-size': 10, 'text-rotation-alignment': 'viewport' },
-    paint: { 'text-color': '#46586F' } },
+  // City-street names take priority over route shields. On the overview the
+  // name is more useful than a highway number, especially inside Bishkek.
   { id: 'current-osm-street-major', type: 'symbol', source: 'osm_current_labels', 'source-layer': 'street_labels', minzoom: 11.5, maxzoom: 15.5,
     filter: ['all', ['any', ['has', 'name'], ['has', 'name_ru'], ['has', 'name_ky']], ['match', ['get', 'kind'], ['motorway', 'trunk', 'primary', 'secondary', 'tertiary', 'motorway_link', 'trunk_link', 'primary_link', 'secondary_link', 'tertiary_link'], true, false]],
-    layout: { 'symbol-placement': 'line', 'text-field': currentOsmName, 'text-font': ['Noto Sans Regular'], 'text-size': ['interpolate', ['linear'], ['zoom'], 12, 11, 16, 13], 'text-padding': 4, 'symbol-spacing': 300 },
+    layout: { 'symbol-placement': 'line', 'text-field': currentOsmName, 'text-font': ['Noto Sans Regular'], 'text-size': ['interpolate', ['linear'], ['zoom'], 12, 11.5, 16, 13], 'text-padding': 3, 'symbol-spacing': 360, 'text-allow-overlap': true },
     paint: { 'text-color': '#42536A', 'text-halo-color': '#FFFFFF', 'text-halo-width': 1.6 } },
+  // Route references are secondary; delaying them prevents their shields from
+  // occupying the label slot of a named arterial road at a city-wide zoom.
+  { id: 'current-osm-road-ref', type: 'symbol', source: 'osm_current_labels', 'source-layer': 'street_labels', minzoom: 13, maxzoom: 15.5,
+    filter: ['all', ['has', 'ref'], ['<=', ['get', 'ref_cols'], 6]],
+    layout: { 'symbol-placement': 'line', 'symbol-spacing': 420, 'icon-image': ['concat', 'road_', ['to-string', ['get', 'ref_cols']]], 'icon-rotation-alignment': 'viewport', 'text-field': ['get', 'ref'], 'text-font': ['Noto Sans Regular'], 'text-size': 10, 'text-rotation-alignment': 'viewport', 'text-optional': true },
+    paint: { 'text-color': '#46586F' } },
   { id: 'current-osm-street-major-detail', type: 'symbol', source: 'osm_current_labels', 'source-layer': 'street_labels', minzoom: 15.5,
     filter: ['all', ['any', ['has', 'name'], ['has', 'name_ru'], ['has', 'name_ky']], ['match', ['get', 'kind'], ['motorway', 'trunk', 'primary', 'secondary', 'tertiary', 'motorway_link', 'trunk_link', 'primary_link', 'secondary_link', 'tertiary_link'], true, false]],
     layout: { 'symbol-placement': 'line', 'text-field': currentOsmName, 'text-font': ['Noto Sans Regular'], 'text-size': ['interpolate', ['linear'], ['zoom'], 15.5, 13, 18, 14.5], 'text-padding': 2, 'symbol-spacing': 430, 'text-allow-overlap': true },

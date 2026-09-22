@@ -96,6 +96,19 @@ test('a build without a local .env reaches the hosted API, including sockets', a
   assert.equal(api.socketUrl, 'https://api-production-47be.up.railway.app');
 });
 
+test('a 304 retry keeps the strict API URL intact and forces a fresh HTTP response', async () => {
+  const calls = [];
+  const { api } = setup(async (url, init) => {
+    calls.push({ url, headers: init.headers });
+    return calls.length === 1 ? reply(304, {}) : reply(200, { places: [] });
+  });
+  assert.equal((await api.request('/places/search?q=%D0%A7%D1%83%D0%B9')).places.length, 0);
+  assert.equal(calls.length, 2);
+  assert.equal(calls[1].url, 'http://test/api/places/search?q=%D0%A7%D1%83%D0%B9');
+  assert.equal(calls[1].url.includes('_fresh'), false);
+  assert.equal(calls[1].headers['If-Modified-Since'], 'Thu, 01 Jan 1970 00:00:00 GMT');
+});
+
 test('an API origin or whitespace in .env resolves to the correct API path', () => {
   const { api } = setup(() => {}, { env: { EXPO_PUBLIC_API_URL: '  https://api.taxigo.test/  ' } });
   assert.equal(api.baseUrl, 'https://api.taxigo.test/api');

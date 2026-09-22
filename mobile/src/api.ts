@@ -39,16 +39,17 @@ async function raw<T>(path: string, init: RequestInit, accessToken?: string): Pr
   else init.signal?.addEventListener('abort', cancel, { once: true });
   try {
     const formData = typeof FormData !== 'undefined' && init.body instanceof FormData;
-    const request = (url: string) => fetch(url, {
+    const request = (url: string, bypassCache = false) => fetch(url, {
       ...init, cache: 'no-store', signal: controller.signal,
-      headers: { 'Cache-Control': 'no-store', Pragma: 'no-cache', ...(!formData && init.body !== undefined ? { 'Content-Type': 'application/json' } : {}), ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}), ...init.headers },
+      headers: { 'Cache-Control': 'no-store', Pragma: 'no-cache', ...(!formData && init.body !== undefined ? { 'Content-Type': 'application/json' } : {}), ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}), ...init.headers,
+        ...(bypassCache ? { 'Cache-Control': 'no-cache, no-store, max-age=0', 'If-Modified-Since': 'Thu, 01 Jan 1970 00:00:00 GMT' } : {}) },
     });
     let response = await request(`${baseUrl}${path}`);
     // Android may keep an ETag for authenticated JSON even when the screen needs
-    // a fresh body. A 304 has no JSON to restore, so retry once with a unique URL.
+    // a fresh body. A 304 has no JSON to restore, so retry through HTTP headers.
+    // Do not add a cache-buster query key: strict API DTOs correctly reject it.
     if (response.status === 304) {
-      const separator = path.includes('?') ? '&' : '?';
-      response = await request(`${baseUrl}${path}${separator}_fresh=${Date.now()}`);
+      response = await request(`${baseUrl}${path}`, true);
     }
     const text = await response.text();
     emit('online');

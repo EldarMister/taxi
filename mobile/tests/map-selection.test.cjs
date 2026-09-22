@@ -386,12 +386,15 @@ test('the map styles vector roads and places, keeps attribution and can fall bac
   assert.equal(style.layers.find(layer => layer.id === 'current-osm-pois').minzoom, 14);
   assert.equal(style.layers.some(layer => layer.id.startsWith('highway-name-')), false, 'stale OpenMapTiles street names are hidden');
   assert.equal(style.layers.some(layer => layer.id.startsWith('highway-shield-')), false, 'stale route shields cannot hide current street names');
+  assert.equal(style.layers.find(layer => layer.id === 'current-osm-road-ref').minzoom, 13, 'route numbers do not hide street names on the overview');
   assert.equal(style.layers.find(layer => layer.id === 'current-osm-road-ref').maxzoom, 15.5, 'route numbers leave room for street names at close zoom');
   assert.equal(style.layers.find(layer => layer.id === 'current-osm-street-major').maxzoom, 15.5);
+  assert.equal(style.layers.find(layer => layer.id === 'current-osm-street-major').layout['text-allow-overlap'], true, 'major streets remain readable from a city-wide zoom');
   assert.equal(style.layers.find(layer => layer.id === 'current-osm-street-major-detail').minzoom, 15.5);
   assert.equal(style.layers.find(layer => layer.id === 'current-osm-street-major-detail').layout['text-allow-overlap'], true, 'major street names stay readable at close zoom');
   assert.equal(style.layers.find(layer => layer.id === 'current-osm-street-area-names')['source-layer'], 'streets_polygons_labels');
   assert.ok(style.layers.findIndex(layer => layer.id === 'current-osm-street-major') > style.layers.findIndex(layer => layer.id === 'poi_r20'));
+  assert.ok(style.layers.findIndex(layer => layer.id === 'current-osm-street-major') < style.layers.findIndex(layer => layer.id === 'current-osm-road-ref'), 'street names take label priority over route shields');
   assert.ok(style.layers.find(layer => layer.id === 'current-osm-pois').layout['icon-image'], 'current organizations have visible icons');
   assert.equal(style.layers.find(layer => layer.id === 'current-osm-transit')['source-layer'], 'public_transport');
   assert.equal(style.layers.find(layer => layer.id === 'current-osm-neighborhoods')['source-layer'], 'place_labels');
