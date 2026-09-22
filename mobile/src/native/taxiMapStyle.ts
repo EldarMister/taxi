@@ -103,23 +103,44 @@ const extraLabelLayers: StyleLayer[] = [
 const currentOsmAreaLayers: StyleLayer[] = [
   {
     id: 'current-osm-urban-areas', type: 'fill', source: 'osm_current_labels', 'source-layer': 'land', minzoom: detailedOsmZoom,
-    filter: ['match', ['get', 'kind'], ['residential', 'commercial', 'retail', 'industrial', 'railway', 'garages'], true, false],
-    paint: { 'fill-color': ['match', ['get', 'kind'], 'residential', '#F0F4F8', ['commercial', 'retail'], '#F2F3F8', '#EEF1F5'] },
+    filter: ['match', ['get', 'kind'], ['residential', 'commercial', 'retail', 'industrial', 'railway', 'garages', 'landfill', 'brownfield', 'greenfield'], true, false],
+    paint: { 'fill-color': ['match', ['get', 'kind'], 'residential', '#F0F4F8', ['commercial', 'retail'], '#F2F3F8', ['landfill', 'brownfield'], '#E8E4DF', 'greenfield', '#E9EFE6', '#EEF1F5'] },
+  },
+  {
+    id: 'current-osm-agricultural-areas', type: 'fill', source: 'osm_current_labels', 'source-layer': 'land', minzoom: detailedOsmZoom,
+    filter: ['match', ['get', 'kind'], ['farmyard', 'farmland', 'orchard', 'vineyard', 'allotments', 'greenhouse_horticulture', 'plant_nursery'], true, false],
+    paint: {
+      'fill-color': ['match', ['get', 'kind'], ['orchard', 'vineyard', 'plant_nursery'], '#E2EDCF', ['allotments', 'greenhouse_horticulture'], '#E7F0D8', 'farmyard', '#EEE8DB', '#EEF2DF'],
+      'fill-outline-color': '#D7E1C7',
+    },
   },
   {
     id: 'current-osm-green-areas', type: 'fill', source: 'osm_current_labels', 'source-layer': 'land', minzoom: detailedOsmZoom,
-    filter: ['match', ['get', 'kind'], ['forest', 'wood', 'park', 'garden', 'village_green', 'recreation_ground', 'playground', 'grass', 'grassland', 'meadow', 'cemetery', 'grave_yard', 'farmland', 'orchard'], true, false],
+    filter: ['match', ['get', 'kind'], ['forest', 'wood', 'park', 'garden', 'village_green', 'recreation_ground', 'playground', 'grass', 'grassland', 'meadow', 'cemetery', 'grave_yard', 'golf_course', 'miniature_golf', 'heath', 'scrub'], true, false],
     paint: {
-      'fill-color': ['match', ['get', 'kind'], ['forest', 'wood'], '#CDE6D5', 'playground', '#F8ECCC', ['cemetery', 'grave_yard'], '#E6F0E8', ['farmland', 'orchard'], '#EEF2DF', '#DDEFE2'],
+      'fill-color': ['match', ['get', 'kind'], ['forest', 'wood'], '#CDE6D5', ['heath', 'scrub'], '#D7E7D3', 'playground', '#F8ECCC', ['cemetery', 'grave_yard'], '#E6F0E8', ['golf_course', 'miniature_golf'], '#D5EACF', '#DDEFE2'],
       'fill-outline-color': ['match', ['get', 'kind'], 'playground', '#DBC993', 'rgba(0, 0, 0, 0)'],
     },
   },
   {
-    id: 'current-osm-sites', type: 'fill', source: 'osm_current_labels', 'source-layer': 'sites', minzoom: 14,
-    filter: ['match', ['get', 'kind'], ['sports_center', 'sports_centre', 'university', 'college', 'school', 'hospital', 'parking', 'bicycle_parking'], true, false],
+    id: 'current-osm-natural-ground', type: 'fill', source: 'osm_current_labels', 'source-layer': 'land', minzoom: detailedOsmZoom,
+    filter: ['match', ['get', 'kind'], ['quarry', 'sand', 'beach', 'bare_rock', 'scree', 'shingle'], true, false],
     paint: {
-      'fill-color': ['match', ['get', 'kind'], ['university', 'college', 'school'], '#E8EBFA', 'hospital', '#F9E9EE', ['sports_center', 'sports_centre'], '#DCEFE3', ['parking', 'bicycle_parking'], '#DCE8F4', '#E9EEF5'],
-      'fill-outline-color': ['match', ['get', 'kind'], ['university', 'college', 'school'], '#D4DAEF', 'hospital', '#EFD4DC', ['sports_center', 'sports_centre'], '#C8E1D1', ['parking', 'bicycle_parking'], '#B6CBDD', '#D8E1EB'],
+      'fill-color': ['match', ['get', 'kind'], ['sand', 'beach'], '#F5EDC9', ['bare_rock', 'scree', 'shingle'], '#E5E2DD', '#E6E3DE'],
+      'fill-outline-color': ['match', ['get', 'kind'], 'quarry', '#CBC5BD', 'rgba(0, 0, 0, 0)'],
+    },
+  },
+  {
+    id: 'current-osm-wetlands', type: 'fill', source: 'osm_current_labels', 'source-layer': 'land', minzoom: detailedOsmZoom,
+    filter: ['match', ['get', 'kind'], ['swamp', 'bog', 'string_bog', 'wet_meadow', 'marsh'], true, false],
+    paint: { 'fill-color': '#D9EBE4', 'fill-outline-color': '#BFD9D0' },
+  },
+  {
+    id: 'current-osm-sites', type: 'fill', source: 'osm_current_labels', 'source-layer': 'sites', minzoom: 14,
+    filter: ['match', ['get', 'kind'], ['sports_center', 'sports_centre', 'university', 'college', 'school', 'hospital', 'parking', 'bicycle_parking', 'construction', 'prison', 'danger_area'], true, false],
+    paint: {
+      'fill-color': ['match', ['get', 'kind'], ['university', 'college', 'school'], '#E8EBFA', 'hospital', '#F9E9EE', ['sports_center', 'sports_centre'], '#DCEFE3', ['parking', 'bicycle_parking'], '#DCE8F4', 'construction', '#EFE9E2', ['prison', 'danger_area'], '#F2E4E4', '#E9EEF5'],
+      'fill-outline-color': ['match', ['get', 'kind'], ['university', 'college', 'school'], '#D4DAEF', 'hospital', '#EFD4DC', ['sports_center', 'sports_centre'], '#C8E1D1', ['parking', 'bicycle_parking'], '#B6CBDD', 'construction', '#D4C7B8', ['prison', 'danger_area'], '#DABEBE', '#D8E1EB'],
     },
   },
   {
@@ -207,13 +228,27 @@ const currentPoiIcon = ['case',
   'circle',
 ];
 const currentStreetNameLayers: StyleLayer[] = [
-  { id: 'current-osm-street-major', type: 'symbol', source: 'osm_current_labels', 'source-layer': 'street_labels', minzoom: 11.5,
+  // Route references are useful in the overview, but disappear at street
+  // zoom so a road that is both a highway and a city street keeps its name.
+  { id: 'current-osm-road-ref', type: 'symbol', source: 'osm_current_labels', 'source-layer': 'street_labels', minzoom: 10, maxzoom: 15.5,
+    filter: ['all', ['has', 'ref'], ['<=', ['get', 'ref_cols'], 6]],
+    layout: { 'symbol-placement': 'line', 'symbol-spacing': 420, 'icon-image': ['concat', 'road_', ['to-string', ['get', 'ref_cols']]], 'icon-rotation-alignment': 'viewport', 'text-field': ['get', 'ref'], 'text-font': ['Noto Sans Regular'], 'text-size': 10, 'text-rotation-alignment': 'viewport' },
+    paint: { 'text-color': '#46586F' } },
+  { id: 'current-osm-street-major', type: 'symbol', source: 'osm_current_labels', 'source-layer': 'street_labels', minzoom: 11.5, maxzoom: 15.5,
     filter: ['all', ['any', ['has', 'name'], ['has', 'name_ru'], ['has', 'name_ky']], ['match', ['get', 'kind'], ['motorway', 'trunk', 'primary', 'secondary', 'tertiary', 'motorway_link', 'trunk_link', 'primary_link', 'secondary_link', 'tertiary_link'], true, false]],
     layout: { 'symbol-placement': 'line', 'text-field': currentOsmName, 'text-font': ['Noto Sans Regular'], 'text-size': ['interpolate', ['linear'], ['zoom'], 12, 11, 16, 13], 'text-padding': 4, 'symbol-spacing': 300 },
     paint: { 'text-color': '#42536A', 'text-halo-color': '#FFFFFF', 'text-halo-width': 1.6 } },
+  { id: 'current-osm-street-major-detail', type: 'symbol', source: 'osm_current_labels', 'source-layer': 'street_labels', minzoom: 15.5,
+    filter: ['all', ['any', ['has', 'name'], ['has', 'name_ru'], ['has', 'name_ky']], ['match', ['get', 'kind'], ['motorway', 'trunk', 'primary', 'secondary', 'tertiary', 'motorway_link', 'trunk_link', 'primary_link', 'secondary_link', 'tertiary_link'], true, false]],
+    layout: { 'symbol-placement': 'line', 'text-field': currentOsmName, 'text-font': ['Noto Sans Regular'], 'text-size': ['interpolate', ['linear'], ['zoom'], 15.5, 13, 18, 14.5], 'text-padding': 2, 'symbol-spacing': 430, 'text-allow-overlap': true },
+    paint: { 'text-color': '#354A64', 'text-halo-color': '#FFFFFF', 'text-halo-width': 1.8 } },
   { id: 'current-osm-street-local', type: 'symbol', source: 'osm_current_labels', 'source-layer': 'street_labels', minzoom: 14,
     filter: ['all', ['any', ['has', 'name'], ['has', 'name_ru'], ['has', 'name_ky']], ['!', ['match', ['get', 'kind'], ['motorway', 'trunk', 'primary', 'secondary', 'tertiary', 'motorway_link', 'trunk_link', 'primary_link', 'secondary_link', 'tertiary_link'], true, false]]],
     layout: { 'symbol-placement': 'line', 'text-field': currentOsmName, 'text-font': ['Noto Sans Regular'], 'text-size': ['interpolate', ['linear'], ['zoom'], 14, 10, 17, 12], 'text-padding': 3, 'symbol-spacing': 250 },
+    paint: { 'text-color': '#556780', 'text-halo-color': '#FFFFFF', 'text-halo-width': 1.5 } },
+  { id: 'current-osm-street-area-names', type: 'symbol', source: 'osm_current_labels', 'source-layer': 'streets_polygons_labels', minzoom: 15,
+    filter: ['any', ['has', 'name'], ['has', 'name_ru'], ['has', 'name_ky']],
+    layout: { 'text-field': currentOsmName, 'text-font': ['Noto Sans Regular'], 'text-size': 11, 'text-padding': 3, 'text-max-width': 8 },
     paint: { 'text-color': '#556780', 'text-halo-color': '#FFFFFF', 'text-halo-width': 1.5 } },
 ];
 export const taxiMapStyle = {
@@ -235,7 +270,7 @@ export const taxiMapStyle = {
       if (layer.id === 'bridge-railway-hatching') return [themedLayer(layer), ...currentOsmRoadLayers];
       if (layer.id === 'poi_r20') return [...extraLabelLayers, themedLayer(layer)];
       if (layer.id === 'highway-name-path') return currentStreetNameLayers;
-      if (layer.id.startsWith('highway-name-')) return [];
+      if (layer.id.startsWith('highway-name-') || layer.id.startsWith('highway-shield-') || layer.id === 'road_shield_us') return [];
       return [themedLayer(layer)];
     }),
     // Keep the themed vector cartography while filling address gaps in the
@@ -305,10 +340,15 @@ function darkLayer(layer: StyleLayer): StyleLayer {
     paint['fill-color'] = ['match', ['get', 'kind'], ['forest', 'wood'], '#1D3326', 'playground', '#3C3627', ['park', 'garden', 'grass', 'meadow', 'recreation_ground'], '#25412E', '#303A2A'];
     paint['fill-outline-color'] = ['match', ['get', 'kind'], 'playground', '#66583E', 'rgba(0, 0, 0, 0)'];
   }
+  if (id === 'current-osm-agricultural-areas') { paint['fill-color'] = '#293326'; paint['fill-outline-color'] = '#3E4A38'; }
+  if (id === 'current-osm-natural-ground') { paint['fill-color'] = '#36332E'; paint['fill-outline-color'] = '#4A4640'; }
+  if (id === 'current-osm-wetlands') { paint['fill-color'] = '#233936'; paint['fill-outline-color'] = '#39534E'; }
   if (id === 'current-osm-sites') {
-    paint['fill-color'] = ['match', ['get', 'kind'], ['parking', 'bicycle_parking'], '#2B3A49', ['university', 'college', 'school'], '#33354B', 'hospital', '#493039', ['sports_center', 'sports_centre'], '#294235', '#30343B'];
-    paint['fill-outline-color'] = ['match', ['get', 'kind'], ['parking', 'bicycle_parking'], '#50687D', ['university', 'college', 'school'], '#555B7B', 'hospital', '#73505B', ['sports_center', 'sports_centre'], '#4B715A', '#4A5360'];
+    paint['fill-color'] = ['match', ['get', 'kind'], ['parking', 'bicycle_parking'], '#2B3A49', ['university', 'college', 'school'], '#33354B', 'hospital', '#493039', ['sports_center', 'sports_centre'], '#294235', 'construction', '#3D3731', ['prison', 'danger_area'], '#452F32', '#30343B'];
+    paint['fill-outline-color'] = ['match', ['get', 'kind'], ['parking', 'bicycle_parking'], '#50687D', ['university', 'college', 'school'], '#555B7B', 'hospital', '#73505B', ['sports_center', 'sports_centre'], '#4B715A', 'construction', '#625649', ['prison', 'danger_area'], '#6C4A4F', '#4A5360'];
   }
+  if (id === 'site-stadium' || id === 'site-pitch' || id === 'site-attractions') { paint['fill-color'] = '#294235'; paint['fill-outline-color'] = '#4B715A'; }
+  if (id === 'site-track') { paint['fill-color'] = '#49392B'; paint['fill-outline-color'] = '#765B43'; }
   if (id === 'current-osm-buildings') { paint['fill-color'] = '#353535'; paint['fill-outline-color'] = '#414141'; }
   if (id === 'current-osm-road-areas') { paint['fill-color'] = '#4A4A4A'; paint['fill-outline-color'] = '#262626'; }
   if (id.startsWith('current-osm-road-') && layer.type === 'line') {

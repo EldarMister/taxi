@@ -352,6 +352,9 @@ test('the map styles vector roads and places, keeps attribution and can fall bac
   assert.equal(style.sources.osm_current_labels.type, 'vector');
   assert.equal(style.sources.osm_current_labels.url, 'https://vector.openstreetmap.org/shortbread_v1/tilejson.json');
   assert.equal(style.layers.find(layer => layer.id === 'current-osm-green-areas')['source-layer'], 'land');
+  assert.equal(style.layers.find(layer => layer.id === 'current-osm-agricultural-areas')['source-layer'], 'land');
+  assert.equal(style.layers.find(layer => layer.id === 'current-osm-natural-ground')['source-layer'], 'land');
+  assert.equal(style.layers.find(layer => layer.id === 'current-osm-wetlands')['source-layer'], 'land');
   assert.equal(style.layers.find(layer => layer.id === 'current-osm-sites')['source-layer'], 'sites');
   assert.equal(style.layers.find(layer => layer.id === 'current-osm-water')['source-layer'], 'water_polygons');
   assert.equal(style.layers.find(layer => layer.id === 'current-osm-buildings')['source-layer'], 'buildings');
@@ -372,11 +375,22 @@ test('the map styles vector roads and places, keeps attribution and can fall bac
   }
   assert.equal(style.layers.some(layer => layer.id === 'site-playground'), false, 'playgrounds use only the current polygon source');
   assert.ok(JSON.stringify(style.layers.find(layer => layer.id === 'current-osm-green-areas').paint).includes('#F8ECCC'), 'current playgrounds retain their distinct light color');
-  assert.ok(JSON.stringify(style.layers.find(layer => layer.id === 'current-osm-sites').filter).includes('sports_center'), 'sports centres use the spelling in current Shortbread tiles');
+  for (const kind of ['allotments', 'vineyard', 'heath', 'scrub', 'sand', 'bare_rock', 'marsh']) {
+    assert.ok(style.layers.some(layer => layer['source-layer'] === 'land' && JSON.stringify(layer.filter).includes(`"${kind}"`)), `${kind} remains visible at detailed zoom`);
+  }
+  for (const kind of ['sports_center', 'sports_centre', 'construction', 'prison', 'danger_area']) {
+    assert.ok(JSON.stringify(style.layers.find(layer => layer.id === 'current-osm-sites').filter).includes(`"${kind}"`), `${kind} territory is styled`);
+  }
   assert.equal(style.layers.find(layer => layer.id === 'current-osm-addresses')['source-layer'], 'addresses');
   assert.equal(style.layers.find(layer => layer.id === 'current-osm-pois')['source-layer'], 'pois');
   assert.equal(style.layers.find(layer => layer.id === 'current-osm-pois').minzoom, 14);
   assert.equal(style.layers.some(layer => layer.id.startsWith('highway-name-')), false, 'stale OpenMapTiles street names are hidden');
+  assert.equal(style.layers.some(layer => layer.id.startsWith('highway-shield-')), false, 'stale route shields cannot hide current street names');
+  assert.equal(style.layers.find(layer => layer.id === 'current-osm-road-ref').maxzoom, 15.5, 'route numbers leave room for street names at close zoom');
+  assert.equal(style.layers.find(layer => layer.id === 'current-osm-street-major').maxzoom, 15.5);
+  assert.equal(style.layers.find(layer => layer.id === 'current-osm-street-major-detail').minzoom, 15.5);
+  assert.equal(style.layers.find(layer => layer.id === 'current-osm-street-major-detail').layout['text-allow-overlap'], true, 'major street names stay readable at close zoom');
+  assert.equal(style.layers.find(layer => layer.id === 'current-osm-street-area-names')['source-layer'], 'streets_polygons_labels');
   assert.ok(style.layers.findIndex(layer => layer.id === 'current-osm-street-major') > style.layers.findIndex(layer => layer.id === 'poi_r20'));
   assert.ok(style.layers.find(layer => layer.id === 'current-osm-pois').layout['icon-image'], 'current organizations have visible icons');
   assert.equal(style.layers.find(layer => layer.id === 'current-osm-transit')['source-layer'], 'public_transport');

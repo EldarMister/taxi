@@ -22,7 +22,7 @@ const config: ExpoConfig = {
   slug: identity.slug,
   scheme: identity.scheme,
   icon: variant === 'client' ? './assets/logo.png' : './assets/edu-drive-icon.png',
-  version: '1.0.4',
+  version: '1.0.5',
   orientation: 'portrait',
   userInterfaceStyle: 'automatic',
   newArchEnabled: false,
@@ -37,7 +37,7 @@ const config: ExpoConfig = {
   },
   android: {
     package: identity.androidPackage,
-    versionCode: 5,
+    versionCode: 6,
     adaptiveIcon: { foregroundImage: variant === 'client' ? './assets/logo.png' : './assets/edu-drive-icon.png', backgroundColor: '#FFFFFF' },
     googleServicesFile,
     permissions: ['ACCESS_COARSE_LOCATION', 'ACCESS_FINE_LOCATION', 'POST_NOTIFICATIONS', ...(variant === 'client' ? ['READ_CONTACTS'] : ['CAMERA'])],
