@@ -5,6 +5,16 @@ const test = require('node:test');
 const ts = require('typescript');
 
 const moduleCache = new Map();
+const secureValues = new Map();
+const secureStore = {
+  getItemAsync: async key => secureValues.get(key) ?? null,
+  setItemAsync: async (key, value) => {
+    assert.match(key, /^[\w.-]+$/, `SecureStore key must be valid: ${key}`);
+    assert.ok(Buffer.byteLength(value, 'utf8') <= 2048, `SecureStore value exceeds 2048 bytes: ${Buffer.byteLength(value, 'utf8')}`);
+    secureValues.set(key, value);
+  },
+  deleteItemAsync: async key => { secureValues.delete(key); },
+};
 function loadTs(relative) {
   const filename = path.join(__dirname, '..', relative);
   if (moduleCache.has(filename)) return moduleCache.get(filename).exports;
@@ -13,6 +23,7 @@ function loadTs(relative) {
   const module = { exports: {} };
   moduleCache.set(filename, module);
   const localRequire = request => {
+    if (request === 'expo-secure-store') return secureStore;
     if (request.startsWith('.')) {
       const target = path.resolve(path.dirname(filename), request.endsWith('.ts') ? request : `${request}.ts`);
       if (fs.existsSync(target)) return loadTs(path.relative(path.join(__dirname, '..'), target));
@@ -26,6 +37,7 @@ function loadTs(relative) {
 const types = loadTs('src/registration/types.ts');
 const flow = loadTs('src/registration/flow.ts');
 const attention = loadTs('src/registration/attention.ts');
+const storage = loadTs('src/registration/storage.ts');
 const config = {
   minimumAge: 18, countries: [], cities: [], districts: {}, driverLicenseCategories: ['B'], cargoVehicleTypes: [], taxiBodyTypes: [], tariffs: [], payoutMethods: [], documents: [], legalTermsVersion: '1',
 };
@@ -239,11 +251,19 @@ test('дата рождения выбирается системным кале
 
 test('регистрация показывает сегментированные шаги и новые состояния', () => {
   const components = fs.readFileSync(path.join(__dirname, '..', 'src', 'registration', 'components.tsx'), 'utf8');
+  const steps = fs.readFileSync(path.join(__dirname, '..', 'src', 'registration', 'steps.tsx'), 'utf8');
   const screen = fs.readFileSync(path.join(__dirname, '..', 'src', 'DriverRegistrationScreen.tsx'), 'utf8');
   assert.match(components, /Array\.from\(\{ length: total \}/);
   assert.match(components, /profileUploadCard/);
+  assert.match(components, /profile-avatar-3d\.png/);
+  assert.match(steps, /roles-checklist-3d\.png/);
+  assert.match(steps, /role-taxi-3d\.png/);
+  assert.match(steps, /role-cargo-3d\.png/);
+  assert.match(steps, /role-courier-3d\.png/);
   assert.match(screen, /Разрешите доступ к камере/);
+  assert.match(screen, /camera-permission-3d\.png/);
   assert.match(screen, /Не удалось загрузить данные/);
+  assert.match(screen, /load-error-3d\.png/);
 });
 
 test('уже разрешённая камера открывается без повторного запроса', () => {
@@ -252,4 +272,24 @@ test('уже разрешённая камера открывается без �
   assert.match(screen, /if \(permission\.granted\) \{ setCameraRequest\(request\); return; \}/);
   assert.match(screen, /permissionRequestedFor\.current !== request\.slotKey/);
   assert.match(screen, /permission && !permission\.granted/);
+});
+
+test('локальный черновик использует допустимые ключи SecureStore и сохраняет русские данные', async () => {
+  secureValues.clear();
+  const value = types.emptyRegistrationApplication('ru');
+  value.roles = ['TAXI_DRIVER'];
+  value.data.personal.firstName = 'Александр'.repeat(900);
+  value.data.uploads.profile_photo = { slotKey: 'profile_photo', kind: 'PROFILE_PHOTO', status: 'QUEUED', localUri: 'file:///photo.jpg' };
+  await storage.writeRegistrationDraft('driver:id/with invalid chars', value);
+  assert.ok([...secureValues.keys()].every(key => /^[\w.-]+$/.test(key)));
+  assert.ok([...secureValues.values()].every(chunk => Buffer.byteLength(chunk, 'utf8') <= 2048));
+  assert.deepEqual(await storage.readRegistrationDraft('driver:id/with invalid chars'), value);
+});
+
+test('разбиение черновика считает UTF-8 байты и не режет emoji', () => {
+  const value = `${'Я'.repeat(1200)}${'🚕'.repeat(300)}`;
+  const chunks = storage.splitSecureStoreValue(value);
+  assert.equal(chunks.join(''), value);
+  assert.ok(chunks.length > 1);
+  assert.ok(chunks.every(chunk => Buffer.byteLength(chunk, 'utf8') <= 1800));
 });

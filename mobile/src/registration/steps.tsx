@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { Image, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useTheme } from '../design/theme';
 import { Icon } from '../ui';
 import { additionalVehicleUploadSlotsForStep, additionalVehiclesForUsage, buildRegistrationSteps, configuredUploadSlotsForStep, correctionExpiryAllowed, correctionUploadDeleteAllowed, correctionVehicleFieldAllowed, performerRoleForVehicleUsage, registrationUploadSlotsForStep, validateRegistrationStep, type ConfiguredUploadSlot } from './flow';
@@ -24,6 +24,11 @@ type Props = {
 };
 
 const roleIcons: Record<PerformerRole, React.ComponentProps<typeof Icon>['name']> = { TAXI_DRIVER: 'car-sport-outline', CARGO_DRIVER: 'bus-outline', COURIER: 'bicycle-outline' };
+const roleImages: Record<PerformerRole, number> = {
+  TAXI_DRIVER: require('../../assets/registration/role-taxi-3d.png'),
+  CARGO_DRIVER: require('../../assets/registration/role-cargo-3d.png'),
+  COURIER: require('../../assets/registration/role-courier-3d.png'),
+};
 const courierModeLabels: Record<string, string> = { FOOT: 'Пешком', BICYCLE: 'Велосипед', E_BICYCLE: 'Электровелосипед', MOPED: 'Мопед', SCOOTER: 'Скутер', MOTORCYCLE: 'Мотоцикл', CAR: 'Легковой автомобиль', TRUCK: 'Грузовой автомобиль' };
 const orderTypeLabels: Record<string, string> = { DOCUMENTS: 'Документы', PARCELS: 'Посылки', GROCERIES: 'Продукты', MEALS: 'Готовая еда', MEDICINE: 'Лекарства', LARGE: 'Крупные заказы' };
 const loadingTypeLabels: Record<string, string> = { REAR: 'Задняя', SIDE: 'Боковая', TOP: 'Верхняя' };
@@ -81,7 +86,7 @@ function stepHasCorrection(step: RegistrationStepId, application: RegistrationAp
 export function RegistrationStepContent(props: Props) {
   const { step, application: a, config, errors, onData, onRoles, onUpload, onDeleteUpload, onRequestLocation, onGoTo, correctionFields } = props; const d = a.data; const { palette } = useTheme();
   const [picker, setPicker] = useState<{ title: string; options: { value: string; label: string }[]; selected?: string; choose: (value: string) => void } | null>(null);
-  const roleOptions = config.roles.map(option => ({ role: option.id, title: option.title, description: option.description, icon: roleIcons[option.id] }));
+  const roleOptions = config.roles.map(option => ({ role: option.id, title: option.title, description: option.description, icon: roleIcons[option.id], image: roleImages[option.id] }));
   const courierModes = config.courierTransportModes.map(value => ({ value, label: courierModeLabels[value] || value }));
   const orderTypes = config.courierOrderTypes.map(value => ({ value, label: orderTypeLabels[value] || value }));
   const loadingTypes = config.loadingTypes.map(value => ({ value, label: loadingTypeLabels[value] || value }));
@@ -126,7 +131,7 @@ export function RegistrationStepContent(props: Props) {
   let content: React.ReactNode;
   switch (step) {
     case 'ROLES': content = <>
-      <SectionTitle title="Как хотите работать?" description="Можно выбрать несколько направлений — общие сведения заполняются только один раз."/>
+      <View style={s.roleIntro}><View style={s.roleIntroCopy}><SectionTitle title="Как хотите работать?" description="Можно выбрать несколько направлений — общие сведения заполняются только один раз."/></View><Image source={require('../../assets/registration/roles-checklist-3d.png')} resizeMode="contain" style={s.roleHero}/></View>
       <View style={s.stack}>{roleOptions.map(option => <ChoiceCard key={option.role} {...option} selected={a.roles.includes(option.role)} disabled={!canEdit('roles')} onPress={() => onRoles(a.roles.includes(option.role) ? a.roles.filter(role => role !== option.role) : [...a.roles, option.role])}/>)}</View>
       {errors.roles ? <Text style={s.error}>{errors.roles}</Text> : null}
       <InfoCard title="Можно совмещать" text="Выберите одно или несколько направлений. Следующие шаги автоматически подстроятся под ваш выбор."/>
@@ -243,7 +248,7 @@ function ConfiguredUpload({ item, upload, expiry, error, expiryError, profile, d
 }
 
 function Requirements({ items }: { items: string[] }) {
-  const { palette } = useTheme(); return <View style={[s.requirements, { backgroundColor: palette.elevated }]}><Text style={[s.requirementsTitle, { color: palette.ink }]}>Требования к фотографии</Text>{items.map(item => <View key={item} style={s.requirement}><Icon name="checkmark-circle-outline" size={18} color="#15945A"/><Text style={[s.requirementText, { color: palette.muted }]}>{item}</Text></View>)}</View>;
+  const { palette } = useTheme(); return <View style={[s.requirements, { backgroundColor: palette.surface, borderColor: palette.line }]}><Text style={[s.requirementsTitle, { color: palette.ink }]}>Требования к фотографии</Text>{items.map(item => <View key={item} style={s.requirement}><View style={[s.requirementIcon, { backgroundColor: palette.elevated }]}><Icon name="checkmark-circle-outline" size={20} color={palette.accent}/></View><Text style={[s.requirementText, { color: palette.muted }]}>{item}</Text></View>)}</View>;
 }
 
 function VehicleForm({ title, description, vehicle, path, onChange, canEdit, config, errors, taxi, cargo, select }: { title: string; description: string; vehicle: VehicleDraft; path: string; onChange: (value: Partial<VehicleDraft>) => void; canEdit: (path: string) => boolean; config: RegistrationConfig; errors: Record<string, string>; taxi?: boolean; cargo?: boolean; select: (title: string, options: { value: string; label: string }[], selected: string | undefined, choose: (value: string) => void) => void }) {
@@ -335,7 +340,7 @@ function knownPhotoTitle(item: ConfiguredUploadSlot) {
 }
 
 const s = StyleSheet.create({
-  stack: { gap: 9 }, uploadField: { gap: 7 }, readOnly: { opacity: .58 }, error: { color: '#C74747', fontSize: 11, lineHeight: 15, marginTop: -3 }, label: { fontSize: 11, fontWeight: '600', marginBottom: -4 }, twoColumns: { flexDirection: 'row', gap: 8 }, half: { flex: 1 }, threeColumns: { flexDirection: 'row', gap: 7 }, third: { flex: 1 }, requirements: { borderRadius: 16, padding: 14, gap: 10 }, requirementsTitle: { fontSize: 14, fontWeight: '700' }, requirement: { flexDirection: 'row', alignItems: 'flex-start', gap: 8 }, requirementText: { flex: 1, fontSize: 12, lineHeight: 17 },
+  stack: { gap: 11 }, roleIntro: { minHeight: 112, flexDirection: 'row', alignItems: 'center', gap: 4 }, roleIntroCopy: { flex: 1 }, roleHero: { width: 116, height: 110, marginRight: -4 }, uploadField: { gap: 7 }, readOnly: { opacity: .58 }, error: { color: '#C74747', fontSize: 11, lineHeight: 15, marginTop: -3 }, label: { fontSize: 11, fontWeight: '600', marginBottom: -4 }, twoColumns: { flexDirection: 'row', gap: 8 }, half: { flex: 1 }, threeColumns: { flexDirection: 'row', gap: 7 }, third: { flex: 1 }, requirements: { borderRadius: 20, padding: 17, gap: 13, borderWidth: StyleSheet.hairlineWidth }, requirementsTitle: { fontSize: 19, lineHeight: 24, fontWeight: '800', marginBottom: 2 }, requirement: { minHeight: 42, flexDirection: 'row', alignItems: 'center', gap: 11 }, requirementIcon: { width: 38, height: 38, borderRadius: 13, alignItems: 'center', justifyContent: 'center' }, requirementText: { flex: 1, fontSize: 13, lineHeight: 18 },
   additionalCard: { borderWidth: 1, borderRadius: 16, padding: 13, gap: 10 }, additionalHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 10 }, additionalTitle: { flex: 1, fontSize: 14, fontWeight: '800' }, removeVehicle: { fontSize: 12, fontWeight: '700' }, addVehicle: { minHeight: 48, borderWidth: 1.2, borderStyle: 'dashed', borderRadius: 14, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8 }, addVehicleText: { fontSize: 13, fontWeight: '700' },
   locationHero: { borderRadius: 22, padding: 22, alignItems: 'center', gap: 9 }, locationTitle: { fontSize: 18, fontWeight: '800' }, locationText: { fontSize: 12, lineHeight: 18, textAlign: 'center' }, locationChoice: { minHeight: 58, borderWidth: 1.3, borderRadius: 14, paddingHorizontal: 14, flexDirection: 'row', alignItems: 'center', gap: 10 }, locationChoiceText: { flex: 1, fontSize: 14, fontWeight: '600' },
   reviewRow: { minHeight: 68, borderWidth: 1, borderRadius: 14, padding: 10, flexDirection: 'row', alignItems: 'center', gap: 10 }, reviewIcon: { width: 40, height: 40, borderRadius: 12, alignItems: 'center', justifyContent: 'center' }, reviewTitle: { fontSize: 13, fontWeight: '700' }, reviewSubtitle: { fontSize: 10 }, edit: { fontSize: 11, fontWeight: '700' }, photoGrid: { gap: 9 }, photoCell: { gap: 4 },

@@ -432,7 +432,11 @@ export function DriverRegistrationScreen({ user, deepLink, statusRevision = 0, o
     setSaveState(onlineRef.current ? 'saving' : 'offline');
     void writeRegistrationDraft(user.id, next)
       .then(() => { if (!onlineRef.current) setSaveState('offline'); })
-      .catch(() => setSaveState('error'));
+      .catch(caught => {
+        console.warn('[registration:draft] local save failed', { message: messageOf(caught), step: next.currentStep });
+        setSaveState('error');
+        setError(messageOf(caught));
+      });
   }, [user.id]);
 
   const mutate = useCallback((updater: (previous: RegistrationApplication) => RegistrationApplication) => {
@@ -1025,7 +1029,7 @@ function SaveIndicator({ state }: { state: SaveState }) {
 
 function RegistrationLoadFailure({ error, onRetry, onExit, exitLabel }: { error: string; onRetry: () => void; onExit: () => void; exitLabel: string }) {
   const { palette } = useTheme();
-  return <SafeAreaView style={[r.failureScreen, { backgroundColor: palette.background }]}><View style={r.failureDecorationTop}/><View style={r.failureDecorationSide}/><View style={r.failureContent}><View style={r.failureHero}><View style={[r.failureCloud, { backgroundColor: palette.elevated }]}><Icon name="cloud-offline-outline" size={72} color={palette.accent}/><View style={r.failureBadge}><Icon name="close" size={20} color="#FFFFFF"/></View></View></View><Text style={[r.failureTitle, { color: palette.ink }]}>Не удалось загрузить данные</Text><Text style={[r.failureText, { color: palette.muted }]}>Проверьте подключение к интернету и попробуйте ещё раз. Ваши заполненные данные останутся на устройстве.</Text>{error ? <Text accessibilityRole="alert" style={r.failureReason}>{error}</Text> : null}</View><View style={r.failureBottom}><PrimaryButton icon="refresh-outline" label="Попробовать снова" onPress={onRetry}/><SecondaryButton label={exitLabel} onPress={onExit}/></View></SafeAreaView>;
+  return <SafeAreaView style={[r.failureScreen, { backgroundColor: palette.background }]}><View style={r.failureDecorationTop}/><View style={r.failureDecorationSide}/><View style={r.failureContent}><Image source={require('../assets/registration/load-error-3d.png')} resizeMode="contain" style={r.failureIllustration}/><Text style={[r.failureTitle, { color: palette.ink }]}>Не удалось загрузить данные</Text><Text style={[r.failureText, { color: palette.muted }]}>Проверьте подключение к интернету и попробуйте ещё раз. Ваши заполненные данные останутся на устройстве.</Text>{error ? <Text accessibilityRole="alert" style={r.failureReason}>{error}</Text> : null}</View><View style={r.failureBottom}><PrimaryButton icon="refresh-outline" label="Попробовать снова" onPress={onRetry}/><SecondaryButton label={exitLabel} onPress={onExit}/></View></SafeAreaView>;
 }
 
 function SheetAction({ icon, title, text, onPress }: { icon: React.ComponentProps<typeof Icon>['name']; title: string; text: string; onPress: () => void }) {
@@ -1041,7 +1045,7 @@ function CameraIntro({ visible, onClose, onContinue, onGallery }: { visible: boo
     { icon: 'car-sport-outline', title: 'Транспорт', text: 'Чтобы подтвердить данные автомобиля' },
     { icon: 'shield-checkmark-outline', title: 'Безопасность', text: 'Фото защищены и доступны только проверке' },
   ];
-  return <Modal visible={visible} animationType="slide" onRequestClose={onClose}><SafeAreaView style={[r.permissionScreen, { backgroundColor: palette.background }]}><View style={r.modalHeader}><Pressable accessibilityRole="button" accessibilityLabel="Закрыть" onPress={onClose} style={[r.modalClose, { backgroundColor: palette.surface, borderColor: palette.line }]}><Icon name="close" color={palette.ink}/></Pressable></View><ScrollView bounces={false} contentContainerStyle={r.permissionScroll}><View style={r.permissionContent}><View style={r.permissionHero}><View style={r.permissionHalo}/><View style={[r.permissionCamera, { backgroundColor: palette.accent }]}><Icon name="camera" size={44} color="#FFFFFF"/></View><View style={r.permissionSparkOne}/><View style={r.permissionSparkTwo}/></View><Text style={[r.permissionTitle, { color: palette.ink }]}>Разрешите доступ к камере</Text><Text style={[r.permissionText, { color: palette.muted }]}>Камера нужна, чтобы быстро сделать фотографию профиля, документов и транспорта.</Text><View style={[r.permissionBenefits, { backgroundColor: palette.surface, borderColor: palette.line }]}>{benefits.map(item => <View key={item.title} style={r.permissionBenefit}><View style={[r.permissionBenefitIcon, { backgroundColor: palette.elevated }]}><Icon name={item.icon} size={20} color={palette.accent}/></View><View style={{ flex: 1, gap: 2 }}><Text style={[r.permissionBenefitTitle, { color: palette.ink }]}>{item.title}</Text><Text style={[r.permissionBenefitText, { color: palette.muted }]}>{item.text}</Text></View></View>)}</View><View style={r.privacyRow}><Icon name="lock-closed-outline" size={15} color={palette.muted}/><Text style={[r.privacyText, { color: palette.muted }]}>Мы не используем камеру без вашего действия</Text></View></View></ScrollView><View style={r.permissionBottom}><PrimaryButton icon="camera-outline" label="Продолжить" onPress={onContinue}/><SecondaryButton label="Выбрать из галереи" onPress={onGallery}/></View></SafeAreaView></Modal>;
+  return <Modal visible={visible} animationType="slide" onRequestClose={onClose}><SafeAreaView style={[r.permissionScreen, { backgroundColor: palette.background }]}><View style={r.modalHeader}><Pressable accessibilityRole="button" accessibilityLabel="Закрыть" onPress={onClose} style={[r.modalClose, { backgroundColor: palette.surface, borderColor: palette.line }]}><Icon name="close" color={palette.ink}/></Pressable></View><ScrollView bounces={false} contentContainerStyle={r.permissionScroll}><View style={r.permissionContent}><Image source={require('../assets/registration/camera-permission-3d.png')} resizeMode="contain" style={r.permissionIllustration}/><Text style={[r.permissionTitle, { color: palette.ink }]}>Разрешите доступ к камере</Text><Text style={[r.permissionText, { color: palette.muted }]}>Камера нужна, чтобы быстро сделать фотографию профиля, документов и транспорта.</Text><View style={[r.permissionBenefits, { backgroundColor: palette.surface, borderColor: palette.line }]}>{benefits.map(item => <View key={item.title} style={r.permissionBenefit}><View style={[r.permissionBenefitIcon, { backgroundColor: palette.elevated }]}><Icon name={item.icon} size={21} color={palette.accent}/></View><View style={{ flex: 1, gap: 2 }}><Text style={[r.permissionBenefitTitle, { color: palette.ink }]}>{item.title}</Text><Text style={[r.permissionBenefitText, { color: palette.muted }]}>{item.text}</Text></View></View>)}</View><View style={r.privacyRow}><Icon name="lock-closed-outline" size={15} color={palette.muted}/><Text style={[r.privacyText, { color: palette.muted }]}>Все данные защищены и используются только для проверки</Text></View></View></ScrollView><View style={r.permissionBottom}><PrimaryButton icon="camera-outline" label="Продолжить" onPress={onContinue}/><SecondaryButton label="Выбрать из галереи" onPress={onGallery}/></View></SafeAreaView></Modal>;
 }
 
 function DocumentCameraModal({ request, onClose, onGallery, onCaptured }: { request: UploadRequest | null; onClose: () => void; onGallery: () => void; onCaptured: (file: SelectedFile) => void }) {
@@ -1159,18 +1163,19 @@ const r = StyleSheet.create({
   modalClose: { width: 42, height: 42, borderRadius: 21, borderWidth: StyleSheet.hairlineWidth, alignItems: 'center', justifyContent: 'center' },
   permissionScreen: { flex: 1, paddingHorizontal: 20 },
   permissionScroll: { flexGrow: 1, paddingBottom: 12 },
-  permissionContent: { flexGrow: 1, justifyContent: 'center', alignItems: 'center', gap: 15 },
+  permissionContent: { flexGrow: 1, justifyContent: 'center', alignItems: 'center', gap: 13 },
+  permissionIllustration: { width: 260, height: 225, marginTop: -8, marginBottom: -4 },
   permissionHero: { width: 190, height: 150, alignItems: 'center', justifyContent: 'center' },
   permissionHalo: { position: 'absolute', width: 146, height: 146, borderRadius: 73, backgroundColor: '#E6F3FF' },
   permissionCamera: { width: 90, height: 72, borderRadius: 21, alignItems: 'center', justifyContent: 'center', elevation: 4, shadowColor: '#246BFD', shadowOffset: { width: 0, height: 8 }, shadowOpacity: .24, shadowRadius: 14 },
   permissionSparkOne: { position: 'absolute', right: 22, top: 28, width: 13, height: 13, borderRadius: 7, backgroundColor: '#71D4FF' },
   permissionSparkTwo: { position: 'absolute', left: 19, bottom: 27, width: 9, height: 9, borderRadius: 5, backgroundColor: '#8AA6FF' },
   documentFrame: { width: 120, height: 82, borderWidth: 3, borderStyle: 'dashed', borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
-  permissionTitle: { fontSize: 25, lineHeight: 31, fontWeight: '800', textAlign: 'center' },
+  permissionTitle: { fontSize: 29, lineHeight: 35, fontWeight: '800', letterSpacing: -.5, textAlign: 'center' },
   permissionText: { fontSize: 14, lineHeight: 21, textAlign: 'center', maxWidth: 330 },
-  permissionBenefits: { width: '100%', borderWidth: StyleSheet.hairlineWidth, borderRadius: 20, padding: 8, gap: 2 },
-  permissionBenefit: { minHeight: 59, paddingHorizontal: 8, flexDirection: 'row', alignItems: 'center', gap: 11 },
-  permissionBenefitIcon: { width: 38, height: 38, borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
+  permissionBenefits: { width: '100%', borderWidth: StyleSheet.hairlineWidth, borderRadius: 22, padding: 10, gap: 2, elevation: 2, shadowColor: '#17345E', shadowOffset: { width: 0, height: 8 }, shadowOpacity: .06, shadowRadius: 15 },
+  permissionBenefit: { minHeight: 61, paddingHorizontal: 8, flexDirection: 'row', alignItems: 'center', gap: 12 },
+  permissionBenefitIcon: { width: 42, height: 42, borderRadius: 14, alignItems: 'center', justifyContent: 'center' },
   permissionBenefitTitle: { fontSize: 13, fontWeight: '800' },
   permissionBenefitText: { fontSize: 11, lineHeight: 15 },
   privacyRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
@@ -1180,6 +1185,7 @@ const r = StyleSheet.create({
   failureDecorationTop: { position: 'absolute', top: -100, right: -90, width: 270, height: 270, borderRadius: 135, backgroundColor: '#E8F4FF' },
   failureDecorationSide: { position: 'absolute', left: -80, bottom: 130, width: 190, height: 190, borderRadius: 95, backgroundColor: '#F0F7FF' },
   failureContent: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 14 },
+  failureIllustration: { width: 252, height: 230, marginBottom: 6 },
   failureHero: { width: 220, height: 170, alignItems: 'center', justifyContent: 'center' },
   failureCloud: { width: 148, height: 118, borderRadius: 42, alignItems: 'center', justifyContent: 'center', transform: [{ rotate: '-2deg' }], elevation: 3, shadowColor: '#246BFD', shadowOffset: { width: 0, height: 9 }, shadowOpacity: .10, shadowRadius: 16 },
   failureBadge: { position: 'absolute', right: 18, bottom: 12, width: 36, height: 36, borderRadius: 18, backgroundColor: '#F45D68', borderWidth: 4, borderColor: '#FFFFFF', alignItems: 'center', justifyContent: 'center' },
