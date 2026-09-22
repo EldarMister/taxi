@@ -1,5 +1,5 @@
 import NetInfo from '@react-native-community/netinfo';
-import { CameraView, useCameraPermissions, type CameraType } from 'expo-camera';
+import { Camera, CameraView, useCameraPermissions, type CameraType } from 'expo-camera';
 import * as DocumentPicker from 'expo-document-picker';
 import * as ImageManipulator from 'expo-image-manipulator';
 import * as ImagePicker from 'expo-image-picker';
@@ -10,7 +10,7 @@ import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context'
 import { ApiError, api, messageOf, requestId } from './api';
 import { useTheme } from './design/theme';
 import { trackRegistration } from './registration/analytics';
-import { BottomActionSheet, EmptyState, ErrorCard, FormInput, InfoCard, LoadingState, OfflineState, PrimaryButton, RegistrationHeader, SecondaryButton, StatusBadge } from './registration/components';
+import { BottomActionSheet, ErrorCard, FormInput, InfoCard, LoadingState, OfflineState, PrimaryButton, RegistrationHeader, SecondaryButton, StatusBadge } from './registration/components';
 import { additionalVehicleForUploadSlot, buildRegistrationSteps, firstIncompleteStep, normalizeStep, performerRoleForVehicleUsage, validateRegistrationStep } from './registration/flow';
 import { clearRegistrationFiles, deleteRegistrationFile, isManagedRegistrationFile, persistRegistrationFile, pruneRegistrationFiles, registrationFileExists } from './registration/files';
 import { clearRegistrationDraft, readRegistrationDraft, writeRegistrationDraft } from './registration/storage';
@@ -704,7 +704,11 @@ export function DriverRegistrationScreen({ user, deepLink, statusRevision = 0, o
     setSourceRequest(null);
     setError('');
     try {
-      if (source === 'camera' && !appRef.current.data.cameraIntroSeen) { setSourceRequest(request); setCameraIntro(true); return; }
+      if (source === 'camera') {
+        const permission = await Camera.getCameraPermissionsAsync();
+        if (permission.granted) { setCameraRequest(request); return; }
+        if (!appRef.current.data.cameraIntroSeen) { setSourceRequest(request); setCameraIntro(true); return; }
+      }
       let file: SelectedFile | null = null;
       if (source === 'camera') {
         setCameraRequest(request);
@@ -944,7 +948,7 @@ export function DriverRegistrationScreen({ user, deepLink, statusRevision = 0, o
   };
 
   if (booting && !hydratedRef.current) return <SafeAreaView style={[r.screen, { backgroundColor: palette.background }]}><View style={r.loadingWrap}><RegistrationHeader onBack={onClose ? exitRegistration : undefined} onHelp={openSupport}/><LoadingState/></View></SafeAreaView>;
-  if (error && !hydratedRef.current) return <SafeAreaView style={[r.screen, { backgroundColor: palette.background }]}><View style={r.center}><EmptyState icon="cloud-offline-outline" title="Не удалось загрузить данные" text={error} action={<PrimaryButton label="Повторить попытку" onPress={() => void refresh()}/>} /><SecondaryButton label={onClose ? 'Закрыть' : 'Выйти из аккаунта'} onPress={exitRegistration}/></View></SafeAreaView>;
+  if (error && !hydratedRef.current) return <RegistrationLoadFailure error={error} onRetry={() => void refresh()} onExit={exitRegistration} exitLabel={onClose ? 'Закрыть' : 'Выйти из аккаунта'}/>;
 
   if (!editableStatuses.has(application.status) || (['CORRECTION_REQUIRED', 'REJECTED'].includes(application.status) && !correctionEditing)) return <RegistrationStatusScreen
     application={application}
@@ -997,7 +1001,7 @@ export function DriverRegistrationScreen({ user, deepLink, statusRevision = 0, o
     <CameraIntro
       visible={cameraIntro}
       onClose={() => { setCameraIntro(false); setSourceRequest(null); }}
-      onContinue={() => { const request = sourceRequest; setCameraIntro(false); if (request) { updateData(data => ({ ...data, cameraIntroSeen: true })); void chooseSource('camera', request); } }}
+      onContinue={() => { const request = sourceRequest; setCameraIntro(false); setSourceRequest(null); if (request) { updateData(data => ({ ...data, cameraIntroSeen: true })); setCameraRequest(request); } }}
       onGallery={() => { const request = sourceRequest; setCameraIntro(false); if (request) void chooseSource('gallery', request); }}
     />
     <DocumentCameraModal request={cameraRequest} onClose={() => setCameraRequest(null)} onGallery={() => { const request = cameraRequest; setCameraRequest(null); if (request) void chooseSource('gallery', request); }} onCaptured={async file => { const request = cameraRequest; setCameraRequest(null); if (request) setPreview({ request, file: await normalizePicked(file, request.profile) }); }}/>
@@ -1019,6 +1023,11 @@ function SaveIndicator({ state }: { state: SaveState }) {
   return <View style={r.save}><Icon name={data[0] as React.ComponentProps<typeof Icon>['name']} size={14} color={state === 'error' ? colors.danger : palette.muted}/><Text style={[r.saveText, { color: state === 'error' ? colors.danger : palette.muted }]}>{data[1]}</Text></View>;
 }
 
+function RegistrationLoadFailure({ error, onRetry, onExit, exitLabel }: { error: string; onRetry: () => void; onExit: () => void; exitLabel: string }) {
+  const { palette } = useTheme();
+  return <SafeAreaView style={[r.failureScreen, { backgroundColor: palette.background }]}><View style={r.failureDecorationTop}/><View style={r.failureDecorationSide}/><View style={r.failureContent}><View style={r.failureHero}><View style={[r.failureCloud, { backgroundColor: palette.elevated }]}><Icon name="cloud-offline-outline" size={72} color={palette.accent}/><View style={r.failureBadge}><Icon name="close" size={20} color="#FFFFFF"/></View></View></View><Text style={[r.failureTitle, { color: palette.ink }]}>Не удалось загрузить данные</Text><Text style={[r.failureText, { color: palette.muted }]}>Проверьте подключение к интернету и попробуйте ещё раз. Ваши заполненные данные останутся на устройстве.</Text>{error ? <Text accessibilityRole="alert" style={r.failureReason}>{error}</Text> : null}</View><View style={r.failureBottom}><PrimaryButton icon="refresh-outline" label="Попробовать снова" onPress={onRetry}/><SecondaryButton label={exitLabel} onPress={onExit}/></View></SafeAreaView>;
+}
+
 function SheetAction({ icon, title, text, onPress }: { icon: React.ComponentProps<typeof Icon>['name']; title: string; text: string; onPress: () => void }) {
   const { palette } = useTheme();
   return <Pressable onPress={onPress} style={[r.sheetAction, { borderColor: palette.line }]}><View style={[r.sheetIcon, { backgroundColor: palette.elevated }]}><Icon name={icon} color={palette.accent}/></View><View style={{ flex: 1, gap: 3 }}><Text style={[r.sheetTitle, { color: palette.ink }]}>{title}</Text><Text style={[r.sheetText, { color: palette.muted }]}>{text}</Text></View><Icon name="chevron-forward" color={palette.muted}/></Pressable>;
@@ -1026,7 +1035,13 @@ function SheetAction({ icon, title, text, onPress }: { icon: React.ComponentProp
 
 function CameraIntro({ visible, onClose, onContinue, onGallery }: { visible: boolean; onClose: () => void; onContinue: () => void; onGallery: () => void }) {
   const { palette } = useTheme();
-  return <Modal visible={visible} animationType="slide" onRequestClose={onClose}><SafeAreaView style={[r.screen, { backgroundColor: palette.background }]}><View style={r.modalHeader}><Pressable onPress={onClose}><Icon name="close" color={palette.ink}/></Pressable></View><View style={r.permissionContent}><View style={[r.permissionHero, { backgroundColor: palette.elevated }]}><View style={[r.documentFrame, { borderColor: palette.accent }]}><Icon name="camera-outline" size={46} color={palette.accent}/></View></View><Text style={[r.permissionTitle, { color: palette.ink }]}>Разрешите доступ к камере</Text><Text style={[r.permissionText, { color: palette.muted }]}>Камера используется только для фотографии профиля, документов и транспорта. Мы запросим системное разрешение после продолжения.</Text><InfoCard text="Все края документа должны попадать в рамку, без бликов и размытия."/></View><View style={r.permissionBottom}><PrimaryButton label="Продолжить" onPress={onContinue}/><SecondaryButton label="Выбрать из галереи" onPress={onGallery}/></View></SafeAreaView></Modal>;
+  const benefits: { icon: React.ComponentProps<typeof Icon>['name']; title: string; text: string }[] = [
+    { icon: 'person-outline', title: 'Фото профиля', text: 'Чтобы клиенты узнавали вас' },
+    { icon: 'card-outline', title: 'Документы', text: 'Для быстрой и безопасной проверки' },
+    { icon: 'car-sport-outline', title: 'Транспорт', text: 'Чтобы подтвердить данные автомобиля' },
+    { icon: 'shield-checkmark-outline', title: 'Безопасность', text: 'Фото защищены и доступны только проверке' },
+  ];
+  return <Modal visible={visible} animationType="slide" onRequestClose={onClose}><SafeAreaView style={[r.permissionScreen, { backgroundColor: palette.background }]}><View style={r.modalHeader}><Pressable accessibilityRole="button" accessibilityLabel="Закрыть" onPress={onClose} style={[r.modalClose, { backgroundColor: palette.surface, borderColor: palette.line }]}><Icon name="close" color={palette.ink}/></Pressable></View><ScrollView bounces={false} contentContainerStyle={r.permissionScroll}><View style={r.permissionContent}><View style={r.permissionHero}><View style={r.permissionHalo}/><View style={[r.permissionCamera, { backgroundColor: palette.accent }]}><Icon name="camera" size={44} color="#FFFFFF"/></View><View style={r.permissionSparkOne}/><View style={r.permissionSparkTwo}/></View><Text style={[r.permissionTitle, { color: palette.ink }]}>Разрешите доступ к камере</Text><Text style={[r.permissionText, { color: palette.muted }]}>Камера нужна, чтобы быстро сделать фотографию профиля, документов и транспорта.</Text><View style={[r.permissionBenefits, { backgroundColor: palette.surface, borderColor: palette.line }]}>{benefits.map(item => <View key={item.title} style={r.permissionBenefit}><View style={[r.permissionBenefitIcon, { backgroundColor: palette.elevated }]}><Icon name={item.icon} size={20} color={palette.accent}/></View><View style={{ flex: 1, gap: 2 }}><Text style={[r.permissionBenefitTitle, { color: palette.ink }]}>{item.title}</Text><Text style={[r.permissionBenefitText, { color: palette.muted }]}>{item.text}</Text></View></View>)}</View><View style={r.privacyRow}><Icon name="lock-closed-outline" size={15} color={palette.muted}/><Text style={[r.privacyText, { color: palette.muted }]}>Мы не используем камеру без вашего действия</Text></View></View></ScrollView><View style={r.permissionBottom}><PrimaryButton icon="camera-outline" label="Продолжить" onPress={onContinue}/><SecondaryButton label="Выбрать из галереи" onPress={onGallery}/></View></SafeAreaView></Modal>;
 }
 
 function DocumentCameraModal({ request, onClose, onGallery, onCaptured }: { request: UploadRequest | null; onClose: () => void; onGallery: () => void; onCaptured: (file: SelectedFile) => void }) {
@@ -1034,7 +1049,14 @@ function DocumentCameraModal({ request, onClose, onGallery, onCaptured }: { requ
   const [facing, setFacing] = useState<CameraType>('back');
   const [capturing, setCapturing] = useState(false);
   const camera = useRef<CameraView>(null);
-  useEffect(() => { if (request && !permission?.granted && permission?.canAskAgain !== false) void requestPermission(); }, [permission?.canAskAgain, permission?.granted, request, requestPermission]);
+  const permissionRequestedFor = useRef<string | null>(null);
+  useEffect(() => {
+    if (!request) { permissionRequestedFor.current = null; return; }
+    if (permission && !permission.granted && permission.canAskAgain !== false && permissionRequestedFor.current !== request.slotKey) {
+      permissionRequestedFor.current = request.slotKey;
+      void requestPermission();
+    }
+  }, [permission, request, requestPermission]);
   if (!request) return null;
   const take = async() => {
     if (capturing || !permission?.granted) return;
@@ -1133,13 +1155,38 @@ const r = StyleSheet.create({
   sheetIcon: { width: 48, height: 48, borderRadius: 13, alignItems: 'center', justifyContent: 'center' },
   sheetTitle: { fontSize: 14, fontWeight: '700' },
   sheetText: { fontSize: 11 },
-  modalHeader: { height: 48, justifyContent: 'center' },
-  permissionContent: { flex: 1, justifyContent: 'center', alignItems: 'center', gap: 15 },
-  permissionHero: { width: 190, height: 190, borderRadius: 95, alignItems: 'center', justifyContent: 'center' },
+  modalHeader: { height: 52, justifyContent: 'center', alignItems: 'flex-start' },
+  modalClose: { width: 42, height: 42, borderRadius: 21, borderWidth: StyleSheet.hairlineWidth, alignItems: 'center', justifyContent: 'center' },
+  permissionScreen: { flex: 1, paddingHorizontal: 20 },
+  permissionScroll: { flexGrow: 1, paddingBottom: 12 },
+  permissionContent: { flexGrow: 1, justifyContent: 'center', alignItems: 'center', gap: 15 },
+  permissionHero: { width: 190, height: 150, alignItems: 'center', justifyContent: 'center' },
+  permissionHalo: { position: 'absolute', width: 146, height: 146, borderRadius: 73, backgroundColor: '#E6F3FF' },
+  permissionCamera: { width: 90, height: 72, borderRadius: 21, alignItems: 'center', justifyContent: 'center', elevation: 4, shadowColor: '#246BFD', shadowOffset: { width: 0, height: 8 }, shadowOpacity: .24, shadowRadius: 14 },
+  permissionSparkOne: { position: 'absolute', right: 22, top: 28, width: 13, height: 13, borderRadius: 7, backgroundColor: '#71D4FF' },
+  permissionSparkTwo: { position: 'absolute', left: 19, bottom: 27, width: 9, height: 9, borderRadius: 5, backgroundColor: '#8AA6FF' },
   documentFrame: { width: 120, height: 82, borderWidth: 3, borderStyle: 'dashed', borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
   permissionTitle: { fontSize: 25, lineHeight: 31, fontWeight: '800', textAlign: 'center' },
   permissionText: { fontSize: 14, lineHeight: 21, textAlign: 'center', maxWidth: 330 },
-  permissionBottom: { paddingVertical: 12, gap: 2 },
+  permissionBenefits: { width: '100%', borderWidth: StyleSheet.hairlineWidth, borderRadius: 20, padding: 8, gap: 2 },
+  permissionBenefit: { minHeight: 59, paddingHorizontal: 8, flexDirection: 'row', alignItems: 'center', gap: 11 },
+  permissionBenefitIcon: { width: 38, height: 38, borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
+  permissionBenefitTitle: { fontSize: 13, fontWeight: '800' },
+  permissionBenefitText: { fontSize: 11, lineHeight: 15 },
+  privacyRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  privacyText: { fontSize: 11, lineHeight: 15 },
+  permissionBottom: { paddingTop: 10, paddingBottom: 12, gap: 2 },
+  failureScreen: { flex: 1, paddingHorizontal: 24, overflow: 'hidden' },
+  failureDecorationTop: { position: 'absolute', top: -100, right: -90, width: 270, height: 270, borderRadius: 135, backgroundColor: '#E8F4FF' },
+  failureDecorationSide: { position: 'absolute', left: -80, bottom: 130, width: 190, height: 190, borderRadius: 95, backgroundColor: '#F0F7FF' },
+  failureContent: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 14 },
+  failureHero: { width: 220, height: 170, alignItems: 'center', justifyContent: 'center' },
+  failureCloud: { width: 148, height: 118, borderRadius: 42, alignItems: 'center', justifyContent: 'center', transform: [{ rotate: '-2deg' }], elevation: 3, shadowColor: '#246BFD', shadowOffset: { width: 0, height: 9 }, shadowOpacity: .10, shadowRadius: 16 },
+  failureBadge: { position: 'absolute', right: 18, bottom: 12, width: 36, height: 36, borderRadius: 18, backgroundColor: '#F45D68', borderWidth: 4, borderColor: '#FFFFFF', alignItems: 'center', justifyContent: 'center' },
+  failureTitle: { fontSize: 27, lineHeight: 33, fontWeight: '800', textAlign: 'center' },
+  failureText: { fontSize: 14, lineHeight: 21, textAlign: 'center', maxWidth: 340 },
+  failureReason: { color: '#A34A52', backgroundColor: '#FFF0F1', borderRadius: 12, paddingHorizontal: 12, paddingVertical: 9, fontSize: 11, lineHeight: 16, textAlign: 'center', maxWidth: 340 },
+  failureBottom: { paddingVertical: 14, gap: 2 },
   cameraScreen: { flex: 1, backgroundColor: '#081220' },
   cameraOverlay: { flex: 1, paddingHorizontal: 18, justifyContent: 'space-between' },
   cameraTop: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingTop: 8 },

@@ -4,7 +4,7 @@ import { useTheme } from '../design/theme';
 import { Icon } from '../ui';
 import { additionalVehicleUploadSlotsForStep, additionalVehiclesForUsage, buildRegistrationSteps, configuredUploadSlotsForStep, correctionExpiryAllowed, correctionUploadDeleteAllowed, correctionVehicleFieldAllowed, performerRoleForVehicleUsage, registrationUploadSlotsForStep, validateRegistrationStep, type ConfiguredUploadSlot } from './flow';
 import {
-  CheckboxRow, ChoiceCard, FormInput, InfoCard, MultiSelect, OptionSheet, SectionTitle, SelectInput, StatusBadge, ToggleRow, UploadCard,
+  CheckboxRow, ChoiceCard, FormInput, InfoCard, MultiSelect, NativeDateInput, OptionSheet, SectionTitle, SelectInput, StatusBadge, ToggleRow, UploadCard,
 } from './components';
 import { MAX_ADDITIONAL_VEHICLES, createAdditionalVehicle, type AdditionalVehicleDraft, type CargoEquipmentDraft, type PerformerRole, type RegistrationApplication, type RegistrationConfig, type RegistrationData, type RegistrationStepId, type RegistrationUpload, type VehicleDraft, type VehicleUsage } from './types';
 
@@ -85,6 +85,10 @@ export function RegistrationStepContent(props: Props) {
   const courierModes = config.courierTransportModes.map(value => ({ value, label: courierModeLabels[value] || value }));
   const orderTypes = config.courierOrderTypes.map(value => ({ value, label: orderTypeLabels[value] || value }));
   const loadingTypes = config.loadingTypes.map(value => ({ value, label: loadingTypeLabels[value] || value }));
+  const birthDateMaximum = new Date();
+  birthDateMaximum.setHours(12, 0, 0, 0);
+  birthDateMaximum.setFullYear(birthDateMaximum.getFullYear() - Math.max(config.minimumAge || 18, ...a.roles.map(role => config.minimumAgeByRole[role] || config.minimumAge || 18)));
+  const birthDateMinimum = new Date(birthDateMaximum.getFullYear() - 72, 0, 1, 12);
   const canEdit = (path: string) => scopeAllows(correctionFields, path);
   const patch = <K extends keyof RegistrationData>(key: K, value: Partial<RegistrationData[K]>) => {
     const allowed = Object.fromEntries(Object.entries(value as Record<string, unknown>).filter(([field]) => key === 'agreements' || canEdit(`${String(key)}.${field}`) || key === 'documentExpiries' && correctionUploadAllowed(correctionFields, field, d.uploads[field]))) as Partial<RegistrationData[K]>;
@@ -125,13 +129,13 @@ export function RegistrationStepContent(props: Props) {
       <SectionTitle title="Как хотите работать?" description="Можно выбрать несколько направлений — общие сведения заполняются только один раз."/>
       <View style={s.stack}>{roleOptions.map(option => <ChoiceCard key={option.role} {...option} selected={a.roles.includes(option.role)} disabled={!canEdit('roles')} onPress={() => onRoles(a.roles.includes(option.role) ? a.roles.filter(role => role !== option.role) : [...a.roles, option.role])}/>)}</View>
       {errors.roles ? <Text style={s.error}>{errors.roles}</Text> : null}
-      <InfoCard text="Набор следующих шагов автоматически изменится в зависимости от выбранных направлений."/>
+      <InfoCard title="Можно совмещать" text="Выберите одно или несколько направлений. Следующие шаги автоматически подстроятся под ваш выбор."/>
     </>; break;
     case 'PERSONAL_DATA': content = <>
       <SectionTitle title="Личные данные" description="Укажите данные как в удостоверении личности. Они используются для всех направлений."/>
       <View style={s.twoColumns}><View style={s.half}><FormInput label="Имя" value={d.personal.firstName} onChangeText={firstName => patch('personal', { firstName })} error={errors.firstName} disabled={!canEdit('personal.firstName')}/></View><View style={s.half}><FormInput label="Фамилия" value={d.personal.lastName} onChangeText={lastName => patch('personal', { lastName })} error={errors.lastName} disabled={!canEdit('personal.lastName')}/></View></View>
       <FormInput label="Отчество" optional value={d.personal.middleName} onChangeText={middleName => patch('personal', { middleName })} placeholder="При наличии" disabled={!canEdit('personal.middleName')}/>
-      <FormInput label="Дата рождения" value={d.personal.birthDate} onChangeText={birthDate => patch('personal', { birthDate })} placeholder="ДД.ММ.ГГГГ" keyboardType="numbers-and-punctuation" error={errors.birthDate} disabled={!canEdit('personal.birthDate')}/>
+      <NativeDateInput label="Дата рождения" value={d.personal.birthDate} onChange={birthDate => patch('personal', { birthDate })} minimumDate={birthDateMinimum} maximumDate={birthDateMaximum} error={errors.birthDate} disabled={!canEdit('personal.birthDate')}/>
       <SelectInput label="Город работы" value={d.personal.city} placeholder="Выберите город" error={errors.city} disabled={!canEdit('personal.city')} onPress={() => select('Город работы', config.cities.map(value => ({ value, label: value })), d.personal.city, city => { patch('personal', { city }); if (!d.work.city) patch('work', { city }); if (!d.courier.city) patch('courier', { city }); })}/>
       <SelectInput label="Гражданство" optional value={d.personal.citizenship} placeholder="Выберите страну" disabled={!canEdit('personal.citizenship')} onPress={() => select('Гражданство', config.countries.map(value => ({ value, label: value })), d.personal.citizenship, citizenship => patch('personal', { citizenship }))}/>
       <SelectInput label="Язык интерфейса" value={config.languages.find(item => item.id === d.personal.language)?.name || d.personal.language} placeholder="Выберите язык" disabled={!canEdit('personal.language')} onPress={() => select('Язык интерфейса', config.languages.map(item => ({ value: item.id, label: item.name })), d.personal.language, language => patch('personal', { language: language as 'ru' | 'ky' }))}/>
@@ -231,7 +235,7 @@ export function RegistrationStepContent(props: Props) {
 function ConfiguredUpload({ item, upload, expiry, error, expiryError, profile, disabled, expiryDisabled, onExpiry, onUpload, onDelete }: { item: ConfiguredUploadSlot; upload?: RegistrationUpload; expiry: string; error?: string; expiryError?: string; profile?: boolean; disabled?: boolean; expiryDisabled?: boolean; onExpiry: (value: string) => void; onUpload: () => void; onDelete?: () => void }) {
   return <View style={s.uploadField}>
     {item.exampleImageUrl ? <InfoCard title="Пример фотографии" text="Перед загрузкой сверьтесь с примером, указанным в требованиях документа."/> : null}
-    <UploadCard title={item.title} required={item.required} upload={upload} hint={item.description || (item.required ? 'Обязательный файл' : 'Необязательно')} image={item.kind === 'PROFILE_PHOTO' || item.kind === 'VEHICLE_PHOTO' || profile} disabled={disabled} onPress={onUpload} onDelete={upload && onDelete ? onDelete : undefined}/>
+    <UploadCard title={item.title} required={item.required} upload={upload} hint={item.description || (item.required ? 'Обязательный файл' : 'Необязательно')} image={item.kind === 'PROFILE_PHOTO' || item.kind === 'VEHICLE_PHOTO' || profile} profile={profile} disabled={disabled} onPress={onUpload} onDelete={upload && onDelete ? onDelete : undefined}/>
     {error ? <Text style={s.error}>{error}</Text> : null}
     {item.requiresExpiry ? <FormInput label="Действителен до" value={expiry} onChangeText={onExpiry} placeholder="ДД.ММ.ГГГГ" keyboardType="numbers-and-punctuation" error={expiryError} disabled={expiryDisabled ?? disabled}/> : null}
     {upload?.expiresAt ? <InfoCard text={`${upload.status === 'EXPIRING' ? 'Срок действия скоро закончится' : upload.status === 'EXPIRED' ? 'Срок действия закончился' : 'Срок действия документа'}: ${new Date(upload.expiresAt).toLocaleDateString('ru-RU')}.` } tone={upload.status === 'EXPIRING' || upload.status === 'EXPIRED' ? 'amber' : 'green'}/> : null}

@@ -227,3 +227,29 @@ test('исправление дополнительной машины прин�
   assert.equal(flow.correctionVehicleFieldAllowed(['vehicles.v-other.brand'], 'v-taxi1', 2, canonical), false);
   assert.equal(flow.correctionVehicleFieldAllowed(['vehicles.v-taxi1.equipment'], 'v-taxi1', 2, 'vehicles.v-taxi1.equipment.loadingTypes'), true);
 });
+
+test('дата рождения выбирается системным календарём без ручного ввода', () => {
+  const components = fs.readFileSync(path.join(__dirname, '..', 'src', 'registration', 'components.tsx'), 'utf8');
+  const steps = fs.readFileSync(path.join(__dirname, '..', 'src', 'registration', 'steps.tsx'), 'utf8');
+  assert.match(components, /DateTimePickerAndroid\.open/);
+  assert.match(components, /export function NativeDateInput/);
+  assert.match(steps, /<NativeDateInput label="Дата рождения"/);
+  assert.doesNotMatch(steps, /<FormInput label="Дата рождения"/);
+});
+
+test('регистрация показывает сегментированные шаги и новые состояния', () => {
+  const components = fs.readFileSync(path.join(__dirname, '..', 'src', 'registration', 'components.tsx'), 'utf8');
+  const screen = fs.readFileSync(path.join(__dirname, '..', 'src', 'DriverRegistrationScreen.tsx'), 'utf8');
+  assert.match(components, /Array\.from\(\{ length: total \}/);
+  assert.match(components, /profileUploadCard/);
+  assert.match(screen, /Разрешите доступ к камере/);
+  assert.match(screen, /Не удалось загрузить данные/);
+});
+
+test('уже разрешённая камера открывается без повторного запроса', () => {
+  const screen = fs.readFileSync(path.join(__dirname, '..', 'src', 'DriverRegistrationScreen.tsx'), 'utf8');
+  assert.match(screen, /Camera\.getCameraPermissionsAsync\(\)/);
+  assert.match(screen, /if \(permission\.granted\) \{ setCameraRequest\(request\); return; \}/);
+  assert.match(screen, /permissionRequestedFor\.current !== request\.slotKey/);
+  assert.match(screen, /permission && !permission\.granted/);
+});
