@@ -31,7 +31,7 @@ const native = {
 };
 let pickedContact = null;
 const contacts = { isAvailableAsync: async () => true, requestPermissionsAsync: async () => ({ granted: true }), presentContactPickerAsync: async () => pickedContact };
-const ui = { Car: 'Car', Avatar: 'Avatar', Icon: 'Icon', Button: 'Button', Route: 'Route', PickupIcon: 'PickupIcon', s: {}, colors: {}, tr: () => x => x, shortAddress: x => x || '', km: x => String(x), mins: x => String(x), tripTime: x => String(x), money: x => String(x) };
+const ui = { Car: 'Car', Avatar: 'Avatar', Icon: 'Icon', Button: 'Button', Route: 'Route', PickupIcon: 'PickupIcon', ToggleSwitch: 'ToggleSwitch', s: {}, colors: { blue: '#087FFF', muted: '#63718D' }, tr: () => x => x, shortAddress: x => x || '', km: x => String(x), mins: x => String(x), tripTime: x => String(x), money: x => String(x) };
 let darkTheme = false;
 const lightPalette = { background: '#F4F8FD', surface: '#FFFFFF', elevated: '#F3F7FF', ink: '#101D38', muted: '#63718D', line: '#E5EDF6', accent: '#087FFF', accentText: '#FFFFFF', backdrop: 'rgba(16,29,56,.42)' };
 const darkPalette = { background: '#050505', surface: '#111111', elevated: '#1D1D1D', ink: '#FFFFFF', muted: '#B0B0B0', line: '#353535', accent: '#FFFFFF', accentText: '#050505', backdrop: 'rgba(0,0,0,.68)' };
@@ -74,6 +74,7 @@ const { ClientTripPanel } = load('ClientTripPanel.tsx');
 const { DriverPanel, DriverOfferSkip, pickupCategory } = load('DriverPanel.tsx');
 const { TripPanel } = load('TripPanel.tsx');
 const { DriverNavigation } = load('DriverNavigation.tsx');
+const { DeliveryPanel, emptyDeliveryDetails } = load('DeliveryPanel.tsx');
 const point = address => ({ address, latitude: 42.87, longitude: 74.59 });
 const textOf = node => typeof node === 'string' ? node : node.children?.map(textOf).join('') || '';
 const button = (r, label) => r.root.findAllByType('Pressable').find(n => n.props.accessibilityLabel === label || textOf(n) === label);
@@ -566,4 +567,36 @@ test('dark driver navigation keeps the turn cue and GPS notice readable', async 
   const notice = button(renderer, 'Проверить местоположение');
   assert.equal(notice.props.style[1].backgroundColor, '#1D1D1D');
   assert.ok(renderer.root.findAllByType('Text').some(node => textOf(node) === 'Показать водителя' && node.props.style[1].color === '#FFFFFF'));
+});
+
+test('delivery redesign has two price choices, a payment selector and only three details', () => {
+  const source = fs.readFileSync(path.join(__dirname, '../src/DeliveryPanel.tsx'), 'utf8');
+  assert.match(source, /title="Доставка"/);
+  assert.match(source, /title="Грузовой"/);
+  assert.doesNotMatch(source, />Курьер</);
+  assert.doesNotMatch(source, /d\.handle|Тип кузова|Грузчики|Что нужно доставить/);
+  assert.match(source, /accessibilityLabel="Способы оплаты"/);
+  assert.match(source, /surface === 'payment'/);
+  assert.match(source, /Запланировать поездку/);
+  assert.match(source, /От двери до двери/);
+  assert.match(source, /Комментарий водителю/);
+  assert.match(source, /serviceImage: \{ width: '100%', height: 83 \}/);
+});
+
+test('delivery payment and simplified details open from the new main panel', async t => {
+  let renderer;
+  const props = { pickup: point('A'), dropoff: point('B'), tariffs: [
+    { id: 'delivery-car', kind: 'DELIVERY_CAR', name: 'Доставка', minimumPrice: 120 },
+    { id: 'delivery-truck', kind: 'DELIVERY_TRUCK', name: 'Грузовой', minimumPrice: 450 },
+  ], selectedKind: 'DELIVERY_TRUCK', quote: { price: 520 }, quotes: { 'delivery-car': { price: 140 }, 'delivery-truck': { price: 520 } }, calculating: false, busy: false, details: emptyDeliveryDetails, onDetails() {}, onKind() {}, onAddress() {}, onBook() {}, onRefresh() {}, onHeight() {} };
+  await act(async () => { renderer = create(React.createElement(DeliveryPanel, props)); });
+  t.after(async () => act(async () => renderer.unmount()));
+  assert.match(textOf(renderer.root), /Доставка.*140.*Грузовой.*520/);
+  assert.doesNotMatch(textOf(renderer.root), /Курьер/);
+  await tap(renderer, 'Способы оплаты');
+  assert.match(textOf(renderer.root), /Наличные.*Оплата водителю после поездки/);
+  await tap(renderer, 'Закрыть');
+  await tap(renderer, 'Параметры доставки');
+  assert.match(textOf(renderer.root), /Запланировать поездку.*От двери до двери.*Комментарий водителю/);
+  assert.doesNotMatch(textOf(renderer.root), /Тип кузова|Грузчики|Что нужно доставить/);
 });

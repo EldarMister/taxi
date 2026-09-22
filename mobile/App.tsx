@@ -789,20 +789,15 @@ function TaxiApp() {
   const bookDelivery = () =>
     run(async () => {
       if (!deliveryQuote) return;
-      if (deliveryDetails.goodsDescription.trim().length < 3) throw new Error('Опишите груз для доставки.');
       if (Date.now() >= new Date(deliveryQuote.expiresAt).getTime()) { refreshDeliveryQuotes(); return; }
       if (orderKey.current?.quoteId !== deliveryQuote.id) orderKey.current = { quoteId: deliveryQuote.id, key: requestId() };
       const created = await api.post<Order>('/orders', {
         quoteId: deliveryQuote.id,
         comment: deliveryDetails.comment.trim(),
         delivery: {
-          goodsDescription: deliveryDetails.goodsDescription.trim(),
+          goodsDescription: deliveryKind === 'DELIVERY_TRUCK' ? 'Грузовой заказ' : 'Доставка',
           doorToDoor: deliveryDetails.doorToDoor,
-          ...(deliveryKind === 'DELIVERY_TRUCK' ? {
-            bodyType: deliveryDetails.bodyType,
-            loaders: deliveryDetails.loaders,
-            ...(deliveryDetails.scheduled ? { scheduledAt: new Date(Date.now() + 30 * 60_000).toISOString() } : {}),
-          } : {}),
+          ...(deliveryDetails.scheduled ? { scheduledAt: new Date(Date.now() + 30 * 60_000).toISOString() } : {}),
         },
         idempotencyKey: orderKey.current.key,
       });

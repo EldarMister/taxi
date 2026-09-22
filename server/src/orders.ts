@@ -279,7 +279,7 @@ export class OrdersService {
     }
     if(!dto.delivery?.goodsDescription.trim()||dto.delivery.goodsDescription.trim().length<3)throw new BadRequestException('Опишите груз для доставки');
     const scheduledAt=dto.delivery.scheduledAt?new Date(dto.delivery.scheduledAt):null;
-    if(validateSchedule&&scheduledAt&&(kind!=='DELIVERY_TRUCK'||scheduledAt.getTime()<Date.now()+300000||scheduledAt.getTime()>Date.now()+7*86400000))throw new BadRequestException('Запланировать грузовой заказ можно от 5 минут до 7 дней');
+    if(validateSchedule&&scheduledAt&&(scheduledAt.getTime()<Date.now()+300000||scheduledAt.getTime()>Date.now()+7*86400000))throw new BadRequestException('Запланировать доставку можно от 5 минут до 7 дней');
     if(kind==='DELIVERY_CAR'&&(dto.delivery.bodyType||dto.delivery.loaders))throw new BadRequestException('Грузчики и тип кузова доступны только для грузовой машины');
     return {goodsDescription:dto.delivery.goodsDescription.trim(),doorToDoor:!!dto.delivery.doorToDoor,...(scheduledAt?{scheduledAt:scheduledAt.toISOString()}:{}),...(kind==='DELIVERY_TRUCK'?{bodyType:dto.delivery.bodyType??'VAN',loaders:dto.delivery.loaders??0}:{})};
   }

@@ -158,6 +158,15 @@ test('legacy self-registration is closed; an approved truck driver receives only
   await api.post(`/api/orders/${delivery.id}/cancel`).set(headers(client2)).expect(201);
   await setOnline(applicant,false);
 });
+test('a car delivery can be scheduled from the simplified delivery panel',async()=>{
+  const quote=(await api.post('/api/orders/quote').set(headers(client2)).send({pickup,dropoff,tariffId:'delivery-car'}).expect(201)).body;
+  const scheduledAt=new Date(Date.now()+30*60_000).toISOString();
+  const delivery=(await api.post('/api/orders').set(headers(client2)).send({quoteId:quote.id,idempotencyKey:randomUUID(),comment:'Позвонить у ворот',delivery:{goodsDescription:'Доставка',doorToDoor:true,scheduledAt}}).expect(201)).body;
+  assert.equal(delivery.kind,'DELIVERY_CAR');
+  assert.equal(delivery.deliveryDetails.doorToDoor,true);
+  assert.equal(delivery.deliveryDetails.scheduledAt,scheduledAt);
+  await api.post(`/api/orders/${delivery.id}/cancel`).set(headers(client2)).expect(201);
+});
 test('an operational approved role can be activated while another role remains under review',async()=>{
   const applicant=await login('+996700555555'),now=new Date();
   await db.performerApplication.create({data:{
