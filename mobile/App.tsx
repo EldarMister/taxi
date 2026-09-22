@@ -186,7 +186,7 @@ function TaxiApp() {
   const [tariffs, setTariffs] = useState<Tariff[]>([]);
   const [tariffId, setTariffId] = useState("");
   const [deliveryTariffs, setDeliveryTariffs] = useState<Tariff[]>([]);
-  const [deliveryKind, setDeliveryKind] = useState<'DELIVERY_CAR' | 'DELIVERY_TRUCK'>('DELIVERY_TRUCK');
+  const [deliveryKind, setDeliveryKind] = useState<'DELIVERY_CAR' | 'DELIVERY_TRUCK'>('DELIVERY_CAR');
   const [deliveryDetails, setDeliveryDetails] = useState(emptyDeliveryDetails);
   const [rideDetails, setRideDetails] = useState(emptyRideDetails);
   const [bookingHeight, setBookingHeight] = useState(166);
@@ -1188,6 +1188,7 @@ function TaxiApp() {
               quote={deliveryQuote} quotes={deliveryQuotes} calculating={deliveryCalculating} error={error || deliveryQuoteError} busy={busy}
               details={deliveryDetails} onDetails={setDeliveryDetails} onKind={kind => { setDeliveryKind(kind); setError(''); }}
               onAddress={setAddressField} hidden={!!mapSelection || !!addressField} onHeight={setBookingHeight}
+              onSwap={() => { setPickup(dropoff); setDropoff(pickup); }}
               onBook={bookDelivery}
               onRefresh={() => { if (deliveryTariffs.length) refreshDeliveryQuotes(); else void run(async () => {
                 const [cars,trucks]=await Promise.all([api.request<Tariff[]>('/tariffs?kind=DELIVERY_CAR'),api.request<Tariff[]>('/tariffs?kind=DELIVERY_TRUCK')]);

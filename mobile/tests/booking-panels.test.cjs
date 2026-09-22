@@ -582,21 +582,27 @@ test('delivery redesign has two price choices, a payment selector and only three
   assert.match(source, /От двери до двери/);
   assert.match(source, /Комментарий водителю/);
   assert.match(source, /serviceImage: \{ width: '100%', height: 83 \}/);
-  assert.match(source, /delivery-van-blue\.png/);
+  assert.match(source, /car-economy\.png/);
+  assert.doesNotMatch(source, /delivery-van-blue\.png/);
   assert.doesNotMatch(source, /taxi-yellow\.png/);
+  assert.match(source, /backgroundColor: colors\.blue/);
+  assert.match(source, /accessibilityLabel="Поменять адреса местами"/);
   assert.doesNotMatch(source, /surface === 'details' && <BottomPanel expanded/);
 });
 
 test('delivery payment and simplified details open from the new main panel', async t => {
   let renderer;
+  let swapped = 0;
   const props = { pickup: point('A'), dropoff: point('B'), tariffs: [
     { id: 'delivery-car', kind: 'DELIVERY_CAR', name: 'Доставка', minimumPrice: 120 },
     { id: 'delivery-truck', kind: 'DELIVERY_TRUCK', name: 'Грузовой', minimumPrice: 450 },
-  ], selectedKind: 'DELIVERY_TRUCK', quote: { price: 520 }, quotes: { 'delivery-car': { price: 140 }, 'delivery-truck': { price: 520 } }, calculating: false, busy: false, details: emptyDeliveryDetails, onDetails() {}, onKind() {}, onAddress() {}, onBook() {}, onRefresh() {}, onHeight() {} };
+  ], selectedKind: 'DELIVERY_TRUCK', quote: { price: 520 }, quotes: { 'delivery-car': { price: 140 }, 'delivery-truck': { price: 520 } }, calculating: false, busy: false, details: emptyDeliveryDetails, onDetails() {}, onKind() {}, onAddress() {}, onSwap() { swapped++; }, onBook() {}, onRefresh() {}, onHeight() {} };
   await act(async () => { renderer = create(React.createElement(DeliveryPanel, props)); });
   t.after(async () => act(async () => renderer.unmount()));
   assert.match(textOf(renderer.root), /Доставка.*140.*Грузовой.*520/);
   assert.doesNotMatch(textOf(renderer.root), /Курьер/);
+  await tap(renderer, 'Поменять адреса местами');
+  assert.equal(swapped, 1);
   await tap(renderer, 'Способы оплаты');
   assert.match(textOf(renderer.root), /Наличные.*Оплата водителю после поездки/);
   await tap(renderer, 'Закрыть');
