@@ -125,14 +125,14 @@ export class AuthService {
     // avatar endpoint streams it only when an image is actually requested.
     const user = await this.db.user.findUniqueOrThrow({where:{id},select:{
       id:true,phone:true,name:true,role:true,notifications:true,language:true,avatarMime:true,avatarUpdatedAt:true,
-      driverProfile:{select:{verified:true,online:true,transportClass:true,requestedTransportClass:true,acceptsEconomy:true,acceptsComfort:true,acceptsDeliveryCar:true,acceptsDeliveryTruck:true,vehicle:{select:{id:true,make:true,color:true,plate:true,photoUpdatedAt:true}}}},
+      driverProfile:{select:{verified:true,online:true,transportClass:true,requestedTransportClass:true,acceptsEconomy:true,acceptsComfort:true,acceptsDeliveryCar:true,acceptsDeliveryTruck:true,courierModes:true,vehicle:{select:{id:true,make:true,color:true,plate:true,photoUpdatedAt:true}}}},
     }});
     const rating = user.role === 'DRIVER' ? await this.db.rating.aggregate({where:{order:{driverId:id}},_avg:{score:true}}) : null;
     const storedAvatar = user.role === 'DRIVER' && user.avatarMime && user.avatarUpdatedAt
       ? `/avatars/${user.id}?v=${user.avatarUpdatedAt.getTime()}`
       : null;
     return {id:user.id,phone:user.phone,name:user.name,photoUrl:storedAvatar,role:user.role,notifications:user.notifications,language:user.language,
-      ...(user.driverProfile?{driverProfile:{verified:user.driverProfile.verified,online:user.driverProfile.online,transportClass:user.driverProfile.transportClass,requestedTransportClass:user.driverProfile.requestedTransportClass,acceptsEconomy:user.driverProfile.acceptsEconomy,acceptsComfort:user.driverProfile.acceptsComfort,acceptsDeliveryCar:user.driverProfile.acceptsDeliveryCar,acceptsDeliveryTruck:user.driverProfile.acceptsDeliveryTruck,carMake:user.driverProfile.vehicle?.make??'',carColor:user.driverProfile.vehicle?.color??'',carPlate:user.driverProfile.vehicle?.plate??'',carPhotoUrl:user.driverProfile.vehicle?.photoUpdatedAt?`/vehicles/${user.driverProfile.vehicle.id}/photo?v=${user.driverProfile.vehicle.photoUpdatedAt.getTime()}`:null,rating:rating?._avg.score??null}}:{})};
+      ...(user.driverProfile?{driverProfile:{verified:user.driverProfile.verified,online:user.driverProfile.online,transportClass:user.driverProfile.transportClass,requestedTransportClass:user.driverProfile.requestedTransportClass,acceptsEconomy:user.driverProfile.acceptsEconomy,acceptsComfort:user.driverProfile.acceptsComfort,acceptsDeliveryCar:user.driverProfile.acceptsDeliveryCar,acceptsDeliveryTruck:user.driverProfile.acceptsDeliveryTruck,courierModes:user.driverProfile.courierModes,carMake:user.driverProfile.vehicle?.make??'',carColor:user.driverProfile.vehicle?.color??'',carPlate:user.driverProfile.vehicle?.plate??'',carPhotoUrl:user.driverProfile.vehicle?.photoUpdatedAt?`/vehicles/${user.driverProfile.vehicle.id}/photo?v=${user.driverProfile.vehicle.photoUpdatedAt.getTime()}`:null,rating:rating?._avg.score??null}}:{})};
   }
 }
 @Injectable()

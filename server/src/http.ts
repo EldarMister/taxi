@@ -1,5 +1,5 @@
-import { ArgumentsHost, BadRequestException, Body, Catch, Controller, Delete, ExceptionFilter, ForbiddenException, Get, HttpException, HttpStatus, NotFoundException, Param, ParseUUIDPipe, Patch, Post, Query, Req, Res, UploadedFile, UploadedFiles, UseGuards, UseInterceptors, ValidationPipe } from '@nestjs/common';
-import { FileFieldsInterceptor, FileInterceptor } from '@nestjs/platform-express';
+import { ArgumentsHost, BadRequestException, Body, Catch, Controller, Delete, ExceptionFilter, ForbiddenException, Get, GoneException, HttpException, HttpStatus, NotFoundException, Param, ParseUUIDPipe, Patch, Post, Query, Req, Res, UploadedFile, UseGuards, UseInterceptors, ValidationPipe } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
 import { ApiBearerAuth, ApiBody, ApiConsumes, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { Request, Response } from 'express';
 import { Prisma } from '@prisma/client';
@@ -7,13 +7,12 @@ import sharp from 'sharp';
 import { Actor, AuthGuard, AuthService, RateLimits } from './auth';
 import { AppConfig } from './config';
 import { DriverService } from './driver';
-import { CreateOrderDto, DriverPositionDto, DriverPreferencesDto, DriverRegisterDto, HistoryDto, MessageDto, OnlineDto, PhoneDto, ProfileDto, PushTokenDto, QuoteDto, RatingDto, RefreshDto, RemovePushTokenDto, TopupDto, VerifyDriverDto, VerifyDto } from './dto';
+import { CreateOrderDto, DriverPositionDto, DriverPreferencesDto, HistoryDto, MessageDto, OnlineDto, PhoneDto, ProfileDto, PushTokenDto, QuoteDto, RatingDto, RefreshDto, RemovePushTokenDto, TopupDto, VerifyDriverDto, VerifyDto } from './dto';
 import { OrdersService } from './orders';
 import { PrismaService } from './prisma.service';
 import { AdminGuard } from './admin.security';
 type AuthedRequest=Request&{actor:Actor};
 type AvatarFile={buffer:Buffer;mimetype:string;size:number};
-type RegistrationFiles={vehiclePhoto?:AvatarFile[];profilePhoto?:AvatarFile[]};
 export const MAX_AVATAR_BYTES=5*1024*1024;
 export const MAX_AVATAR_PIXELS=20_000_000;
 export const AVATAR_SIZE=720;
@@ -112,24 +111,8 @@ export class OrdersController {
 @ApiTags('driver') @ApiBearerAuth() @UseGuards(AuthGuard) @Controller('driver')
 export class DriverController {
   constructor(private readonly driver:DriverService,private readonly orders:OrdersService) {}
-  @Post('register') @ApiConsumes('multipart/form-data')
-  @ApiBody({schema:{type:'object',required:['firstName','lastName','carMake','carPlate','requestedTransportClass','vehiclePhoto'],properties:{firstName:{type:'string'},lastName:{type:'string'},carMake:{type:'string'},carPlate:{type:'string'},carColor:{type:'string'},requestedTransportClass:{type:'string',enum:['ECONOMY','TRUCK']},vehiclePhoto:{type:'string',format:'binary'},profilePhoto:{type:'string',format:'binary'}}}})
-  @UseInterceptors(FileFieldsInterceptor([{name:'vehiclePhoto',maxCount:1},{name:'profilePhoto',maxCount:1}],{limits:{fileSize:MAX_AVATAR_BYTES,files:2,fields:10},fileFilter:(_request,file,callback)=>{
-    if(!avatarMimes.has(file.mimetype.toLowerCase()))return callback(new BadRequestException('Разрешены только фотографии JPEG, PNG или WEBP.'),false);
-    callback(null,true);
-  }}))
-  async register(@Req() req:AuthedRequest,@Body() dto:DriverRegisterDto,@UploadedFiles() files:RegistrationFiles) {
-    const vehicle=files?.vehiclePhoto?.[0],profile=files?.profilePhoto?.[0];
-    if(!vehicle?.buffer?.length)throw new BadRequestException('Добавьте фотографию машины.');
-    const normalize=async(file:AvatarFile|undefined)=>{
-      if(!file)return undefined;
-      if(file.buffer.length>MAX_AVATAR_BYTES)throw new HttpException('Файл фотографии должен быть не больше 5 МБ.',HttpStatus.PAYLOAD_TOO_LARGE);
-      const detected=detectAvatarMime(file.buffer);
-      if(!detected||detected!==file.mimetype.toLowerCase())throw new BadRequestException('Тип файла не соответствует содержимому фотографии.');
-      return normalizeAvatar(file.buffer);
-    };
-    return this.driver.register(req.actor,dto,(await normalize(vehicle))!,await normalize(profile));
-  }
+  @Post('register') @ApiOperation({summary:'Устаревший endpoint; используйте /driver/registration',deprecated:true})
+  register() {throw new GoneException('Используйте новую пошаговую регистрацию исполнителя: /driver/registration');}
   @Patch('online') online(@Req() req:AuthedRequest,@Body() dto:OnlineDto) {return this.driver.online(req.actor,dto.online);}
   @Patch('preferences') preferences(@Req() req:AuthedRequest,@Body() dto:DriverPreferencesDto) {return this.driver.preferences(req.actor,dto);}
   @Patch('position') position(@Req() req:AuthedRequest,@Body() dto:DriverPositionDto) {return this.driver.position(req.actor,dto);}
@@ -182,7 +165,7 @@ export class ApiExceptionFilter implements ExceptionFilter {
   catch(error:unknown,host:ArgumentsHost) {
     const response=host.switchToHttp().getResponse<Response>();
     let status=HttpStatus.INTERNAL_SERVER_ERROR, message:unknown='Сервис временно недоступен';
-    if(error instanceof HttpException) {status=error.getStatus();message=status===HttpStatus.PAYLOAD_TOO_LARGE?'Файл фотографии должен быть не больше 5 МБ.':error.getResponse();}
+    if(error instanceof HttpException) {status=error.getStatus();message=error.getResponse();}
     else if(error instanceof Prisma.PrismaClientKnownRequestError) {
       if(error.code==='P2002'||error.code==='P2034') {status=409;message='Конфликт: операция уже выполнена или данные изменились';}
       else if(error.code==='P2025') {status=404;message='Запись не найдена';}

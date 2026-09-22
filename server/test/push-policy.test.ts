@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { pushTtlSeconds, safePushFailureReason } from '../src/providers';
+import { pushDeliveryData, pushTtlSeconds, safePushFailureReason } from '../src/providers';
 
 test('push TTL follows the lifetime of each event', () => {
   const now = Date.now();
@@ -13,6 +13,13 @@ test('push TTL follows the lifetime of each event', () => {
   assert.equal(pushTtlSeconds('order:updated'), 30 * 60);
   assert.equal(pushTtlSeconds('order:created'), 24 * 60 * 60);
   assert.equal(pushTtlSeconds('trip:completed'), 24 * 60 * 60);
+  assert.equal(pushTtlSeconds('registration:approved'),24*60*60);
+});
+
+test('registration push data carries only allow-listed routing metadata',()=>{
+  assert.deepEqual(pushDeliveryData({id:'event-id',event:'registration:correction_required',orderId:null,payload:{applicationId:'app-id',role:'COURIER',reasonCode:'IMAGE_BLURRY',reasonText:'private explanation',token:'secret'}}),{
+    event:'registration:correction_required',eventId:'event-id',applicationId:'app-id',role:'COURIER',reasonCode:'IMAGE_BLURRY',
+  });
 });
 
 test('push failure diagnostics never echo arbitrary error messages', () => {

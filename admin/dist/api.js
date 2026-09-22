@@ -38,6 +38,21 @@ async function request(path, { method = 'GET', body, token = current?.accessToke
     throw new Error(controller.signal.aborted ? 'Сервер долго отвечает. Попробуйте ещё раз.' : 'Нет соединения с сервером. Проверьте подключение.');
   } finally { clearTimeout(timeout); }
 }
+async function requestBlob(path, token = current?.accessToken) {
+  const controller = new AbortController(), timeout = setTimeout(() => controller.abort(), 20000);
+  try {
+    const response = await fetch(API + path, { signal: controller.signal, cache: 'no-store', headers: token ? { Authorization: `Bearer ${token}` } : {} });
+    if (!response.ok) {
+      let data; try { data = await response.json(); } catch { data = null; }
+      const message = Array.isArray(data?.message) ? data.message.join('. ') : data?.message;
+      const error = new Error(message || (response.status === 404 ? 'Файл не найден.' : 'Не удалось открыть файл.')); error.status = response.status; throw error;
+    }
+    return { blob: await response.blob(), contentType: response.headers.get('content-type') || 'application/octet-stream' };
+  } catch (error) {
+    if (error.status) throw error;
+    throw new Error(controller.signal.aborted ? 'Сервер долго отвечает. Попробуйте ещё раз.' : 'Нет соединения с сервером. Проверьте подключение.');
+  } finally { clearTimeout(timeout); }
+}
 export async function refresh() {
   if (rotation) return rotation;
   const generation = epoch, token = current?.refreshToken;
@@ -57,6 +72,16 @@ export async function api(path, options = {}) {
     if (previous === current.accessToken) await refresh();
     if (generation !== epoch) throw new Error('Сессия завершена.');
     return request(path, options);
+  }
+}
+export async function apiBlob(path) {
+  const generation = epoch, previous = current?.accessToken;
+  try { return await requestBlob(path); }
+  catch (error) {
+    if (error.status !== 401 || !current?.refreshToken || generation !== epoch) throw error;
+    if (previous === current.accessToken) await refresh();
+    if (generation !== epoch) throw new Error('Сессия завершена.');
+    return requestBlob(path);
   }
 }
 export async function signIn(username, password, remember = true) {

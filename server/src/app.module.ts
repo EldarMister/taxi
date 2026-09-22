@@ -21,5 +21,10 @@ import { AdminAuthController, AdminAuthService } from './admin.auth';
 import { AdminService } from './admin';
 import { AdminOperationsController } from './admin.http';
 import { AdminCatalogController, ContentController, ContentService } from './content';
-@Module({imports:[JwtModule.register({}),ScheduleModule.forRoot()],controllers:[TrackingController,AuthController,UsersController,OrdersController,DriverController,AdminController,PublicController,PlacesController,RoutesController,FoodCatalogController,FoodOrdersController,AdminFoodController,AdminAuthController,AdminOperationsController,ContentController,AdminCatalogController],providers:[TrackingService,PrismaService,AppConfig,AuthService,AuthGuard,RateLimits,RoutingService,PushService,RealtimeEvents,OrdersService,DriverService,TaxiGateway,BackgroundJobs,PlacesService,FoodService,AdminAuditService,AdminGuard,AdminAuthService,AdminService,ContentService]})
+import { RegistrationService } from './registration';
+import { RegistrationUploadGate } from './registration-upload-gate';
+import { RegistrationController } from './registration.http';
+import { RegistrationAdminService } from './registration-admin';
+import { RegistrationAdminController } from './registration-admin.http';
+@Module({imports:[JwtModule.register({}),ScheduleModule.forRoot()],controllers:[TrackingController,AuthController,UsersController,OrdersController,DriverController,RegistrationController,RegistrationAdminController,AdminController,PublicController,PlacesController,RoutesController,FoodCatalogController,FoodOrdersController,AdminFoodController,AdminAuthController,AdminOperationsController,ContentController,AdminCatalogController],providers:[TrackingService,PrismaService,AppConfig,AuthService,AuthGuard,RateLimits,RoutingService,PushService,RealtimeEvents,OrdersService,DriverService,RegistrationService,RegistrationUploadGate,RegistrationAdminService,TaxiGateway,BackgroundJobs,PlacesService,FoodService,AdminAuditService,AdminGuard,AdminAuthService,AdminService,ContentService]})
 export class AppModule {}

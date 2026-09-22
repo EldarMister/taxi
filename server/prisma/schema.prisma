@@ -33,6 +33,42 @@ enum TransportClass {
   COMFORT
   TRUCK
 }
+enum RegistrationApplicationStatus {
+  NOT_STARTED
+  DRAFT
+  SUBMITTED
+  UNDER_REVIEW
+  CORRECTION_REQUIRED
+  APPROVED
+  REJECTED
+  BLOCKED
+}
+enum PerformerRole {
+  TAXI_DRIVER
+  CARGO_DRIVER
+  COURIER
+}
+enum RegistrationDocumentStatus {
+  NOT_UPLOADED
+  DRAFT
+  UPLOADED
+  UNDER_REVIEW
+  APPROVED
+  CORRECTION_REQUIRED
+  REJECTED
+  BLOCKED
+  ACTIVE
+  EXPIRING
+  EXPIRED
+}
+enum RegistrationUploadKind {
+  PROFILE_PHOTO
+  IDENTITY_DOCUMENT
+  DRIVER_LICENSE
+  VEHICLE_DOCUMENT
+  VEHICLE_PHOTO
+  ADDITIONAL_DOCUMENT
+}
 model User {
   id String @id @default(uuid()) @db.Uuid
   phone String @unique
@@ -53,6 +89,7 @@ model User {
   pushTokens PushToken[]
   foodOrders FoodOrder[]
   adminCredential AdminCredential?
+  performerApplication PerformerApplication?
 }
 model DriverProfile {
   userId String @id @db.Uuid
@@ -66,6 +103,8 @@ model DriverProfile {
   acceptsComfort Boolean @default(false)
   acceptsDeliveryCar Boolean @default(false)
   acceptsDeliveryTruck Boolean @default(false)
+  courierModes String[] @default([])
+  registrationManaged Boolean @default(false)
   locationLatitude Float?
   locationLongitude Float?
   locationAccuracyM Float?
@@ -260,6 +299,74 @@ model AdminAudit {
   @@index([entity,entityId])
 }
 
+model PerformerApplication {
+  id String @id @default(uuid()) @db.Uuid
+  userId String @unique @db.Uuid
+  user User @relation(fields:[userId],references:[id],onDelete:Cascade)
+  status RegistrationApplicationStatus @default(NOT_STARTED)
+  currentStep String @default("ROLES")
+  data Json
+  version Int @default(0)
+  canResubmit Boolean @default(false)
+  legalTermsVersion String?
+  acceptedConsentIds String[] @default([])
+  truthConfirmedAt DateTime?
+  termsAcceptedAt DateTime?
+  activatedAt DateTime?
+  submittedAt DateTime?
+  reviewedAt DateTime?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  roles PerformerApplicationRole[]
+  uploads PerformerUpload[]
+  @@index([status,updatedAt])
+}
+
+model PerformerApplicationRole {
+  id String @id @default(uuid()) @db.Uuid
+  applicationId String @db.Uuid
+  application PerformerApplication @relation(fields:[applicationId],references:[id],onDelete:Cascade)
+  role PerformerRole
+  selected Boolean @default(true)
+  status RegistrationApplicationStatus @default(DRAFT)
+  canResubmit Boolean @default(false)
+  correctionFields String[] @default([])
+  projectedAt DateTime?
+  projectionIssueCode String?
+  reasonCode String?
+  reasonText String?
+  blockedUntil DateTime?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  @@unique([applicationId,role])
+  @@index([applicationId,selected])
+  @@index([role,status])
+}
+
+model PerformerUpload {
+  id String @id @default(uuid()) @db.Uuid
+  applicationId String @db.Uuid
+  application PerformerApplication @relation(fields:[applicationId],references:[id],onDelete:Cascade)
+  slotKey String
+  kind RegistrationUploadKind
+  role PerformerRole?
+  status RegistrationDocumentStatus @default(UPLOADED)
+  mimeType String
+  byteSize Int
+  checksum String
+  data Bytes
+  version Int @default(1)
+  expiresAt DateTime?
+  reasonCode String?
+  reasonText String?
+  canReupload Boolean @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  @@unique([applicationId,slotKey])
+  @@index([applicationId,status])
+  @@index([expiresAt])
+}
+
 model Banner {
   id String @id @default(uuid()) @db.Uuid
   title String
@@ -308,7 +415,8 @@ model PushJob {
   id String @id @default(uuid()) @db.Uuid
   userId String @db.Uuid
   event String
-  orderId String @db.Uuid
+  orderId String? @db.Uuid
+  payload Json?
   attempts Int @default(0)
   availableAt DateTime @default(now())
   sentAt DateTime?

@@ -44,3 +44,12 @@ test('rider-coming and unknown state updates retain a neutral default presentati
     title: 'Ваша поездка', body: 'Статус поездки изменился', sound: 'default', channelId: 'orders',
   });
 });
+
+test('registration lifecycle notifications use a dedicated neutral channel',()=>{
+  assert.deepEqual(pushPresentation('registration:submitted','CLIENT'),{title:'Анкета отправлена',body:'Мы получили данные и сообщим о ходе проверки',sound:'default',channelId:'registration'});
+  assert.equal(pushPresentation('registration:correction_required','CLIENT').title,'Нужны исправления');
+  assert.equal(pushPresentation('registration:approved','CLIENT').title,'Направление одобрено');
+  assert.equal(pushPresentation('registration:document_expiring','DRIVER').channelId,'registration');
+  assert.equal(pushPresentation('registration:document_expired','DRIVER').title,'Документ просрочен');
+  assert.equal(pushPresentation('registration:activated','DRIVER').channelId,'registration');
+});

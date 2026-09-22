@@ -3,13 +3,15 @@ import { Interval } from '@nestjs/schedule';
 import { OrdersService } from './orders';
 import { PushService } from './providers';
 import { PrismaService } from './prisma.service';
+import { RegistrationAdminService } from './registration-admin';
 
 @Injectable()
 export class BackgroundJobs {
   private dispatchRunning=false;
   private pushRunning=false;
+  private registrationExpiryRunning=false;
   private readonly logger=new Logger(BackgroundJobs.name);
-  constructor(private readonly orders:OrdersService,private readonly push:PushService,private readonly db:PrismaService) {}
+  constructor(private readonly orders:OrdersService,private readonly push:PushService,private readonly db:PrismaService,private readonly registrationAdmin:RegistrationAdminService) {}
   @Interval(3000)
   async dispatch() {
     if(this.dispatchRunning)return;this.dispatchRunning=true;
@@ -19,6 +21,14 @@ export class BackgroundJobs {
   async notifications() {
     if(this.pushRunning)return;this.pushRunning=true;
     try{await this.push.deliverPending();}catch{this.logger.error('Push worker failed; will retry');}finally{this.pushRunning=false;}
+  }
+  @Interval(600000)
+  async registrationDocumentExpiry() {
+    if(this.registrationExpiryRunning)return;this.registrationExpiryRunning=true;
+    try {
+      const result=await this.registrationAdmin.processDocumentExpiry();
+      if(result.failed)this.logger.warn(`Registration document expiry deferred for ${result.failed} item(s)`);
+    } catch{this.logger.error('Registration document expiry worker failed; will retry');}finally{this.registrationExpiryRunning=false;}
   }
   @Interval(3600000)
   async cleanup() {

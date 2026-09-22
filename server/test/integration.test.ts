@@ -1,7 +1,7 @@
 import 'reflect-metadata';
 import assert from 'node:assert/strict';
 import { after, before, test } from 'node:test';
-import { createHmac, randomUUID } from 'node:crypto';
+import { createHash, createHmac, randomUUID } from 'node:crypto';
 import request from 'supertest';
 import { io, Socket } from 'socket.io-client';
 import { Test } from '@nestjs/testing';
@@ -10,6 +10,7 @@ import sharp from 'sharp';
 import { DEMO_FOOD_RESTAURANTS } from '../src/food-catalog';
 import { hashAdminPassword } from '../src/admin.security';
 import { osrmFixture } from './maps.fixture';
+import { registrationUploadRequiresExpiry, registrationUploadSlotSpecs } from '../src/registration-domain';
 // Load TypeScript-compiled Nest modules: tsx intentionally does not emit decorator metadata.
 const {AppModule}=require('../dist/src/app.module.js');
 const {apiValidation,ApiExceptionFilter,detectAvatarMime,MAX_AVATAR_BYTES}=require('../dist/src/http.js');
@@ -132,17 +133,15 @@ test('avatar upload is driver-only, validates bytes and serves versioned public 
   const replaced=await api.post('/api/users/me/avatar').set(headers(driver1)).attach('avatar',pngAvatar,{filename:'avatar.png',contentType:'image/png'}).expect(201);
   assert.notEqual(replaced.body.photoUrl,uploaded.body.photoUrl);
 });
-test('Atlas pro self-registration stays pending until admin assigns a class; truck delivery reaches only truck drivers',async()=>{
-  const applicant=await login('+996700444444');
-  await api.post('/api/driver/register').set(headers(applicant)).field('firstName','Талант').field('lastName','Айдоочев').field('carMake','Mercedes Sprinter').field('carPlate','01 KG 444 CCC').field('requestedTransportClass','TRUCK').expect(400);
-  const registered=await api.post('/api/driver/register').set(headers(applicant))
-    .field('firstName','Талант').field('lastName','Айдоочев').field('carMake','Mercedes Sprinter').field('carPlate','01 KG 444 CCC').field('carColor','Белый').field('requestedTransportClass','TRUCK')
-    .attach('vehiclePhoto',pngAvatar,{filename:'vehicle.png',contentType:'image/png'}).attach('profilePhoto',pngAvatar,{filename:'profile.png',contentType:'image/png'}).expect(201);
-  assert.equal(registered.body.role,'DRIVER');assert.equal(registered.body.driverProfile.verified,false);assert.equal(registered.body.driverProfile.requestedTransportClass,'TRUCK');assert.equal(registered.body.driverProfile.transportClass,'ECONOMY');
-  assert.match(registered.body.driverProfile.carPhotoUrl,/^\/vehicles\/[0-9a-f-]+\/photo\?v=\d+$/i);
-  await api.get(`/api${registered.body.driverProfile.carPhotoUrl}`).expect(200).expect('Content-Type',/image\/jpeg/);
+test('legacy self-registration is closed; an approved truck driver receives only truck deliveries',async()=>{
+  const legacyApplicant=await login('+996700444444');
+  await api.post('/api/driver/register').set(headers(legacyApplicant)).expect(410);
+  const driverPhone='+996700444445';
+  const registered=(await api.post('/api/admin/drivers').set(headers(admin)).send({phone:driverPhone,name:'Талант Айдоочев',carMake:'Mercedes Sprinter',carPlate:'01 KG 444 CCC',carColor:'Белый',transportClass:'TRUCK',verified:false}).expect(201)).body;
+  const applicant=await login(driverPhone);
+  assert.equal(registered.id,applicant.user.id);assert.equal(registered.verified,false);assert.equal(registered.transportClass,'TRUCK');
   await api.patch('/api/driver/online').set(headers(applicant)).send({online:true}).expect(403);
-  const approved=(await api.patch(`/api/admin/drivers/${applicant.user.id}`).set(headers(admin)).send({transportClass:'TRUCK',verified:true}).expect(200)).body;
+  const approved=(await api.patch(`/api/admin/drivers/${applicant.user.id}`).set(headers(admin)).send({verified:true}).expect(200)).body;
   assert.equal(approved.transportClass,'TRUCK');assert.equal(approved.acceptsDeliveryTruck,true);
   await api.post(`/api/admin/drivers/${applicant.user.id}/topup`).set(headers(admin)).send({amount:1000,idempotencyKey:randomUUID(),note:'Стартовый депозит'}).expect(201);
   await setOnline(applicant);
@@ -158,6 +157,68 @@ test('Atlas pro self-registration stays pending until admin assigns a class; tru
   await api.post(`/api/orders/${delivery.id}/accept`).set(headers(applicant)).expect(201);
   await api.post(`/api/orders/${delivery.id}/cancel`).set(headers(client2)).expect(201);
   await setOnline(applicant,false);
+});
+test('an operational approved role can be activated while another role remains under review',async()=>{
+  const applicant=await login('+996700555555'),now=new Date();
+  await db.performerApplication.create({data:{
+    userId:applicant.user.id,status:'UNDER_REVIEW',currentStep:'REVIEW',data:{},submittedAt:now,
+    roles:{create:[
+      {role:'TAXI_DRIVER',selected:true,status:'APPROVED',projectedAt:now},
+      {role:'CARGO_DRIVER',selected:true,status:'UNDER_REVIEW'},
+    ]},
+  }});
+  await db.driverProfile.create({data:{userId:applicant.user.id,verified:true,registrationManaged:true,acceptsEconomy:true,acceptsComfort:false,acceptsDeliveryCar:false,acceptsDeliveryTruck:false,vehicle:{create:{make:'Toyota Camry',color:'Белый',plate:'01 KG 555 ABC'}}}});
+  const activated=(await api.post('/api/driver/registration/activate').set(headers(applicant)).send({}).expect(201)).body;
+  assert.equal(activated.user.role,'DRIVER');
+  assert.equal(activated.application.status,'UNDER_REVIEW');
+  assert.equal(activated.application.canActivate,false);
+  assert.ok(activated.application.activatedAt);
+  assert.equal(activated.application.roleStatuses.find((role:any)=>role.role==='TAXI_DRIVER').operational,true);
+  assert.equal(activated.application.roleStatuses.find((role:any)=>role.role==='CARGO_DRIVER').operational,false);
+  const activationPush=await db.pushJob.findFirstOrThrow({where:{userId:applicant.user.id,event:'registration:activated'}});
+  assert.equal(activationPush.orderId,null);
+  assert.deepEqual(activationPush.payload,{applicationId:activated.application.id});
+});
+test('additional vehicle slots survive correction replacement, expiry patch and resubmit',async()=>{
+  const applicant=client;
+  const vehicle={ownership:'OWN',brand:'Toyota',model:'Prius',year:'2022',color:'Белый',plateNumber:'01 556 ABC',tariffs:['ECONOMY']};
+  const extra={...vehicle,clientId:'v-second',usage:'TAXI',plateNumber:'01 557 ABC',equipment:{loadingTypes:[]}};
+  const data={
+    personal:{firstName:'Асан',lastName:'Ибраев',birthDate:'10.03.1990',city:'Бишкек'},
+    identity:{number:'ID-556',issuedAt:'01.01.2020',expiresAt:'01.01.2030',issuedBy:'МКК'},
+    driverLicense:{number:'DL-556',categories:['B'],expiresAt:'01.01.2030'},taxiVehicle:vehicle,vehicles:[extra],documentExpiries:{},
+  };
+  const patched=(await api.patch('/api/driver/registration').set(headers(applicant)).send({version:0,roles:['TAXI_DRIVER'],data}).expect(200)).body.application;
+  assert.equal(patched.data.vehicles[0].clientId,'v-second');
+  assert.equal(patched.config,undefined);
+  assert.equal((await api.get('/api/driver/registration/config').set(headers(applicant)).expect(200)).body.upload.maxFiles,128);
+  const slot='vehicle_v-second_insurance',pdf1=Buffer.from('%PDF-1.4 insurance one'),pdf2=Buffer.from('%PDF-1.4 insurance replacement');
+  const uploaded=await api.post(`/api/driver/registration/uploads/${slot}`).set(headers(applicant)).field('kind','VEHICLE_DOCUMENT').field('role','TAXI_DRIVER').field('expiresAt','01.01.2030').attach('file',pdf1,{filename:'insurance.pdf',contentType:'application/pdf'}).expect(201);
+  await api.post('/api/driver/registration/uploads/vehicle_v-second_unknown').set(headers(applicant)).field('kind','VEHICLE_DOCUMENT').field('role','TAXI_DRIVER').attach('file',pdf1,{filename:'unknown.pdf',contentType:'application/pdf'}).expect(400);
+  await api.post(`/api/driver/registration/uploads/${slot}`).set(headers(applicant)).field('kind','VEHICLE_DOCUMENT').field('role','CARGO_DRIVER').attach('file',pdf1,{filename:'wrong.pdf',contentType:'application/pdf'}).expect(400);
+
+  const stored=await db.performerApplication.findUniqueOrThrow({where:{userId:applicant.user.id},include:{roles:true}}),taxiRole=stored.roles.find(role=>role.role==='TAXI_DRIVER')!;
+  await db.$transaction([
+    db.performerApplication.update({where:{id:stored.id},data:{status:'CORRECTION_REQUIRED',canResubmit:true}}),
+    db.performerApplicationRole.update({where:{id:taxiRole.id},data:{status:'CORRECTION_REQUIRED',canResubmit:true,correctionFields:[`documentExpiries.${slot}`]}}),
+    db.performerUpload.update({where:{id:uploaded.body.id},data:{status:'CORRECTION_REQUIRED',canReupload:true}}),
+  ]);
+  await api.delete(`/api/driver/registration/uploads/${slot}`).set(headers(applicant)).expect(403);
+  const replacement=await api.post(`/api/driver/registration/uploads/${slot}`).set(headers(applicant)).field('kind','VEHICLE_DOCUMENT').field('role','TAXI_DRIVER').attach('file',pdf2,{filename:'replacement.pdf',contentType:'application/pdf'}).expect(201);
+  const replay=await api.post(`/api/driver/registration/uploads/${slot}`).set(headers(applicant)).field('kind','VEHICLE_DOCUMENT').field('role','TAXI_DRIVER').attach('file',pdf2,{filename:'replacement.pdf',contentType:'application/pdf'}).expect(201);
+  assert.equal(replay.body.id,replacement.body.id);
+  const withExpiry=(await api.patch('/api/driver/registration').set(headers(applicant)).send({version:patched.version,data:{documentExpiries:{[slot]:'01.01.2031'}}}).expect(200)).body.application;
+  assert.equal(withExpiry.data.documentExpiries[slot],'01.01.2031');
+
+  for(const spec of registrationUploadSlotSpecs(['TAXI_DRIVER'],data)) {
+    if(spec.slotKey===slot)continue;
+    const bytes=spec.kind==='PROFILE_PHOTO'||spec.kind==='VEHICLE_PHOTO'?pngAvatar:Buffer.from(`%PDF-1.4 ${spec.slotKey}`),mimeType=spec.kind==='PROFILE_PHOTO'||spec.kind==='VEHICLE_PHOTO'?'image/png':'application/pdf';
+    await db.performerUpload.upsert({where:{applicationId_slotKey:{applicationId:stored.id,slotKey:spec.slotKey}},create:{applicationId:stored.id,slotKey:spec.slotKey,kind:spec.kind,role:spec.role,status:'APPROVED',mimeType,byteSize:bytes.length,checksum:createHash('sha256').update(bytes).digest('hex'),data:bytes,...(registrationUploadRequiresExpiry(spec.slotKey)?{expiresAt:new Date('2030-01-01T23:59:59.999Z')}:{})},update:{status:'APPROVED'}});
+  }
+  const resubmitted=(await api.post('/api/driver/registration/resubmit').set(headers(applicant)).send({truthConfirmed:true,termsAccepted:true,acceptedConsentIds:['truth-confirmation','performer-terms'],legalTermsVersion:'performer-terms-2026-09-22'}).expect(201)).body.application;
+  assert.equal(resubmitted.roleStatuses.find((item:any)=>item.role==='TAXI_DRIVER').status,'SUBMITTED');
+  const storedReplacement=await db.performerUpload.findUniqueOrThrow({where:{applicationId_slotKey:{applicationId:stored.id,slotKey:slot}}});
+  assert.equal(storedReplacement.status,'UNDER_REVIEW');assert.equal(storedReplacement.expiresAt?.toISOString(),'2031-01-01T23:59:59.999Z');
 });
 test('driver tracking is scoped to the assigned passenger, rejects replay and ends with the trip', async()=>{
   await setOnline(driver1); await setOnline(driver2);
@@ -595,7 +656,7 @@ test('admin refresh retains password assurance and disabled administrator sessio
 });
 
 test('OTP guesses persist, role comes from database, refresh rotates and logout revokes session',async()=>{
-  const phone='+996700555555';await api.post('/api/auth/request-code').send({phone}).expect(201);
+  const phone='+996700555556';await api.post('/api/auth/request-code').send({phone}).expect(201);
   for(let i=0;i<5;i++)await api.post('/api/auth/verify-code').send({phone,code:'999999'}).expect(401);
   assert.equal((await db.smsChallenge.findUniqueOrThrow({where:{phone}})).attempts,5);
   await api.post('/api/auth/verify-code').send({phone,code:process.env.DEV_OTP_CODE??'123456'}).expect(401);

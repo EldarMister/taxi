@@ -129,6 +129,7 @@ export class AdminService {
       await tx.$queryRaw`SELECT "id" FROM "User" WHERE "id"=${id}::uuid FOR UPDATE`;
       await tx.$queryRaw`SELECT "userId" FROM "DriverProfile" WHERE "userId"=${id}::uuid FOR UPDATE`;
       const user=await tx.user.findFirst({where:{id,role:'DRIVER'},select:driverSelect});if(!user?.driverProfile)throw new NotFoundException('Водитель не найден');
+      if(user.driverProfile.registrationManaged)throw new ConflictException('Профиль управляется через проверку анкеты исполнителя');
       if(await tx.order.findFirst({where:{OR:[{driverId:id},{clientId:id}],status:{in:ACTIVE_STATUSES}}}))throw new ConflictException('Сначала завершите активную поездку водителя');
       const car=user.driverProfile.vehicle;
       const vehicle={make:dto.carMake===undefined?car?.make:validateText(dto.carMake,'Автомобиль'),color:dto.carColor===undefined?car?.color:validateText(dto.carColor,'Цвет'),plate:dto.carPlate===undefined?car?.plate:validateText(dto.carPlate,'Госномер').toUpperCase()};
