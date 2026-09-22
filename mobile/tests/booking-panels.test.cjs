@@ -576,11 +576,15 @@ test('delivery redesign has two price choices, a payment selector and only three
   assert.doesNotMatch(source, />Курьер</);
   assert.doesNotMatch(source, /d\.handle|Тип кузова|Грузчики|Что нужно доставить/);
   assert.match(source, /accessibilityLabel="Способы оплаты"/);
+  assert.match(source, /cash-outline" color=\{colors\.blue\}/);
   assert.match(source, /surface === 'payment'/);
   assert.match(source, /Запланировать поездку/);
   assert.match(source, /От двери до двери/);
   assert.match(source, /Комментарий водителю/);
   assert.match(source, /serviceImage: \{ width: '100%', height: 83 \}/);
+  assert.match(source, /delivery-van-blue\.png/);
+  assert.doesNotMatch(source, /taxi-yellow\.png/);
+  assert.doesNotMatch(source, /surface === 'details' && <BottomPanel expanded/);
 });
 
 test('delivery payment and simplified details open from the new main panel', async t => {
@@ -597,6 +601,7 @@ test('delivery payment and simplified details open from the new main panel', asy
   assert.match(textOf(renderer.root), /Наличные.*Оплата водителю после поездки/);
   await tap(renderer, 'Закрыть');
   await tap(renderer, 'Параметры доставки');
+  assert.equal(renderer.root.findByType('BottomPanel').props.expanded, undefined);
   assert.match(textOf(renderer.root), /Запланировать поездку.*От двери до двери.*Комментарий водителю/);
   assert.doesNotMatch(textOf(renderer.root), /Тип кузова|Грузчики|Что нужно доставить/);
 });
