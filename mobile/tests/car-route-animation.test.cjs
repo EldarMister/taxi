@@ -8,11 +8,24 @@ const output = {};
 vm.runInNewContext(ts.transpileModule(fs.readFileSync(require.resolve('../src/native/carRouteAnimation.ts'), 'utf8'), {
   compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
 }).outputText, { exports: output });
-const { carMetresBetween, trustedCarRoutePath, trustedCarDirectPath, sampleCarRoutePath } = output;
+const { carMetresBetween, trustedCarRoutePath, trustedCarDirectPath, matchedCarRoutePath, sampleCarRoutePath } = output;
 const origin = { latitude: 42, longitude: 74 };
 const shifted = (north, east) => ({ latitude: origin.latitude + north / 111320,
   longitude: origin.longitude + east / (111320 * Math.cos(origin.latitude * Math.PI / 180)) });
 const fix = (point, measuredAtMs) => ({ ...point, accuracyM: 5, measuredAtMs });
+
+test('confirmed driver road supports polling gaps without cutting through the corner', () => {
+  const corner = shifted(50, 0), road = [origin, corner, shifted(50, 50)];
+  const previous = { ...fix(shifted(20, 0), 1000), accuracyM: 35 };
+  const current = { ...fix(shifted(50, 30), 6000), accuracyM: 35 };
+  const path = matchedCarRoutePath(previous, current, previous, road, 5000);
+  assert.ok(path, 'raw GPS uncertainty does not discard positions already matched by the driver');
+  assert.ok(carMetresBetween(sampleCarRoutePath(path, .5), corner) < .01);
+  assert.equal(matchedCarRoutePath(previous, current, previous, [], 5000), null);
+  assert.equal(matchedCarRoutePath(previous, current, shifted(20, 15), road, 5000), null, 'rerouting cannot pull a rendered car diagonally onto the new road');
+  assert.equal(matchedCarRoutePath(previous, current, previous, road, 20000), null);
+  assert.equal(matchedCarRoutePath(current, previous, current, road, 5000), null);
+});
 
 test('a confident right-angle route animation follows the corner and ends at the raw GPS fix', () => {
   const corner = shifted(20, 0), route = [origin, corner, shifted(20, 20)];

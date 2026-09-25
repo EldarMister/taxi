@@ -2,7 +2,7 @@ import 'reflect-metadata';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { BadRequestException, ServiceUnavailableException } from '@nestjs/common';
-import { localizedRoadName, parseOsrmRoute, RoutingService } from '../src/routing';
+import { localizedRoadName, parseOsrmMatch, parseOsrmRoute, RoutingService } from '../src/routing';
 import { PlacesService, parseNominatimPlace } from '../src/places';
 import { AppConfig } from '../src/config';
 import { PhotonSearch, parsePhotonPlace } from '../src/photon';
@@ -118,6 +118,34 @@ test('routing requests driving steps with full GeoJSON; outages remain 503',asyn
   fetchMock.mock.mockImplementation(async()=>{throw new DOMException('aborted','TimeoutError');});
   await assert.rejects(()=>routing.route(pickup,dropoff),ServiceUnavailableException);
   await assert.rejects(()=>routing.route({...pickup,latitude:NaN},dropoff),BadRequestException);
+});
+
+test('OSRM match accepts a confident multi-fix road and rejects weak or distant matches',()=>{
+  const fixes=[{latitude:42,longitude:74,accuracy:8},{latitude:42.0001,longitude:74,accuracy:8},
+    {latitude:42.0002,longitude:74,accuracy:8}];
+  const tracepoints=fixes.map(fix=>({matchings_index:0,location:[fix.longitude,fix.latitude]}));
+  const result=parseOsrmMatch({code:'Ok',tracepoints,matchings:[{confidence:.9}]},fixes);
+  assert.ok(result);
+  assert.ok(result.bearing!<1||result.bearing!>359);
+  assert.equal(parseOsrmMatch({code:'Ok',tracepoints,matchings:[{confidence:.2}]},fixes),null);
+  assert.equal(parseOsrmMatch({code:'Ok',tracepoints:[...tracepoints.slice(0,2),{matchings_index:0,location:[74.01,42]}],matchings:[{confidence:.9}]},fixes),null);
+});
+
+test('fast reroute constrains start bearing and skips slow road-name lookups',async(t)=>{
+  let reverseCalls=0;
+  t.mock.method(globalThis,'fetch',async(input:any)=>{
+    const url=new URL(input.toString());
+    if(url.pathname.includes('/route/v1/driving/')){
+      assert.equal(url.searchParams.get('bearings'),'90,45;');
+      return Response.json(osrmFixture());
+    }
+    reverseCalls++;
+    return Response.json({});
+  });
+  const route=await new RoutingService(config).route(pickup,dropoff,12000,'ru',{bearing:90,fast:true});
+  assert.equal(route.provider,'osrm');
+  assert.equal(reverseCalls,0);
+  assert.ok(route.steps.every(step=>step.name===''));
 });
 
 test('route names use explicit OSM language tags, never the stale OSRM name',async(t)=>{

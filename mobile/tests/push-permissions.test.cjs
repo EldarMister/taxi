@@ -11,13 +11,13 @@ const deferred = () => { let resolve; const promise = new Promise(done => { reso
 
 function setup(options = {}) {
   let permission = options.permission ?? { status: 'undetermined', canAskAgain: true };
-  let tokenAttempts = 0, permissionRequests = 0;
+  let tokenAttempts = 0, permissionRequests = 0, tokenProject, notificationHandler;
   const calls = [], storage = new Map(), timers = new Map();
   const native = {
     getPermissionsAsync: async () => { if (options.unsupported) throw new Error('Native module unavailable'); return permission; },
     requestPermissionsAsync: async () => { permissionRequests++; permission = options.answer ?? { status: 'granted', canAskAgain: true }; return permission; },
-    getExpoPushTokenAsync: async () => { tokenAttempts++; return options.token ? options.token(tokenAttempts) : { data: 'ExpoPushToken[test]' }; },
-    setNotificationChannelAsync: async () => {}, setNotificationHandler: () => {}, AndroidImportance: { HIGH: 4 }, AndroidAudioUsage: { NOTIFICATION: 5 }, AndroidAudioContentType: { SONIFICATION: 4 },
+    getExpoPushTokenAsync: async ({ projectId }) => { tokenAttempts++; tokenProject = projectId; return options.token ? options.token(tokenAttempts) : { data: 'ExpoPushToken[test]' }; },
+    setNotificationChannelAsync: async () => {}, setNotificationHandler: value => { notificationHandler = value; }, AndroidImportance: { HIGH: 4 }, AndroidAudioUsage: { NOTIFICATION: 5 }, AndroidAudioContentType: { SONIFICATION: 4 },
   };
   const api = { getTokens: () => ({ accessToken: 'signed-in' }), request: async (url, init) => { calls.push({ url, ...init }); if (options.network) return options.network(url, init); } };
   const exports = {};
@@ -25,20 +25,38 @@ function setup(options = {}) {
     exports,
     setTimeout: callback => { const id = timers.size + 1; timers.set(id, callback); return id; },
     clearTimeout: id => timers.delete(id),
-    process: { env: {} },
+    process: { env: options.env ?? {} },
     require: id => {
       if (id === 'expo-notifications') return native;
       if (id === 'expo-device') return { isDevice: options.isDevice ?? true };
       if (id === 'expo-constants') return { expoConfig: { extra: { eas: { projectId: options.noProject ? undefined : 'configured-project' } } } };
       if (id === 'expo-secure-store') return { setItemAsync: async (key, value) => storage.set(key, value), getItemAsync: async key => storage.get(key), deleteItemAsync: async key => storage.delete(key) };
-      if (id === 'react-native') return { Platform: { OS: options.os ?? 'android' }, Linking: { openSettings: async () => {} } };
-      if (id === './driverSounds') return { driverSounds: { isDriver: () => false } };
+      if (id === 'react-native') return { AppState: { currentState: options.appState ?? 'active' }, Platform: { OS: options.os ?? 'android' }, Linking: { openSettings: async () => {} } };
+      if (id === './driverSounds') return { driverSounds: { isDriver: () => options.driver ?? false } };
       if (id === '../api') return { api };
       throw new Error(`Unexpected dependency: ${id}`);
     },
   });
-  return { ...exports, calls, storage, timers, get tokenAttempts() { return tokenAttempts; }, get permissionRequests() { return permissionRequests; } };
+  return { ...exports, calls, storage, timers, get tokenAttempts() { return tokenAttempts; }, get tokenProject() { return tokenProject; }, get notificationHandler() { return notificationHandler; }, get permissionRequests() { return permissionRequests; } };
 }
+
+test('driver uses its packaged push project and background offers retain notification sound', async () => {
+  const h = setup({ driver: true, appState: 'background', env: { EXPO_PUBLIC_EAS_PROJECT_ID: 'client-project' }, permission: { status: 'granted', canAskAgain: true } });
+  await h.registerPushNotifications();
+  assert.equal(h.tokenProject, 'configured-project');
+  assert.equal((await h.notificationHandler.handleNotification()).shouldPlaySound, true);
+  const foreground = setup({ driver: true, appState: 'active' });
+  assert.equal((await foreground.notificationHandler.handleNotification()).shouldPlaySound, false);
+});
+test('a refreshed push token replaces the old server registration only after the new one succeeds', async () => {
+  const h = setup({ permission: { status: 'granted', canAskAgain: true }, token: async () => ({ data: 'ExpoPushToken[new]' }) });
+  h.storage.set('taxi.pushToken', 'ExpoPushToken[old]');
+  assert.equal(await h.registerPushNotifications(), 'ExpoPushToken[new]');
+  assert.deepEqual(h.calls.map(call => [call.method, JSON.parse(call.body).token]), [
+    ['POST', 'ExpoPushToken[new]'], ['DELETE', 'ExpoPushToken[old]'],
+  ]);
+  assert.equal(h.storage.get('taxi.pushToken'), 'ExpoPushToken[new]');
+});
 
 test('allowing notifications completes from the OS result without waiting for a push provider', async () => {
   const provider = deferred();

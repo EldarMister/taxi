@@ -21,8 +21,10 @@ const ky: Record<string, string> = {
   "Ваш адрес": "Сиздин дарек",
   "Выберите место подачи": "Унаа келчү жерди тандаңыз",
   "Считаем стоимость…": "Баасын эсептеп жатабыз…",
-  "Обновить расчёт": "Баасын жаңылоо",
-  "Обновить тарифы": "Тарифтерди жаңылоо",
+  "Считаем…": "Эсептеп жатабыз…",
+  "Повторим автоматически": "Автоматтык түрдө кайра аракет кылабыз",
+  "Обновляем цену…": "Бааны жаңылап жатабыз…",
+  "Загружаем тарифы…": "Тарифтер жүктөлүүдө…",
   "Выберите тариф": "Тарифти тандаңыз",
   "Подъезд": "Кире бериш",
   "Укажите номер подъезда": "Кире бериштин номерин көрсөтүңүз",
@@ -134,7 +136,9 @@ const ky: Record<string, string> = {
   'Не удалось позвонить': 'Чалуу мүмкүн болгон жок',
 };
 export const money = (value: number) => `${Number(value).toLocaleString('ru-RU')} сом`;
-export const km = (meters: number) => `${(Number(meters) / 1000).toFixed(1).replace('.', ',')} км`;
+export const km = (meters: number) => Number(meters) < 1000
+  ? `${Math.round(Number(meters))} м`
+  : `${(Number(meters) / 1000).toFixed(1).replace('.', ',')} км`;
 export const mins = (seconds: number, language: Language = 'ru') => `${Math.max(1, Math.round(Number(seconds) / 60))} ${language === 'ky' ? 'мүн' : 'мин'}`;
 export const tripTime = (seconds: number, language: Language = 'ru') => {
   const totalMinutes = Math.max(1, Math.round(Number(seconds) / 60));

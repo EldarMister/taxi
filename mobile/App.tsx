@@ -90,6 +90,8 @@ import {
   onNotificationReceived,
 } from "./src/native/push";
 import { driverSounds } from "./src/native/driverSounds";
+import { setDriverAvailability } from "./src/native/driverAvailability";
+import { requestDriverBackgroundAccess } from "./src/native/driverTracking";
 import {
   PermissionIntroState,
   readLastOrderId,
@@ -190,9 +192,12 @@ function TaxiApp() {
   const [deliveryDetails, setDeliveryDetails] = useState(emptyDeliveryDetails);
   const [rideDetails, setRideDetails] = useState(emptyRideDetails);
   const [bookingHeight, setBookingHeight] = useState(166);
+  const [driverPanelHeight, setDriverPanelHeight] = useState(0);
   const [driverCompletionHeight, setDriverCompletionHeight] = useState(520);
   const [coming, setComing] = useState(false);
   const [clock, setClock] = useState(Date.now());
+  const [availabilityRetry, setAvailabilityRetry] = useState(0);
+  const availabilityPrompted = useRef(false);
   const socketRef = useRef<Socket | null>(null);
   const orderKey = useRef<{ quoteId: string; key: string } | null>(null);
   const syncRef = useRef(false);
@@ -207,7 +212,25 @@ function TaxiApp() {
     void getCurrentPosition().then(point => { if (live) setSearchCenter(point); }).catch(() => undefined);
     return () => { live = false; };
   }, [addressField, locationEnabled, !!searchCenter]);
-  const navigation = useDriverNavigation({ userId: user?.id, order: driver ? order : null, enabled: driver && permissionStep === 'done', locationEnabled, mapVisible: page === 'home' && !showingServices, language: user?.language || 'ru' });
+  const navigation = useDriverNavigation({ userId: user?.id, order: driver ? order : null, enabled: appVariant === 'driver' && driver && permissionStep === 'done', locationEnabled, mapVisible: page === 'home' && !showingServices, language: user?.language || 'ru' });
+  useEffect(() => {
+    const available = appVariant === 'driver' && driver && !!user?.driverProfile?.online
+      && locationEnabled && permissionStep === 'done' && !isActive(order);
+    if (!available || !user) {
+      if (!user?.driverProfile?.online) availabilityPrompted.current = false;
+      void setDriverAvailability(false).catch(() => undefined);
+      return;
+    }
+    let active = true;
+    void setDriverAvailability(true, user.id).then(ready => {
+      if (ready || !active || availabilityPrompted.current || AppState.currentState !== 'active') return;
+      availabilityPrompted.current = true;
+      void requestDriverBackgroundAccess().then(granted => {
+        if (granted && active) void setDriverAvailability(true, user.id).catch(() => undefined);
+      }).catch(() => undefined);
+    }).catch(() => undefined);
+    return () => { active = false; };
+  }, [driver, user?.id, user?.driverProfile?.online, locationEnabled, permissionStep, order?.id, order?.status, availabilityRetry]);
   const lastDriverPositionUpload = useRef(0);
   useEffect(() => {
     const fix=navigation.position;
@@ -220,9 +243,9 @@ function TaxiApp() {
   const tracking = useClientDriverTracking(order, user?.role === "CLIENT");
   const mapSelection = !driver && !order ? mapField : null;
   const browsingPickup = !driver && !order && !dropoff && !mapSelection && !pickupChosenManually;
-  const { quote, quotes, calculating, quoteError, refresh: refreshQuotes, clear: clearQuotes } = useRideQuotes(pickup, dropoff, tariffs, tariffId, !!user && !driver && !order && service === 'taxi', user?.id);
+  const { quote, previewQuote, quotes, calculating, quoteError, refresh: refreshQuotes, clear: clearQuotes } = useRideQuotes(pickup, dropoff, tariffs, tariffId, !!user && !driver && !order && service === 'taxi', user?.id);
   const deliveryTariffId=deliveryTariffs.find(item=>item.kind===deliveryKind)?.id||'';
-  const { quote: deliveryQuote, quotes: deliveryQuotes, calculating: deliveryCalculating, quoteError: deliveryQuoteError, refresh: refreshDeliveryQuotes, clear: clearDeliveryQuotes } = useRideQuotes(pickup, dropoff, deliveryTariffs, deliveryTariffId, !!user && !driver && !order && service === 'delivery', user?.id);
+  const { quote: deliveryQuote, previewQuote: deliveryPreviewQuote, quotes: deliveryQuotes, calculating: deliveryCalculating, quoteError: deliveryQuoteError, refresh: refreshDeliveryQuotes, clear: clearDeliveryQuotes } = useRideQuotes(pickup, dropoff, deliveryTariffs, deliveryTariffId, !!user && !driver && !order && service === 'delivery', user?.id);
   const updateUser = (next: User | null) => {
     driverSounds.setUser(next);
     userRef.current = next;
@@ -412,6 +435,7 @@ function TaxiApp() {
     const subscription = AppState.addEventListener("change", (state) => {
       driverSounds.setForeground(state === "active");
       if (state === "active") {
+        setAvailabilityRetry(value => value + 1);
         void sync();
         void refreshLocationPermission().catch(() => undefined);
         if (userRef.current?.notifications) void registerPushNotifications();
@@ -422,18 +446,31 @@ function TaxiApp() {
   useEffect(() => {
     if (!user) return;
     let subscribed = true;
-    const refreshTariffs = () => { void Promise.all([
+    let tariffsPending = false;
+    let tariffsRetryNeeded = false;
+    const refreshTariffs = () => {
+      if (tariffsPending) return;
+      tariffsPending = true;
+      void Promise.allSettled([
       api.request<Tariff[]>("/tariffs"),
       api.request<Tariff[]>("/tariffs?kind=DELIVERY_CAR"),
       api.request<Tariff[]>("/tariffs?kind=DELIVERY_TRUCK"),
     ])
-      .then(([result,deliveryCars,deliveryTrucks]) => {
+      .then(([rides, deliveryCars, deliveryTrucks]) => {
         if (!subscribed) return;
-        setTariffs(result);
-        setTariffId((current) => result.some(tariff => tariff.id === current) ? current : result[0]?.id || "");
-        setDeliveryTariffs([...deliveryCars,...deliveryTrucks]);
+        tariffsRetryNeeded = [rides, deliveryCars, deliveryTrucks].some(result => result.status === 'rejected')
+          || (rides.status === 'fulfilled' && rides.value.length === 0)
+          || (deliveryCars.status === 'fulfilled' && deliveryTrucks.status === 'fulfilled'
+            && deliveryCars.value.length + deliveryTrucks.value.length === 0);
+        if (rides.status === 'fulfilled') {
+          setTariffs(rides.value);
+          setTariffId((current) => rides.value.some(tariff => tariff.id === current) ? current : rides.value[0]?.id || "");
+        }
+        if (deliveryCars.status === 'fulfilled' && deliveryTrucks.status === 'fulfilled')
+          setDeliveryTariffs([...deliveryCars.value, ...deliveryTrucks.value]);
       })
-      .catch((e) => { if (subscribed) setError(messageOf(e)); }); };
+      .finally(() => { tariffsPending = false; });
+    };
     const socket = io(api.socketUrl, {
       auth: { token: api.getTokens()?.accessToken },
       transports: ["websocket", "polling"],
@@ -444,6 +481,9 @@ function TaxiApp() {
     socketRef.current = socket;
     socket.on("connect", () => {
       setConnected(true);
+      if (userRef.current?.role === 'CLIENT' && orderRef.current?.driver?.id
+        && ['ASSIGNED', 'ARRIVED', 'IN_PROGRESS'].includes(orderRef.current.status))
+        socket.emit('tracking:subscribe', { orderId: orderRef.current.id });
       void sync();
       refreshTariffs();
       setContentRevision(value => value + 1);
@@ -468,6 +508,7 @@ function TaxiApp() {
       void api.refresh().catch((e) => setError(messageOf(e)));
     });
     socket.on("driver:location", tracking.receive);
+    socket.on("driver:location:update", tracking.receive);
     socket.on("order:updated", (next: Order) => {
       applyOrder(next);
       if (next.status === "COMPLETED" && userRef.current?.role === "DRIVER")
@@ -493,14 +534,23 @@ function TaxiApp() {
       if (orderRef.current?.id === orderId) setComing(true);
     });
     const interval = setInterval(() => void sync(), 12000);
+    const tariffRetry = setInterval(() => { if (tariffsRetryNeeded) refreshTariffs(); }, 30000);
     return () => {
       subscribed = false;
       clearInterval(interval);
+      clearInterval(tariffRetry);
       socket.removeAllListeners();
       socket.disconnect();
       if (socketRef.current === socket) socketRef.current = null;
     };
   }, [refreshRegistrationAttention, user?.id]);
+  useEffect(() => {
+    const socket = socketRef.current;
+    if (!socket || user?.role !== 'CLIENT') return;
+    if (order?.driver?.id && ['ASSIGNED', 'ARRIVED', 'IN_PROGRESS'].includes(order.status))
+      socket.emit('tracking:subscribe', { orderId: order.id });
+    return () => { if (order?.id) socket.emit('tracking:unsubscribe', { orderId: order.id }); };
+  }, [user?.role, order?.id, order?.status, order?.assignmentId, order?.driver?.id]);
   useEffect(() => {
     driverSounds.offers(offers, order);
   }, [offers, order, user?.id, user?.notifications, user?.driverProfile?.online, clock]);
@@ -615,6 +665,7 @@ function TaxiApp() {
       await api.patch("/driver/online", { online: value });
       if(position)await api.patch('/driver/position',{latitude:position.latitude,longitude:position.longitude,accuracyM:position.accuracy??100,measuredAtMs:Date.now()});
       updateUser(await api.request<User>("/users/me"));
+      if (value && userRef.current?.notifications) void registerPushNotifications();
       if (!value) setOffers([]);
     });
   const selectAddress = (field: "pickup" | "dropoff", point: Point) => {
@@ -770,18 +821,23 @@ function TaxiApp() {
     run(async () => {
       if (!quote) return;
       if (rideComment(rideDetails).length > 500) throw new Error("Сократите комментарий до 500 символов.");
-      if (Date.now() >= new Date(quote.expiresAt).getTime()) {
-        refreshQuotes();
-        return;
-      }
       if (orderKey.current?.quoteId !== quote.id)
         orderKey.current = { quoteId: quote.id, key: requestId() };
-      const created = await api.post<Order>("/orders", {
-        quoteId: quote.id,
-        comment: rideComment(rideDetails),
-        passenger: rideDetails.passenger || undefined,
-        idempotencyKey: orderKey.current.key,
-      });
+      let created: Order;
+      try {
+        created = await api.post<Order>("/orders", {
+          quoteId: quote.id,
+          comment: rideComment(rideDetails),
+          passenger: rideDetails.passenger || undefined,
+          idempotencyKey: orderKey.current.key,
+        });
+      } catch (error) {
+        if (error instanceof ApiError && error.status === 400 && /Расчёт стоимости истёк/i.test(error.message)) {
+          refreshQuotes();
+          return;
+        }
+        throw error;
+      }
       applyOrder(created);
 
       clearQuotes();
@@ -789,18 +845,26 @@ function TaxiApp() {
   const bookDelivery = () =>
     run(async () => {
       if (!deliveryQuote) return;
-      if (Date.now() >= new Date(deliveryQuote.expiresAt).getTime()) { refreshDeliveryQuotes(); return; }
       if (orderKey.current?.quoteId !== deliveryQuote.id) orderKey.current = { quoteId: deliveryQuote.id, key: requestId() };
-      const created = await api.post<Order>('/orders', {
-        quoteId: deliveryQuote.id,
-        comment: deliveryDetails.comment.trim(),
-        delivery: {
-          goodsDescription: deliveryKind === 'DELIVERY_TRUCK' ? 'Грузовой заказ' : 'Доставка',
-          doorToDoor: deliveryDetails.doorToDoor,
-          ...(deliveryDetails.scheduled ? { scheduledAt: new Date(Date.now() + 30 * 60_000).toISOString() } : {}),
-        },
-        idempotencyKey: orderKey.current.key,
-      });
+      let created: Order;
+      try {
+        created = await api.post<Order>('/orders', {
+          quoteId: deliveryQuote.id,
+          comment: deliveryDetails.comment.trim(),
+          delivery: {
+            goodsDescription: deliveryKind === 'DELIVERY_TRUCK' ? 'Грузовой заказ' : 'Доставка',
+            doorToDoor: deliveryDetails.doorToDoor,
+            ...(deliveryDetails.scheduled ? { scheduledAt: new Date(Date.now() + 30 * 60_000).toISOString() } : {}),
+          },
+          idempotencyKey: orderKey.current.key,
+        });
+      } catch (error) {
+        if (error instanceof ApiError && error.status === 400 && /Расчёт стоимости истёк/i.test(error.message)) {
+          refreshDeliveryQuotes();
+          return;
+        }
+        throw error;
+      }
       applyOrder(created);
       clearDeliveryQuotes();
     });
@@ -931,17 +995,23 @@ function TaxiApp() {
     });
     return () => back.remove();
   }, [addressField, chat, drawer, mapField, page, driver, order, dropoff, showingServices, historyDetailId]);
-  const offer = !order
+  const offer = (!order || ['CANCELLED', 'NO_DRIVER'].includes(order.status))
     ? offers.find(
         (item) =>
           !item.searchExpiresAt ||
           new Date(item.searchExpiresAt).getTime() > clock,
       )
     : undefined;
-  const displayed = order || offer;
-  const approachScope = driver && offer ? `offer:${offer.id}` : !driver && order?.status === 'ASSIGNED' ? `client:${order.id}:${order.driver?.id}` : '';
-  const approach = useApproachRoute(driver ? navigation.position : tracking.ageSeconds != null && tracking.ageSeconds <= 15 ? tracking.position : null, driver ? offer?.pickup : order?.pickup, approachScope);
-  const mapRoutes = tripMapRoutes({ driver, order, offer, quote: service === 'delivery' ? deliveryQuote : quote, navigationRoute: navigation.route, approachRoute: approach.route });
+  const visibleDriverOrder = driver && offer ? null : order;
+  const displayed = visibleDriverOrder || offer;
+  const approachScope = driver && offer ? `offer:${offer.id}` : '';
+  const approach = useApproachRoute(driver ? navigation.position : null, driver ? offer?.pickup : null, approachScope);
+  const mapRoutes = tripMapRoutes({ driver, order: visibleDriverOrder, offer, quote: service === 'delivery' ? deliveryQuote : quote, navigationRoute: navigation.route, approachRoute: approach.route });
+  useEffect(() => {
+    if (!driver || !offer || !order || !['CANCELLED', 'NO_DRIVER'].includes(order.status)) return;
+    dismissedOrderIds.current.add(order.id);
+    applyOrder(null);
+  }, [driver, offer?.id, order?.id, order?.status, applyOrder]);
 
 
   if (wrongAppLanguage)
@@ -1118,7 +1188,8 @@ function TaxiApp() {
             style={{
               flex: 1,
               minHeight: order?.status === "COMPLETED" ? 0 : 120,
-              position: "relative",
+              position: driver && order?.status === "COMPLETED" ? "relative" : "absolute",
+              ...(!(driver && order?.status === "COMPLETED") ? { top: 0, left: 0, right: 0, bottom: 0 } : {}),
               backgroundColor: isDark ? palette.background : "#E6F0F6",
             }}
           >
@@ -1155,6 +1226,9 @@ function TaxiApp() {
               onEditPoint={!driver && !order ? setMapField : undefined}
               selecting={busy}
               contentTopInset={insets.top + (driver && order?.status === 'COMPLETED' ? 8 : navigation.active ? navigationHeight + 72 : driver && offer ? 130 : 64)}
+              contentBottomInset={driver
+                ? order?.status !== "COMPLETED" ? Math.max(0, driverPanelHeight) : 0
+                : !mapSelection && !addressField ? Math.max(0, bookingHeight) : 0}
               onSelectPoint={mapSelect}
               recenterKey={recenter}
             />
@@ -1169,35 +1243,29 @@ function TaxiApp() {
             {mapSelection && <View style={{ position: "absolute", left: 17, bottom: mapPanelHeight + 48 }}><IconButton name="arrow-back" label={t("Назад")} onPress={() => { setMapField(null); setMapFocus(null); }}/></View>}
             {!driver && !order && dropoff && !mapSelection && <View style={{ position: "absolute", left: 17, bottom: 48 }}><IconButton name="arrow-back" label={t("Назад")} onPress={() => setDropoff(null)}/></View>}
           </View>
+          {driver && order?.status !== 'COMPLETED' && <View pointerEvents="none" style={{ flex: 1 }}/> }
           {driver && order?.status === 'COMPLETED' && <View style={{ height: Math.max(0, driverCompletionHeight - 30) }}/>}
-          {driver && <DriverPanel key={order?.id || offer?.id || 'idle'} user={user} order={order} offer={offer} busy={busy} coming={coming} approach={approach} navigation={navigation} backgroundReady={navigation.backgroundReady} onBackground={navigation.enableBackground} onAccept={accept} onRateClient={rateClient} onCompletionHeight={setDriverCompletionHeight} onOnline={() => online(true)} onAction={action} onChat={() => setChat(true)} onDone={done}/>}
+          {driver && <DriverPanel key={offer?.id || order?.id || 'idle'} user={user} order={visibleDriverOrder} offer={offer} busy={busy} coming={coming} approach={approach} navigation={navigation} backgroundReady={navigation.backgroundReady} onBackground={navigation.enableBackground} onAccept={accept} onRateClient={rateClient} onCompletionHeight={setDriverCompletionHeight} onHeight={setDriverPanelHeight} onOnline={() => online(true)} onAction={action} onChat={() => setChat(true)} onDone={done}/>}
+          {!driver && <View pointerEvents="none" style={{ flex: 1 }}/>}
           {!driver && !order && service === 'taxi' && <>
-            {!mapSelection && <View style={{ height: Math.max(0, bookingHeight - 30) }}/>}
             <BookingPanel pickup={pickup} dropoff={dropoff} tariffs={tariffs} tariffId={tariffId}
-              quote={quote} quotes={quotes} calculating={calculating} quoteError={quoteError} bookingError={error} busy={busy}
+              quote={quote} previewQuote={previewQuote} quotes={quotes} calculating={calculating} quoteError={quoteError} bookingError={error} busy={busy}
               language={user.language} details={rideDetails} onDetails={setRideDetails}
               onAddress={setAddressField} registerAddressOpener={registerAddressOpener} onTariff={setTariffId} hidden={!!mapSelection || !!addressField} onHeight={setBookingHeight}
               onSwap={() => { setPickup(dropoff); setDropoff(pickup); setRideDetails(current => ({ ...current, entrance: '' })); }}
               onBook={book}
-              onRefresh={() => { if (tariffs.length) refreshQuotes(); else void run(async () => { const list = await api.request<Tariff[]>("/tariffs"); setTariffs(list); setTariffId(list[0]?.id || ""); }); }}
             />
           </>}
           {!driver && !order && service === 'delivery' && <>
-            {!mapSelection ? <View style={{ height: Math.max(0, bookingHeight - 30) }}/> : null}
             <DeliveryPanel pickup={pickup} dropoff={dropoff} tariffs={deliveryTariffs} selectedKind={deliveryKind}
-              quote={deliveryQuote} quotes={deliveryQuotes} calculating={deliveryCalculating} error={error || deliveryQuoteError} busy={busy}
+              quote={deliveryQuote} previewQuote={deliveryPreviewQuote} quotes={deliveryQuotes} calculating={deliveryCalculating} error={error || deliveryQuoteError} busy={busy}
               details={deliveryDetails} onDetails={setDeliveryDetails} onKind={kind => { setDeliveryKind(kind); setError(''); }}
               onAddress={setAddressField} hidden={!!mapSelection || !!addressField} onHeight={setBookingHeight}
               onSwap={() => { setPickup(dropoff); setDropoff(pickup); }}
               onBook={bookDelivery}
-              onRefresh={() => { if (deliveryTariffs.length) refreshDeliveryQuotes(); else void run(async () => {
-                const [cars,trucks]=await Promise.all([api.request<Tariff[]>('/tariffs?kind=DELIVERY_CAR'),api.request<Tariff[]>('/tariffs?kind=DELIVERY_TRUCK')]);
-                setDeliveryTariffs([...cars,...trucks]);
-              }); }}
             />
           </>}
           {!driver && order && <>
-            <View style={{ height: Math.max(0, bookingHeight - 30) }}/>
             <ClientTripPanel order={order} user={user} busy={busy} onAction={action} onChat={() => setChat(true)} onDone={() => done(order.id)} onReset={() => done(order.id, true)} onRating={rate} coming={coming} onHeight={setBookingHeight} driverPosition={tracking.position} trackingWaiting={tracking.waiting} trackingStatus={tracking.statusMessage} approach={approach.route}/>
           </>}
         </View>
@@ -1216,6 +1284,8 @@ function TaxiApp() {
           busy={busy}
           themePreference={themePreference}
           onThemePreferenceChange={onThemePreferenceChange}
+          voiceEnabled={driver ? navigation.voiceEnabled : undefined}
+          onVoiceEnabledChange={driver ? navigation.setVoiceEnabled : undefined}
         />
       )}
       {driver && (page !== "home" || !displayed) ? (

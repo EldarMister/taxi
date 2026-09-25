@@ -24,8 +24,7 @@ export function tripMapRoutes({ driver, order, offer, quote, navigationRoute, ap
   const inProgress = order?.status === 'IN_PROGRESS';
   const ride = inProgress && driver ? navigationRoute?.geometry || roadGeometry(order) :
     roadGeometry(displayed) || (!displayed ? roadGeometry(quote) : undefined);
-  const approach = headingToPickup
-    ? (driver ? navigationRoute?.geometry : approachRoute?.geometry)
+  const approach = headingToPickup && driver ? navigationRoute?.geometry
     : !order && driver && offer ? approachRoute?.geometry : undefined;
   return {
     geometry: ride,

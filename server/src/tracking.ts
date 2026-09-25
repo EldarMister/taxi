@@ -1,10 +1,15 @@
 import { BadRequestException, Body, Controller, ForbiddenException, Get, Header, Injectable, NotFoundException, Param, ParseUUIDPipe, Patch, Req, UseGuards } from '@nestjs/common';
-import { IsIn, IsInt, IsNumber, IsOptional, IsString, Matches, Max, MaxLength, Min, IsUUID } from 'class-validator';
+import { ArrayMaxSize, ArrayMinSize, IsArray, IsIn, IsInt, IsNumber, IsOptional, IsString, Matches, Max, MaxLength, Min, IsUUID, ValidateNested } from 'class-validator';
+import { Type } from 'class-transformer';
 import { Actor, AuthGuard, RateLimits } from './auth';
 import { ASSIGNED_STATUSES } from './domain';
 import { PrismaService } from './prisma.service';
 import { RealtimeEvents } from './events';
 
+export class TrackingRoadPointDto {
+  @IsNumber() @Min(-90) @Max(90) latitude!: number;
+  @IsNumber() @Min(-180) @Max(180) longitude!: number;
+}
 export class DriverLocationDto {
   @IsNumber() @Min(-90) @Max(90) latitude!: number;
   @IsNumber() @Min(-180) @Max(180) longitude!: number;
@@ -28,6 +33,12 @@ export class DriverLocationDto {
   @IsOptional() @IsInt() @Min(1) sequence?: number;
   @IsOptional() @IsInt() @Min(0) measuredAt?: number;
   @IsOptional() @IsNumber() @Min(0) @Max(359.999) bearingDeg?: number;
+  @IsOptional() @IsInt() @Min(0) routeIndex?: number;
+  @IsOptional() @IsNumber() @Min(0) @Max(1) routeProgress?: number;
+  @IsOptional() @IsNumber() @Min(0) @Max(10000) distanceToRoute?: number;
+  @IsOptional() @IsIn([true, false]) matched?: boolean;
+  @IsOptional() @IsArray() @ArrayMinSize(2) @ArrayMaxSize(128)
+  @ValidateNested({ each: true }) @Type(() => TrackingRoadPointDto) matchedPath?: { latitude: number; longitude: number }[];
 }
 export type DriverFix = DriverLocationDto & {
   driverId: string;
@@ -108,8 +119,21 @@ export function isNewDriverFix(previous: DriverFix | null, incoming: DriverLocat
   return incoming.sequence === 1 || now - previous.receivedAt > 15000;
 }
 
+export function plausibleDriverFix(previous: DriverFix | null, incoming: DriverLocationDto): boolean {
+  if (!previous) return true;
+  const at = incoming.measuredAtMs ?? incoming.measuredAt ?? incoming.timestamp ?? 0;
+  const elapsed = Math.max(0, (at - previous.timestamp) / 1000);
+  if (elapsed > 30) return true;
+  const latM = (incoming.latitude - previous.latitude) * 111_195;
+  const lonM = (incoming.longitude - previous.longitude) * 111_195 * Math.cos(incoming.latitude * Math.PI / 180);
+  const allowance = 35 + elapsed * 55 + Math.min(60, (incoming.accuracyM ?? incoming.accuracy ?? 0) + (previous.accuracyM ?? previous.accuracy ?? 0));
+  return Math.hypot(latM, lonM) <= allowance;
+}
+
 @Injectable()
 export class TrackingService {
+  private readonly live = new Map<string, DriverFix>();
+  private readonly persistedAt = new Map<string, number>();
   constructor(private readonly db: PrismaService, private readonly events: RealtimeEvents, private readonly limits: RateLimits) {}
   async get(actor: Actor, id: string) {
     const order = await this.db.order.findUnique({ where: { id } });
@@ -118,7 +142,10 @@ export class TrackingService {
     const assignment = order.driverId && ASSIGNED_STATUSES.includes(order.status)
       ? await this.db.statusHistory.findFirst({ where: { orderId: id, status: 'ASSIGNED', actorId: order.driverId }, orderBy: { createdAt: 'desc' }, select: { id: true } })
       : null;
-    const location = visibleDriverLocation(order);
+    const cached = this.live.get(id);
+    const persisted = order.driverLocation as DriverFix | null;
+    const location = visibleDriverLocation({ ...order, driverLocation: cached?.driverId === order.driverId && cached.assignmentId === assignment?.id
+      ? cached : persisted && (!persisted.assignmentId || persisted.assignmentId === assignment?.id) ? persisted : null });
     return { orderId: id, assignmentId: assignment?.id ?? null, driverId: order.driverId, status: order.status,
       serverTimeMs: Date.now(), stateVersion: location?.stateVersion ?? 0, location };
   }
@@ -146,19 +173,41 @@ export class TrackingService {
       const assignment = await tx.statusHistory.findFirst({ where: { orderId: id, status: 'ASSIGNED', actorId: actor.id }, orderBy: { createdAt: 'desc' }, select: { id: true } });
       if (!assignment) throw new ForbiddenException('Назначение водителя не найдено');
       if (dto.schemaVersion === 1 && dto.assignmentId !== assignment.id) throw new ForbiddenException('Назначение водителя изменилось');
-      const previous = visibleDriverLocation(order, now);
-      const fresh = isNewDriverFix(previous, incoming, now);
+      const cached = this.live.get(id);
+      const persisted = order.driverLocation as DriverFix | null;
+      const previous = visibleDriverLocation({ ...order,
+        driverLocation: cached?.driverId === actor.id && cached.assignmentId === assignment.id ? cached
+          : persisted && (!persisted.assignmentId || persisted.assignmentId === assignment.id) ? persisted : null }, now);
+      const fresh = isNewDriverFix(previous, incoming, now) && plausibleDriverFix(previous, incoming);
       const location: DriverFix = fresh
         ? { ...incoming, orderId: id, assignmentId: assignment.id, driverId: actor.id,
           receivedAt: now, receivedAtMs: now, stateVersion: (previous?.stateVersion ?? 0) + 1 }
         : previous!;
-      // Keep the order's status version separate from high-frequency GPS updates.
-      if (fresh) await tx.order.update({ where: { id }, data: { driverLocation: { ...location }, updatedAt: order.updatedAt } });
+      // A hot trip is held in process memory; SQL is a recovery checkpoint,
+      // not a one-write-per-GPS-fix event stream. Assignment/status are still
+      // checked in the transaction before each accepted update.
+      if (fresh) {
+        this.live.set(id, location);
+        if (this.live.size > 10000) this.live.delete(this.live.keys().next().value!);
+        if (now - (this.persistedAt.get(id) ?? 0) >= 10_000) {
+          await tx.order.update({ where: { id }, data: { driverLocation: { ...location }, updatedAt: order.updatedAt } });
+          this.persistedAt.set(id, now);
+        }
+      }
       return { clientId: order.clientId, fresh, payload: { orderId: id, assignmentId: assignment.id, driverId: actor.id,
         status: order.status, stateVersion: location.stateVersion ?? 0, location }, pickup: order.pickup, dropoff: order.dropoff };
     });
     const payload = { ...result.payload, serverTimeMs: Date.now() };
-    if (result.fresh) this.events.publish([result.clientId], 'driver:location', payload);
+    if (result.fresh) {
+      this.events.publish([result.clientId], 'driver:location', payload);
+      const fix = result.payload.location;
+      this.events.publishOrder(id, 'driver:location:update', { ...payload,
+        lat: fix.latitude, lng: fix.longitude, bearing: fix.courseDeg ?? fix.heading ?? null,
+        speed: fix.speedMps ?? fix.speed ?? null, accuracy: fix.accuracyM ?? fix.accuracy,
+        timestamp: fix.measuredAtMs ?? fix.timestamp, seq: fix.sequence ?? null,
+        routeIndex: fix.routeIndex ?? null, routeProgress: fix.routeProgress ?? null,
+        distanceToRoute: fix.distanceToRoute ?? null, matched: fix.matched ?? false });
+    }
     return { ...payload, pickup: result.pickup, dropoff: result.dropoff };
   }
 }

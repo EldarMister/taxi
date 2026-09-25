@@ -50,10 +50,37 @@ const app = (roles, modes = []) => {
 };
 const ids = value => flow.buildRegistrationSteps(value).map(step => step.id);
 
+test('лёгкие курьеры проходят регистрацию только с ID-картой', () => {
+  for (const mode of ['FOOT', 'BICYCLE', 'E_BICYCLE', 'SCOOTER']) {
+    const value = app(['COURIER'], [mode]);
+    Object.assign(value.data.personal, { firstName: 'Асан', lastName: 'Ибраев', birthDate: '10.03.1990', city: 'Бишкек' });
+    value.data.identity.expiresAt = '01.01.2035';
+    for (const slotKey of ['identity_front', 'identity_back']) value.data.uploads[slotKey] = { slotKey, kind: 'IDENTITY_DOCUMENT', status: 'UPLOADED' };
+    value.data.agreements.truthConfirmed = true;
+    value.data.agreements.termsAccepted = true;
+    assert.deepEqual(ids(value), ['ROLES', 'COURIER_TRANSPORT', 'PERSONAL_DATA', 'IDENTITY_DOCUMENT', 'REVIEW'], mode);
+    for (const step of ids(value)) assert.deepEqual(flow.validateRegistrationStep(step, value, config).errors, {}, `${mode}: ${step}`);
+  }
+});
+
+test('клиент и сервер согласованы для всех направлений и способов доставки', () => {
+  const server = loadTs('../server/src/registration-domain.ts');
+  for (const roles of [['COURIER'], ['TAXI_DRIVER'], ['CARGO_DRIVER'], ['COURIER', 'TAXI_DRIVER'], ['COURIER', 'CARGO_DRIVER']]) {
+    for (const modes of [['FOOT'], ['BICYCLE'], ['E_BICYCLE'], ['SCOOTER'], ['MOPED'], ['MOTORCYCLE'], ['CAR'], ['TRUCK'], ['SCOOTER', 'CAR']]) {
+      const value = app(roles, modes);
+      const context = `${roles}: ${modes}`;
+      const steps = flow.buildRegistrationSteps(value, server.REGISTRATION_CONFIG);
+      assert.deepEqual(steps.map(step => step.id), server.registrationSteps(roles, value.data), context);
+      const slots = steps.flatMap(step => flow.registrationUploadSlotsForStep(step.id, value, server.REGISTRATION_CONFIG)).filter(slot => slot.required).map(slot => slot.slotKey);
+      assert.deepEqual(slots.sort(), server.requiredUploadSlots(roles, value.data).sort(), context);
+    }
+  }
+});
+
 test('пеший курьер не получает шаги прав и транспорта', () => {
   const steps = ids(app(['COURIER'], ['FOOT']));
   assert.ok(steps.includes('COURIER_TRANSPORT'));
-  assert.ok(steps.includes('COURIER_SETTINGS'));
+  assert.ok(!steps.includes('COURIER_SETTINGS'));
   assert.ok(!steps.includes('DRIVER_LICENSE'));
   assert.ok(!steps.includes('COURIER_VEHICLE'));
 });
@@ -83,7 +110,8 @@ test('курьер может добавить другой автомобиль
 
 test('такси и грузовой водитель имеют независимые транспортные ветки', () => {
   const steps = ids(app(['TAXI_DRIVER', 'CARGO_DRIVER']));
-  for (const step of ['TAXI_VEHICLE', 'TAXI_DOCUMENTS', 'TAXI_PHOTOS', 'CARGO_VEHICLE', 'CARGO_EQUIPMENT', 'CARGO_DOCUMENTS', 'CARGO_PHOTOS']) assert.ok(steps.includes(step), step);
+  for (const step of ['TAXI_VEHICLE', 'TAXI_DOCUMENTS', 'TAXI_PHOTOS', 'CARGO_VEHICLE', 'CARGO_DOCUMENTS', 'CARGO_PHOTOS']) assert.ok(steps.includes(step), step);
+  assert.ok(!steps.includes('CARGO_EQUIPMENT'));
   assert.equal(steps.filter(step => step === 'DRIVER_LICENSE').length, 1);
 });
 
@@ -106,7 +134,7 @@ test('прогресс пересчитывается после снятия р
   assert.equal(value.data.cargoVehicle.brand, 'Mercedes');
 });
 
-test('пропускаемый способ выплат валидируется, если пользователь начал его заполнять', () => {
+test('выплаты проверяются отдельно и не добавляют шаг регистрации', () => {
   const value = app(['COURIER'], ['FOOT']);
   Object.assign(value.data.personal, { firstName: 'Асан', lastName: 'Ибраев', birthDate: '10.03.1990', city: 'Бишкек' });
   Object.assign(value.data.identity, { number: 'ID-1', issuedAt: '01.01.2020', expiresAt: '01.01.2030', issuedBy: 'МКК' });
@@ -116,7 +144,7 @@ test('пропускаемый способ выплат валидируетс�
   value.data.payment.last4 = '45';
   assert.equal(flow.validateRegistrationStep('PAYMENT', value, config).valid, false);
   value.data.skippedSteps.push('PAYMENT');
-  assert.equal(flow.firstIncompleteStep(value, config), 'PAYMENT');
+  assert.equal(flow.firstIncompleteStep(value, config), 'REVIEW');
 });
 
 const fillVehicle = (vehicle, cargo = false) => Object.assign(vehicle, {
@@ -133,7 +161,7 @@ test('дополнительная машина имеет стабильный 
     'vehicle_v-taxi1_registration', 'vehicle_v-taxi1_insurance', 'vehicle_v-taxi1_rental',
   ]);
   assert.deepEqual(flow.additionalVehicleUploadSlotsForStep('TAXI_PHOTOS', value).map(item => item.slotKey), [
-    'vehicle_v-taxi1_photo_front', 'vehicle_v-taxi1_photo_back', 'vehicle_v-taxi1_photo_left', 'vehicle_v-taxi1_photo_right', 'vehicle_v-taxi1_photo_interior_front', 'vehicle_v-taxi1_photo_interior_back', 'vehicle_v-taxi1_photo_trunk',
+    'vehicle_v-taxi1_photo_front',
   ]);
   const result = flow.validateRegistrationStep('TAXI_DOCUMENTS', value, config);
   assert.ok(result.errors['vehicle_v-taxi1_registration']);

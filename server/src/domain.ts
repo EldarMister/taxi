@@ -14,6 +14,19 @@ export function calculateFare(tariff: {basePrice:number;pricePerKm:number;priceP
   const price = Math.max(tariff.minimumPrice,Math.ceil(tariff.basePrice+distance/1000*tariff.pricePerKm+duration/60*tariff.pricePerMinute));
   return {price, commission:Math.ceil(price*tariff.commissionBps/10000)};
 }
+export function calculateWaiting(arrivedAt:Date, now:Date, policy:{waitingGraceMinutes:number;freeWaitingMinutes:number;waitingPricePerMinute:number}) {
+  const graceEnd=arrivedAt.getTime()+policy.waitingGraceMinutes*60000;
+  const freeEnd=graceEnd+policy.freeWaitingMinutes*60000;
+  const elapsedSeconds=Math.max(0,Math.floor((now.getTime()-arrivedAt.getTime())/1000));
+  const billedMinutes=Math.max(0,Math.ceil((now.getTime()-freeEnd)/60000));
+  return {
+    phase:now.getTime()<graceEnd?'BEFORE_FREE':now.getTime()<freeEnd?'FREE':'PAID',
+    elapsedSeconds,
+    remainingSeconds:Math.max(0,Math.ceil(((now.getTime()<graceEnd?graceEnd:freeEnd)-now.getTime())/1000)),
+    billedMinutes,
+    charge:billedMinutes*policy.waitingPricePerMinute,
+  } as const;
+}
 export function assertDriverTransition(role:Role,from:OrderStatus,to:OrderStatus) {
   if (role !== 'DRIVER') throw new ForbiddenException('Действие доступно водителю');
   const transitions:Partial<Record<OrderStatus,OrderStatus>> = {ASSIGNED:'ARRIVED',ARRIVED:'IN_PROGRESS',IN_PROGRESS:'COMPLETED'};

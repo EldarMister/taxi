@@ -142,7 +142,7 @@ export function TripPanel({ order, user, busy, onAction, onChat, onDone, onRatin
       </>}
       <View style={styles.receiptRow}>
         <View style={styles.receiptIcon}><Icon name="navigate" color={isDark ? '#FFFFFF' : colors.muted} size={20}/></View>
-        <View style={{ flex: 1 }}><Text style={s.caption}>{t('Маршрут поездки')}</Text><Text style={s.body}>{km(order.distanceMeters)} · {mins(order.durationSeconds, user.language)}</Text></View>
+        <View style={{ flex: 1 }}><Text style={s.caption}>{t('Маршрут поездки')}</Text><Text style={s.body}>{km(order.distanceMeters)} · {mins(completed ? order.actualDurationSeconds ?? order.durationSeconds : order.durationSeconds, user.language)}</Text></View>
         {!completed && <Text style={styles.price}>{money(order.price)}</Text>}
       </View>
     </View>}

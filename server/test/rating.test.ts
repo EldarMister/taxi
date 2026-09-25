@@ -89,12 +89,14 @@ test('offer snapshot exposes passenger aggregate without passenger identity',asy
 });
 
 test('completed driver snapshot includes their saved passenger score',async()=>{
-  const order={id:'order',clientId:actor.id,driverId:driver.id,status:'COMPLETED',pickup:{},dropoff:{},geometry:[],distanceMeters:1000,durationSeconds:300,price:100,comment:'',createdAt:new Date(),updatedAt:new Date(),searchExpiresAt:new Date(),completedAt:new Date(),rating:null,clientRating:{score:5},quote:{tariff:{id:'economy'},routeProvider:'fixture'}};
-  const db={order:{findUniqueOrThrow:async()=>order},clientRating:{aggregate:async()=>({_avg:{score:4.25}})}};
+  const completedAt=new Date();
+  const order={id:'order',clientId:actor.id,driverId:driver.id,status:'COMPLETED',pickup:{},dropoff:{},geometry:[],distanceMeters:1000,durationSeconds:300,price:100,comment:'',createdAt:new Date(),updatedAt:new Date(),searchExpiresAt:new Date(),completedAt,rating:null,clientRating:{score:5},quote:{tariff:{id:'economy'},routeProvider:'fixture'}};
+  const db={order:{findUniqueOrThrow:async()=>order},statusHistory:{findFirst:async()=>({createdAt:new Date(completedAt.getTime()-7*60_000)})},clientRating:{aggregate:async()=>({_avg:{score:4.25}})}};
   const auth={user:async(id:string)=>({id,name:id===actor.id?'Passenger':'Driver',role:id===actor.id?'CLIENT':'DRIVER'})};
   const service=new OrdersService(db as any,{} as any,{} as any,auth as any,{} as any,{} as any);
   const snapshot=await service.serialize(order.id,false,driver.id);
   assert.equal(snapshot.clientRating,4.25);
   assert.equal(snapshot.driverRating,5);
+  assert.equal(snapshot.actualDurationSeconds,420);
   assert.equal(snapshot.client?.id,actor.id);
 });

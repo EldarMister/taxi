@@ -33,9 +33,9 @@ test('admin guard and service deny customer and driver before any database acces
 });
 
 test('tariff DTO rejects negative, fractional, unbounded and client-controlled fields',async()=>{
-  const valid={id:'economy',name:'Эконом',description:'Поездки',basePrice:60,pricePerKm:14,pricePerMinute:2,minimumPrice:100,commissionBps:1000,active:true};
+  const valid={id:'economy',name:'Эконом',description:'Поездки',basePrice:60,pricePerKm:14,pricePerMinute:2,waitingGraceMinutes:1,freeWaitingMinutes:5,waitingPricePerMinute:2,minimumPrice:100,commissionBps:1000,active:true};
   assert.equal((await validate(plainToInstance(AdminTariffDto,valid))).length,0);
-  for(const patch of [{basePrice:-1},{pricePerKm:1.5},{pricePerMinute:1000001},{commissionBps:10001},{active:'true'},{role:'ADMIN'}]) {
+  for(const patch of [{basePrice:-1},{pricePerKm:1.5},{pricePerMinute:1000001},{waitingGraceMinutes:-1},{freeWaitingMinutes:181},{waitingPricePerMinute:1.5},{commissionBps:10001},{active:'true'},{role:'ADMIN'}]) {
     const errors=await validate(plainToInstance(AdminTariffPatchDto,patch),{whitelist:true,forbidNonWhitelisted:true});
     assert.ok(errors.length,JSON.stringify(patch));
   }

@@ -24,6 +24,8 @@ export type DrivingRoute = {
   provider: 'osrm';
   steps: RouteStep[];
 };
+export type MatchFix = RouteCoordinate & { accuracy: number; heading?: number; speed?: number };
+export type MatchedTrace = RouteCoordinate & { bearing: number | null; confidence: number; distanceM: number };
 type RouteLanguage = 'ru' | 'ky';
 const ROAD_NAME_BUDGET_MS = 2500;
 const MAX_ROAD_NAME_LOOKUPS = 12;
@@ -126,6 +128,35 @@ export function parseOsrmRoute(payload: unknown, pickup: RouteCoordinate, dropof
   return {distanceMeters: Math.round(nonnegative(route.distance)), durationSeconds: Math.ceil(nonnegative(route.duration)), geometry: line, provider: 'osrm', steps};
 }
 
+export function parseOsrmMatch(payload: unknown, fixes: MatchFix[]): MatchedTrace | null {
+  const data = record(payload);
+  if (data.code !== 'Ok' || !Array.isArray(data.tracepoints) || data.tracepoints.length !== fixes.length
+    || !Array.isArray(data.matchings)) return null;
+  const last = data.tracepoints.at(-1);
+  if (!last || typeof last !== 'object') return null;
+  const point = record(last);
+  const index = point.matchings_index;
+  if (typeof index !== 'number' || !Number.isInteger(index) || index < 0 || index >= data.matchings.length) return null;
+  const matching = record(data.matchings[index]);
+  const confidence = matching.confidence;
+  if (typeof confidence !== 'number' || confidence < .55 || confidence > 1) return null;
+  const snapped = coordinate(point.location);
+  const distanceM = haversine(snapped, fixes[fixes.length - 1]);
+  if (distanceM > Math.max(25, fixes[fixes.length - 1].accuracy * 1.5)) return null;
+  let bearing: number | null = null;
+  for (let i = data.tracepoints.length - 2; i >= 0; i--) {
+    const candidate = data.tracepoints[i];
+    if (!candidate || typeof candidate !== 'object' || candidate.matchings_index !== index) continue;
+    const before = coordinate(candidate.location);
+    if (haversine(before, snapped) < 3) continue;
+    const east = (snapped.longitude - before.longitude) * Math.cos(snapped.latitude * Math.PI / 180);
+    const north = snapped.latitude - before.latitude;
+    bearing = (Math.atan2(east, north) * 180 / Math.PI + 360) % 360;
+    break;
+  }
+  return { ...snapped, bearing, confidence, distanceM };
+}
+
 @Injectable()
 export class RoutingService {
   private readonly names = new Map<string, { name: string; expires: number }>();
@@ -163,18 +194,50 @@ export class RoutingService {
     }));
     return { ...route, steps };
   }
-  async route(pickup: Point, dropoff: Point, timeoutMs = 12000, language?: RouteLanguage): Promise<DrivingRoute> {
+  async matchTrace(fixes: MatchFix[], timeoutMs = 2500): Promise<MatchedTrace | null> {
+    if (!Array.isArray(fixes) || fixes.length < 3 || fixes.length > 10) throw new BadRequestException('Некорректный GPS трек.');
+    for (const fix of fixes) if (!Number.isFinite(fix.latitude) || Math.abs(fix.latitude) > 90
+      || !Number.isFinite(fix.longitude) || Math.abs(fix.longitude) > 180
+      || !Number.isFinite(fix.accuracy) || fix.accuracy < 0 || fix.accuracy > 80)
+      throw new BadRequestException('Некорректная GPS точка.');
+    try {
+      const coordinates = fixes.map(fix => `${fix.longitude},${fix.latitude}`).join(';');
+      const url = new URL(`${this.config.osrmBaseUrl}/match/v1/driving/${coordinates}`);
+      url.search = new URLSearchParams({ geometries: 'geojson', overview: 'false', steps: 'false',
+        radiuses: fixes.map(fix => Math.max(5, Math.min(30, Math.ceil(fix.accuracy * 1.5)))).join(';'),
+        bearings: fixes.map(fix => fix.heading != null && (fix.speed ?? 0) >= 3 && fix.accuracy <= 15
+          ? `${Math.round(fix.heading) % 360},50` : '').join(';') }).toString();
+      const response = await fetch(url, { signal: AbortSignal.timeout(timeoutMs), redirect: 'error', headers: { Accept: 'application/json' } });
+      if (!response.ok) return null;
+      return parseOsrmMatch(await response.json(), fixes);
+    } catch { return null; }
+  }
+  async route(pickup: Point, dropoff: Point, timeoutMs = 12000, language?: RouteLanguage,
+    options: { bearing?: number; fast?: boolean } = {}): Promise<DrivingRoute> {
     for (const point of [pickup, dropoff]) {
       if (!point || !Number.isFinite(point.latitude) || Math.abs(point.latitude) > 90 || !Number.isFinite(point.longitude) || Math.abs(point.longitude) > 180) throw new BadRequestException('Некорректные координаты маршрута.');
     }
+    if (options.bearing != null && (!Number.isFinite(options.bearing) || options.bearing < 0 || options.bearing >= 360))
+      throw new BadRequestException('Некорректное направление движения.');
     try {
       const coordinates = `${pickup.longitude},${pickup.latitude};${dropoff.longitude},${dropoff.latitude}`;
       const url = new URL(`${this.config.osrmBaseUrl}/route/v1/driving/${coordinates}`);
-      url.search = new URLSearchParams({steps:'true', geometries:'geojson', overview:'full', alternatives:'false'}).toString();
-      const response = await fetch(url, {signal: AbortSignal.timeout(timeoutMs), redirect: 'error', headers:{Accept:'application/json'}});
-      if (!response.ok) throw new Error('Routing unavailable');
-      const route = parseOsrmRoute(await response.json(), pickup, dropoff);
-      return language ? await this.localize(route, language) : route;
+      url.search = new URLSearchParams({steps:'true', geometries:'geojson', overview:'full', alternatives:'false',
+        ...(options.bearing == null ? {} : { bearings: `${Math.round(options.bearing) % 360},45;` }) }).toString();
+      const fetchRoute = async () => {
+        const response = await fetch(url, {signal: AbortSignal.timeout(timeoutMs), redirect: 'error', headers:{Accept:'application/json'}});
+        if (!response.ok) throw new Error('Routing unavailable');
+        return parseOsrmRoute(await response.json(), pickup, dropoff);
+      };
+      let route: DrivingRoute;
+      try { route = await fetchRoute(); }
+      catch (error) {
+        if (options.bearing == null || !(error instanceof Error) || error.message !== 'No driving route') throw error;
+        url.searchParams.delete('bearings');
+        route = await fetchRoute();
+      }
+      return options.fast ? { ...route, steps: route.steps.map(step => ({ ...step, name: '' })) }
+        : language ? await this.localize(route, language) : route;
     } catch {
       throw new ServiceUnavailableException('Не удалось построить автомобильный маршрут. Уточните точки и попробуйте снова.');
     }

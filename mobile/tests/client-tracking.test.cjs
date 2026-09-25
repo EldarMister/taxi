@@ -66,9 +66,9 @@ test('a late HTTP snapshot cannot undo a newer live event', async t => {
   await act(async () => { renderer = create(React.createElement(Hook)); });
   t.after(async () => { await act(async () => renderer.unmount()); requestImpl = async () => { throw Error('No snapshot'); }; });
   assert.equal(typeof resolveSnapshot, 'function');
-  const live = fix({ stateVersion: 3, sequence: 3, measuredAtMs: now + 1000, latitude: 42.1 });
+  const live = fix({ stateVersion: 3, sequence: 3, measuredAtMs: now + 1000, latitude: 42.0001 });
   await act(async () => state.receive(event(live, { stateVersion: 3, serverTimeMs: now + 2000 })));
-  assert.equal(state.position.latitude, 42.1);
+  assert.equal(state.position.latitude, 42.0001);
   await act(async () => resolveSnapshot(event(fix({ stateVersion: 2, sequence: 2, latitude: 42 }), { stateVersion: 2 })));
-  assert.equal(state.position.latitude, 42.1);
+  assert.equal(state.position.latitude, 42.0001);
 });

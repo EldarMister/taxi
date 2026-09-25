@@ -16,8 +16,8 @@ async function setup(t) {
   const exports = {};
   class TestDate extends Date { static now() { return now; } }
   vm.runInNewContext(compile('useRideQuotes.ts'), {
-    exports, Date: TestDate,
-    setTimeout: callback => { const id = ++next; timeouts.set(id, callback); return id; }, clearTimeout: id => timeouts.delete(id),
+    exports, Date: TestDate, AbortController,
+    setTimeout: (callback, delay = 0) => { const id = ++next; timeouts.set(id, { callback, delay }); return id; }, clearTimeout: id => timeouts.delete(id),
     setInterval: callback => { const id = ++next; intervals.set(id, callback); return id; }, clearInterval: id => intervals.delete(id),
     require: id => {
       if (id === 'react') return React;
@@ -36,8 +36,10 @@ async function setup(t) {
   return {
     calls, get value() { return current; },
     change: async values => { Object.assign(args, values); await act(async () => renderer.update(React.createElement(Probe))); },
-    flush: async () => act(async () => { const all = [...timeouts.values()]; timeouts.clear(); all.forEach(callback => callback()); }),
+    flush: async () => act(async () => { for (const [id, timer] of [...timeouts]) if (timer.delay <= 500) { timeouts.delete(id); timer.callback(); } }),
+    timeout: async () => act(async () => { for (const [id, timer] of [...timeouts]) if (timer.delay >= 20_000) { timeouts.delete(id); timer.callback(); } }),
     resolve: async (index, price = 150) => act(async () => calls[index].resolve({ id: `quote-${index}`, price, expiresAt: new Date(now + 300000).toISOString() })),
+    resolveQuote: async (index, value) => act(async () => calls[index].resolve({ id: `quote-${index}`, ...value })),
     reject: async index => act(async () => calls[index].reject(new Error('Нет соединения'))),
     advance: async seconds => act(async () => { now += seconds * 1000; intervals.forEach(callback => callback()); }),
     appState: async state => act(async () => { appListeners.forEach(listener => listener(state)); }),
@@ -52,6 +54,58 @@ test('selecting addresses automatically loads real prices for each tariff; switc
   assert.equal(h.value.quote.price, 150);
   await h.change({ tariffId: 'comfort' });
   assert.equal(h.value.quote.price, 180); assert.equal(h.calls.length, 2);
+});
+
+test('a changed address label refreshes the order address without blanking its price', async t => {
+  const h = await setup(t); await h.flush(); await h.resolve(0, 150); await h.resolve(1, 180);
+  await h.change({ pickup: point('Уточнённый адрес') });
+  assert.equal(h.value.quote, null, 'the old quote still contains the previous address');
+  assert.equal(h.value.previewQuote.price, 150);
+  await h.flush(); assert.equal(h.calls.length, 4);
+  assert.equal(h.calls[2].body.pickup.address, 'Уточнённый адрес');
+  await h.resolve(2, 150); await h.resolve(3, 180);
+  assert.equal(h.value.quote.price, 150);
+});
+
+test('a consumed or expired quote keeps its displayed price while a new quote is requested', async t => {
+  const h = await setup(t); await h.flush(); await h.resolve(0, 150); await h.resolve(1, 180);
+  await h.change({ enabled: false }); await h.refresh(); await h.change({ enabled: true });
+  assert.equal(h.value.quote, null);
+  assert.equal(h.value.previewQuote.price, 150);
+  assert.equal(h.value.quotes.eco.price, 150);
+  await h.flush(); await h.resolve(2, 150); await h.resolve(3, 180);
+  assert.equal(h.value.quote.price, 150);
+  await h.advance(301);
+  assert.equal(h.value.quote, null);
+  assert.equal(h.value.previewQuote.price, 150);
+});
+
+test('a stalled quote request stops calculating and retries automatically', async t => {
+  const h = await setup(t); await h.flush();
+  assert.equal(h.value.calculating, true);
+  await h.timeout();
+  assert.equal(h.value.calculating, false);
+  assert.match(h.value.quoteError, /Повторяем расчёт автоматически/);
+  await h.advance(30); await h.flush();
+  assert.equal(h.calls.length, 4);
+  await h.resolve(2, 170); await h.resolve(3, 190);
+  assert.equal(h.value.quote.price, 170);
+  await h.resolve(0, 120); await h.resolve(1, 140);
+  assert.equal(h.value.quote.price, 170, 'a late result from the stalled request cannot replace the retry');
+});
+
+test('server-created quote uses its own lifetime even when the phone clock differs', async t => {
+  const h = await setup(t); await h.flush();
+  const createdAt = '2026-09-24T00:00:00.000Z';
+  const expiresAt = '2026-09-24T00:05:00.000Z';
+  await h.resolveQuote(0, { price: 150, createdAt, expiresAt });
+  await h.resolveQuote(1, { price: 180, createdAt, expiresAt });
+  assert.equal(h.value.quote.price, 150);
+  await h.advance(299);
+  assert.equal(h.value.quote.price, 150);
+  await h.advance(2);
+  assert.equal(h.value.quote, null);
+  assert.equal(h.value.previewQuote.price, 150);
 });
 
 test('an admin tariff rate update replaces old route quotes even when tariff IDs stay the same', async t => {
@@ -111,6 +165,23 @@ test('automatic refresh cannot overwrite a changed route or continue after a tri
   assert.equal(h.value.quote.price, 210);
   await h.change({ enabled: false }); await h.advance(600); await h.flush();
   assert.equal(h.value.quote, null); assert.equal(h.calls.length, 6);
+});
+test('closing a finished or cancelled trip requests fresh prices automatically', async t => {
+  const h = await setup(t); await h.flush(); await h.resolve(0, 150); await h.resolve(1, 180);
+  await h.change({ enabled: false });
+  await h.refresh();
+  await h.change({ enabled: true });
+  assert.equal(h.value.quote, null);
+  assert.equal(h.value.calculating, true);
+  await h.flush(); assert.equal(h.calls.length, 4);
+  await h.resolve(2, 160); await h.resolve(3, 190);
+  assert.equal(h.value.quote.price, 160);
+  await h.change({ enabled: false });
+  await h.refresh();
+  await h.change({ enabled: true });
+  await h.flush(); assert.equal(h.calls.length, 6);
+  await h.resolve(4, 170); await h.resolve(5, 200);
+  assert.equal(h.value.quote.price, 170);
 });
 test('one failed tariff does not discard successful prices and retry recovers', async t => {
   const h = await setup(t); await h.flush(); await h.reject(0); await h.resolve(1, 190);

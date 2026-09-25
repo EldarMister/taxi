@@ -1,6 +1,8 @@
 import type { Coordinate, Language, Order, Point } from './types';
 
-export type NavigationFix = Coordinate & { timestamp: number; accuracy: number; heading?: number; speed?: number };
+export type NavigationFix = Coordinate & { timestamp: number; accuracy: number; heading?: number; speed?: number;
+  snappedLatitude?: number; snappedLongitude?: number; routeAlong?: number; routeIndex?: number;
+  routeProgress?: number; distanceToRoute?: number; matched?: boolean; matchedPath?: Coordinate[] };
 export type RouteStep = {
   distanceMeters: number; durationSeconds: number; name: string;
   maneuver: { type: string; modifier?: string; location: Coordinate; bearingBefore: number; bearingAfter: number; exit?: number };
@@ -14,11 +16,14 @@ export type NavigationProgress = {
   maneuverPassed: boolean; speedMps?: number; pendingStepIndex?: number; pendingStepCount?: number;
 };
 export const navigationConfig = {
-  offRouteMeters: 45,
+  offRouteMeters: 35,
   rerouteFixes: 3,
   turnConfirmationMeters: 35,
   turnConfirmationFixes: 2,
 } as const;
+export function offRouteThreshold(accuracy: number): number {
+  return Math.max(25, Math.min(75, Number.isFinite(accuracy) ? accuracy * 1.5 : 35));
+}
 export type NormalizedManeuver = {
   kind: 'depart' | 'arrive' | 'roundabout' | 'exit-roundabout' | 'merge' | 'fork' | 'off-ramp' | 'uturn' | 'turn' | 'continue';
   side: 'left' | 'right' | 'straight' | 'uturn';
@@ -27,6 +32,17 @@ export type NormalizedManeuver = {
 };
 export function bearingDelta(before: number, after: number): number {
   return ((after - before + 540) % 360) - 180;
+}
+export function normalizeBearing(value: number): number { return ((value % 360) + 360) % 360; }
+export const shortestAngleDelta = bearingDelta;
+export function interpolateBearing(from: number, to: number, fraction: number): number {
+  return normalizeBearing(from + shortestAngleDelta(from, to) * Math.max(0, Math.min(1, fraction)));
+}
+export function unsupportedRouteOptions(error: unknown): boolean {
+  if (!error || typeof error !== 'object') return false;
+  const value = error as { status?: unknown; message?: unknown };
+  return value.status === 400 && typeof value.message === 'string'
+    && /property (?:fast|bearing) should not exist/i.test(value.message);
 }
 /** OSRM's maneuver is the sole source for the arrow, visible text and speech. */
 export function normalizeManeuver(step: RouteStep): NormalizedManeuver {
@@ -106,8 +122,15 @@ export function bestVoiceForLanguage(voices: { identifier: string; language: str
 function project(point: Coordinate, line: Coordinate[], cumulative: number[], min = 0, max = Infinity) {
   let best = { along: min, distance: Infinity };
   const xScale = 111195 * Math.cos(point.latitude * rad), yScale = 111195;
-  for (let i = 1; i < line.length; i++) {
-    if (cumulative[i] < min || cumulative[i - 1] > max) continue;
+  const lower = (target: number) => {
+    let low = 0, high = cumulative.length;
+    while (low < high) { const middle = (low + high) >>> 1;
+      if (cumulative[middle] < target) low = middle + 1; else high = middle; }
+    return low;
+  };
+  const start = Math.max(1, lower(min));
+  const end = Number.isFinite(max) ? Math.min(line.length - 1, lower(max) + 1) : line.length - 1;
+  for (let i = start; i <= end; i++) {
     const ax = (line[i - 1].longitude - point.longitude) * xScale, ay = (line[i - 1].latitude - point.latitude) * yScale;
     const bx = (line[i].longitude - point.longitude) * xScale, by = (line[i].latitude - point.latitude) * yScale;
     const dx = bx - ax, dy = by - ay, squared = dx * dx + dy * dy;

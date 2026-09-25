@@ -27,7 +27,7 @@ vm.runInNewContext(code, { exports: output, require: id => {
 
 const client = { id: 'client', role: 'CLIENT', language: 'ru' };
 const point = address => ({ address, latitude: 42.87, longitude: 74.59 });
-const trip = { id: 'trip', status: 'COMPLETED', pickup: point('Улица Ленина, 10'), dropoff: point('Стадион'), price: 103, distanceMeters: 2400, durationSeconds: 480, createdAt: '2026-09-16T08:10:00.000Z', completedAt: '2026-09-16T08:23:00.000Z', geometry: [], rating: 4,
+const trip = { id: 'trip', status: 'COMPLETED', pickup: point('Улица Ленина, 10'), dropoff: point('Стадион'), price: 103, distanceMeters: 2400, durationSeconds: 480, actualDurationSeconds: 600, createdAt: '2026-09-16T08:10:00.000Z', completedAt: '2026-09-16T08:23:00.000Z', geometry: [], rating: 4,
   driver: { id: 'driver', role: 'DRIVER', name: 'Азамат', phone: '+996700123456', driverProfile: { rating: 4.8, carColor: 'Белый', carMake: 'Toyota Camry', carPlate: '01 KG 777 AAA' } } };
 const textOf = renderer => renderer.root.findAllByType('Text').map(node => node.children.join('')).join(' ');
 
@@ -42,6 +42,7 @@ test('client history cards open details and use legible status colors in both th
     await act(async () => row.props.onPress());
     assert.equal(opened, true);
     assert.match(textOf(renderer), /Завершён/);
+    assert.match(textOf(renderer), /10 мин/);
     assert.equal(renderer.root.findByType('Pressable').props.style({ pressed: false })[1].backgroundColor, palettes[mode].surface);
     await act(async () => renderer.unmount());
   }
@@ -55,6 +56,8 @@ test('details show real driver, completion and rating data; cancelled trips neve
   assert.match(labels, /Ваш водитель.*Азамат/);
   assert.match(labels, /01 KG 777 AAA/);
   assert.match(labels, /Время завершения/);
+  assert.match(labels, /Время в пути.*10 мин/);
+  assert.doesNotMatch(labels, /Расчётное время в пути/);
   assert.match(labels, /Итого.*103 сом/);
   assert.match(labels, /Ваша оценка/);
   assert.equal(renderer.root.findAllByType('HistoryRouteMap').length, 1);

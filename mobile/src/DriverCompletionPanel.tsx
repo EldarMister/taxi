@@ -82,7 +82,7 @@ export function DriverCompletionPanel({ order, user, busy, onDone, onRateClient,
           <View style={s.metricsCard}>
             <View style={s.metric}><Text style={s.metricLabel}>{say('Общий путь', 'Жалпы жол')}</Text><Text style={s.metricValue}>{km(order.distanceMeters)}</Text></View>
             <View style={s.metricsDivider}/>
-            <View style={s.metric}><Text style={s.metricLabel}>{say('Время в пути', 'Жолдогу убакыт')}</Text><Text style={s.metricValue}>{tripTime(order.durationSeconds, user.language)}</Text></View>
+            <View style={s.metric}><Text style={s.metricLabel}>{order.actualDurationSeconds == null ? say('Расчётное время в пути', 'Болжолдуу жол убактысы') : say('Время в пути', 'Жолдогу убакыт')}</Text><Text style={s.metricValue}>{tripTime(order.actualDurationSeconds ?? order.durationSeconds, user.language)}</Text></View>
           </View>
           <View style={s.fareCard}><Icon name="cash" size={25} color={isDark ? '#FFFFFF' : palette.accent}/><Text style={s.fareLabel} numberOfLines={1}>{say('Наличные', 'Накталай')} · {order.tariff?.name || say('Стандарт', 'Стандарт')}</Text><Text style={s.price}>{money(order.price)}</Text></View>
           {!rated && <MainButton label={say(delivery ? 'Оценить заказчика' : 'Оценить пассажира', 'Жүргүнчүнү баалоо')} onPress={() => { setScore(0); setRatingError(false); navigateStage('rating'); }} busy={busy}/>}

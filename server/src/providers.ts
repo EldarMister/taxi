@@ -5,6 +5,7 @@ import { PrismaService } from './prisma.service';
 import { AppConfig } from './config';
 export { RoutingService } from './routing';
 import { pushPresentation } from './pushPresentation';
+import { sendExpoPushIndividually } from './expo-push';
 
 const PUSH_TTL = {
   chat: 6 * 60 * 60,
@@ -79,19 +80,14 @@ export class PushService {
             ttl = pushTtlSeconds(job.event, offer.expiresAt);
           }
           if (this.config.pushProvider === 'expo') {
-            const headers: Record<string,string> = {'Content-Type':'application/json'};
-            if (this.config.expoAccessToken) headers.Authorization = `Bearer ${this.config.expoAccessToken}`;
-            const response = await fetch('https://exp.host/--/api/v2/push/send',{method:'POST',headers,body:JSON.stringify(user.pushTokens.map(t=>({to:t.token,title,body,sound,channelId,ttl,priority:'high',data:pushDeliveryData(job)}))),signal:AbortSignal.timeout(10000)});
-            if (!response.ok) throw new PushDeliveryError(`expo-http-${response.status}`);
-            const result = await response.json() as {data?:{status:string;details?:{error:string}}[]};
-            if (!Array.isArray(result.data) || result.data.length !== user.pushTokens.length) throw new PushDeliveryError('expo-invalid-ticket-response');
-            const temporaryFailures = new Set<string>();
-            for (let i=0;i<result.data.length;i++) {
-              if (result.data[i].status !== 'error') continue;
-              if (result.data[i].details?.error === 'DeviceNotRegistered') await this.db.pushToken.deleteMany({where:{id:user.pushTokens[i].id}});
-              else temporaryFailures.add(safeProviderCode(result.data[i].details?.error, 'unknown-ticket-error'));
+            const report = await sendExpoPushIndividually(user.pushTokens,
+              {title,body,sound,channelId,ttl,priority:'high',data:pushDeliveryData(job)},this.config.expoAccessToken);
+            for (const id of report.invalidIds) await this.db.pushToken.deleteMany({where:{id}});
+            if (report.failures.length) {
+              const reasons = [...new Set(report.failures)].sort().join(',');
+              if (!report.delivered) throw new PushDeliveryError(reasons);
+              this.logger.warn(`Push job ${job.id} delivered to ${report.delivered} device(s), removed ${report.invalidIds.length} stale token(s), ${report.failures.length} device(s) failed: ${reasons}`);
             }
-            if (temporaryFailures.size) throw new PushDeliveryError(`expo-ticket-${[...temporaryFailures].sort().join(',')}`);
           } else {
             const result = await getMessaging().sendEachForMulticast({tokens:user.pushTokens.map(t=>t.token),notification:{title,body},data:pushDeliveryData(job),android:{priority:'high',ttl:ttl*1000,notification:{channelId,sound:sound.replace(/\.wav$/,'')}},apns:{headers:{'apns-expiration':String(Math.floor(Date.now()/1000)+ttl)},payload:{aps:{sound}}}});
             const temporaryFailures = new Set<string>();

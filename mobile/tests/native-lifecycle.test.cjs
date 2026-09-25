@@ -127,12 +127,14 @@ test('foreground GPS uses a fast cached fix, precise fallback and keeps coordina
   assert.match(map, /showUserPosition && passengerView && <UserLocation visible=\{false\} onUpdate=/);
   assert.match(map, /client-user-position/);
   assert.doesNotMatch(map, /<UserLocation renderMode="native"/, 'the native puck must not paint a blue accuracy radius');
-  assert.match(map, /useAnimatedCarPosition\(passengerView && driverPosition \? \{ \.\.\.driverPosition, heading: driverHeading \} : null, driverIdentity, carAnimationRoute\)/);
+  assert.match(map, /snapCarToRoad\(driverPosition!?, activeRoad, previousAlong, forwardWindow\)/);
+  assert.match(map, /const marker = useAnimatedCarPosition\(point, session, road\)/);
+  assert.match(map, /<AnimatedDriverMarker point=\{markerPoint\}/, 'the animated marker owns its own renders');
   assert.match(map, /trustedCarRoutePath\(previousRaw, point, from, roadRef\.current, fixInterval\)/);
   assert.match(map, /trustedCarDirectPath\(previousRaw, point, from, fixInterval\)/);
   assert.doesNotMatch(map, /roadPosition\(/, 'the passenger car cannot snap onto another route segment');
-  assert.doesNotMatch(map, /<MarkerView/, 'the client car stays in MapLibre geography during camera gestures');
-  assert.doesNotMatch(map, /<ShapeSource id="driver-accuracy"/);
+  assert.match(map, /<ShapeSource id="client-driver-position" shape=\{shape\}/, 'the client car stays in MapLibre geography during camera gestures');
+  assert.match(map, /\{debugAccuracyShape && <ShapeSource id="driver-accuracy"/, 'the accuracy circle is gated by development diagnostics');
 });
 
 test('permission onboarding gates automatic push registration and persists each account flow', () => {
@@ -178,7 +180,7 @@ test('OSM map selects addresses and displays only OSRM road geometry', () => {
   assert.match(map, /onLongPress=\{selectFeature\}/);
   assert.match(map, /api\.request<[^>]+>\('\/routes'/);
   assert.match(map, /OpenStreetMap contributors/);
-  assert.match(app, /tripMapRoutes\(\{ driver, order, offer, quote/);
+  assert.match(app, /tripMapRoutes\(\{ driver, order: visibleDriverOrder, offer, quote/);
   assert.match(routes, /routeProvider === 'osrm'/);
   assert.match(map, /<ShapeSource id="approach-route" shape=\{approachShape\}/);
   assert.doesNotMatch(map, /react-native-yamap|findDrivingRoutes/);

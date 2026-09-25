@@ -2,13 +2,13 @@ import { BadRequestException, ConflictException, ForbiddenException, Injectable,
 import { Order, OrderStatus, Prisma } from '@prisma/client';
 import { Actor, AuthService, RateLimits } from './auth';
 import { AppConfig } from './config';
-import { ACTIVE_STATUSES, ASSIGNED_STATUSES, assertDriverTransition, calculateFare, haversine, historySince, Point } from './domain';
+import { ACTIVE_STATUSES, ASSIGNED_STATUSES, assertDriverTransition, calculateFare, calculateWaiting, haversine, historySince, Point } from './domain';
 import { CreateOrderDto, MessageDto, QuoteDto } from './dto';
 import { RealtimeEvents } from './events';
 import { PrismaService } from './prisma.service';
 import { RoutingService } from './providers';
 import { visibleDriverLocation } from './tracking';
-import { nextDriver, OFFER_SECONDS, POSITION_MAX_AGE_MS } from './dispatch-ranking';
+import { nextDriver, OFFER_SECONDS, POSITION_MAX_AGE_MS, IDLE_POSITION_MAX_AGE_MS } from './dispatch-ranking';
 import { driverCanTake } from './driver-eligibility';
 
 @Injectable()
@@ -40,13 +40,13 @@ export class OrdersService {
         return existing;
       }
       if(await tx.order.findFirst({where:{clientId:actor.id,status:{in:ACTIVE_STATUSES}}})) throw new ConflictException('У вас уже есть активный заказ');
-      const quote = await tx.quote.findFirst({where:{id:dto.quoteId,userId:actor.id,expiresAt:{gt:new Date()}},include:{order:true}});
+      const quote = await tx.quote.findFirst({where:{id:dto.quoteId,userId:actor.id,expiresAt:{gt:new Date()}},include:{order:true,tariff:true}});
       if(!quote) throw new BadRequestException('Расчёт стоимости истёк. Постройте маршрут ещё раз.');
       if(quote.order) throw new ConflictException('Этот расчёт уже использован');
       const details=this.deliveryDetails(quote.kind,dto);
       if(quote.kind!=='RIDE'&&passenger)throw new BadRequestException('Для доставки укажите сведения о грузе вместо пассажира');
       const dispatchAfter=details?.scheduledAt?new Date(details.scheduledAt):new Date();
-      const created = await tx.order.create({data:{clientId:actor.id,quoteId:quote.id,idempotencyKey:dto.idempotencyKey,kind:quote.kind,deliveryDetails:details?details as Prisma.InputJsonValue:Prisma.DbNull,dispatchAfter,pickup:quote.pickup as Prisma.InputJsonValue,dropoff:quote.dropoff as Prisma.InputJsonValue,geometry:quote.geometry as Prisma.InputJsonValue,distanceMeters:quote.distanceMeters,durationSeconds:quote.durationSeconds,price:quote.price,commission:quote.commission,comment:dto.comment?.trim()??'',passengerName:passenger?.name,passengerPhone:passenger?.phone,searchExpiresAt:new Date(dispatchAfter.getTime()+OFFER_SECONDS*1000),history:{create:{status:'SEARCHING',actorId:actor.id}}}});
+      const created = await tx.order.create({data:{clientId:actor.id,quoteId:quote.id,idempotencyKey:dto.idempotencyKey,kind:quote.kind,deliveryDetails:details?details as Prisma.InputJsonValue:Prisma.DbNull,dispatchAfter,pickup:quote.pickup as Prisma.InputJsonValue,dropoff:quote.dropoff as Prisma.InputJsonValue,geometry:quote.geometry as Prisma.InputJsonValue,distanceMeters:quote.distanceMeters,durationSeconds:quote.durationSeconds,price:quote.price,commission:quote.commission,waitingGraceMinutes:quote.tariff.waitingGraceMinutes,freeWaitingMinutes:quote.tariff.freeWaitingMinutes,waitingPricePerMinute:quote.tariff.waitingPricePerMinute,comment:dto.comment?.trim()??'',passengerName:passenger?.name,passengerPhone:passenger?.phone,searchExpiresAt:new Date(dispatchAfter.getTime()+OFFER_SECONDS*1000),history:{create:{status:'SEARCHING',actorId:actor.id}}}});
       await this.push(tx,[actor.id],'order:created',created.id); return created;
     });
     await this.dispatchOrder(order.id); await this.publish(order.id); return this.serialize(order.id,false,actor.id);
@@ -80,11 +80,20 @@ export class OrdersService {
     const assignment = !offer&&order.driverId&&ASSIGNED_STATUSES.includes(order.status)
       ? await this.db.statusHistory.findFirst({where:{orderId:id,status:'ASSIGNED',actorId:order.driverId},orderBy:{createdAt:'desc'},select:{id:true}})
       : null;
+    const tripStart = order.status==='COMPLETED'&&order.completedAt
+      ? await this.db.statusHistory.findFirst({where:{orderId:id,status:'IN_PROGRESS'},orderBy:{createdAt:'desc'},select:{createdAt:true}})
+      : null;
+    const actualDurationSeconds = tripStart&&order.completedAt
+      ? Math.max(0,Math.round((order.completedAt.getTime()-tripStart.createdAt.getTime())/1000)) : null;
     const driver = !offer&&order.driverId?await this.auth.user(order.driverId):null;
     const client = offer?undefined:await this.auth.user(order.clientId);
     const clientRating = await this.db.clientRating.aggregate({where:{order:{clientId:order.clientId,passengerName:null}},_avg:{score:true}});
     const safeClient = client?{id:client.id,name:client.name,phone:client.phone,photoUrl:client.photoUrl,role:client.role}:undefined;
-    return {driverLocation:offer?null:visibleDriverLocation(order),assignmentId:assignment?.id??null,id:order.id,kind:order.kind,deliveryDetails:order.deliveryDetails,dispatchAfter:order.dispatchAfter,status:order.status,pickup:order.pickup,dropoff:order.dropoff,geometry:order.geometry,distanceMeters:order.distanceMeters,durationSeconds:order.durationSeconds,price:order.price,currency:'KGS',paymentMethod:'CASH',comment:order.comment,passenger:order.passengerName?{name:order.passengerName,phone:offer?undefined:order.passengerPhone}:null,createdAt:order.createdAt,updatedAt:order.updatedAt,searchExpiresAt:order.searchExpiresAt,completedAt:order.completedAt,driver,client:safeClient,rating:order.rating?.score??null,clientRating:clientRating._avg.score??null,driverRating:order.clientRating?.score??null,tariff:order.quote.tariff,routeProvider:order.quote.routeProvider};
+    const waiting = order.arrivedAt ? order.status==='ARRIVED'
+      ? calculateWaiting(order.arrivedAt,new Date(),order)
+      : {phase:'FINISHED' as const,elapsedSeconds:0,remainingSeconds:0,billedMinutes:order.waitingBilledMinutes,charge:order.waitingCharge}
+      : null;
+    return {driverLocation:offer?null:visibleDriverLocation(order),assignmentId:assignment?.id??null,id:order.id,kind:order.kind,deliveryDetails:order.deliveryDetails,dispatchAfter:order.dispatchAfter,status:order.status,pickup:order.pickup,dropoff:order.dropoff,geometry:order.geometry,distanceMeters:order.distanceMeters,durationSeconds:order.durationSeconds,actualDurationSeconds,price:order.price,basePrice:order.price-order.waitingCharge,waiting:waiting?{...waiting,arrivedAt:order.arrivedAt,graceMinutes:order.waitingGraceMinutes,freeMinutes:order.freeWaitingMinutes,pricePerMinute:order.waitingPricePerMinute,totalPrice:order.status==='ARRIVED'?order.price+waiting.charge:order.price}:null,currency:'KGS',paymentMethod:'CASH',comment:order.comment,passenger:order.passengerName?{name:order.passengerName,phone:offer?undefined:order.passengerPhone}:null,createdAt:order.createdAt,updatedAt:order.updatedAt,searchExpiresAt:order.searchExpiresAt,completedAt:order.completedAt,driver,client:safeClient,rating:order.rating?.score??null,clientRating:clientRating._avg.score??null,driverRating:order.clientRating?.score??null,tariff:order.quote.tariff,routeProvider:order.quote.routeProvider};
   }
   async publish(id:string,additionalUsers:string[]=[]) {
     const snapshot=await this.serialize(id);
@@ -108,7 +117,7 @@ export class OrdersService {
       const withdrawn=existing.filter(offer=>!offer.skipped&&offer.expiresAt.getTime()<=now).map(offer=>offer.driverId);
       if(withdrawn.length)await tx.orderOffer.updateMany({where:{orderId:id,driverId:{in:withdrawn}},data:{skipped:true}});
       const requiredClass=(await tx.quote.findUniqueOrThrow({where:{id:order.quoteId},select:{tariff:{select:{requiredClass:true}}}})).tariff.requiredClass;
-      const drivers=(await tx.driverProfile.findMany({where:{verified:true,online:true,deposit:{gte:Math.max(this.config.minimumDeposit,order.commission)},vehicle:{isNot:null},locationMeasuredAt:{gte:new Date(now-POSITION_MAX_AGE_MS)}}})).filter(d=>driverCanTake(d,order.kind,requiredClass));
+      const drivers=(await tx.driverProfile.findMany({where:{verified:true,online:true,deposit:{gte:Math.max(this.config.minimumDeposit,order.commission)},vehicle:{isNot:null},locationMeasuredAt:{gte:new Date(now-IDLE_POSITION_MAX_AGE_MS)}}})).filter(d=>driverCanTake(d,order.kind,requiredClass));
       const busy=new Set((await tx.order.findMany({where:{driverId:{in:drivers.map(d=>d.userId)},status:{in:ACTIVE_STATUSES}},select:{driverId:true}})).map(o=>o.driverId));
       const offered=new Set(existing.map(o=>o.driverId));
       const eligible=drivers.filter(d=>!busy.has(d.userId)&&!offered.has(d.userId));
@@ -118,7 +127,8 @@ export class OrdersService {
         const rows=await tx.$queryRaw<{driverId:string;rating:number}[]>`SELECT o."driverId", AVG(r."score")::float AS "rating" FROM "Rating" r JOIN "Order" o ON o."id"=r."orderId" WHERE o."driverId" IN (${Prisma.join(ids)}) GROUP BY o."driverId"`;
         ratings=new Map(rows.map(row=>[row.driverId,row.rating]));
       }
-      const next=nextDriver(order.pickup as unknown as Point,eligible,ratings,now);
+      const pickup=order.pickup as unknown as Point;
+      const next=nextDriver(pickup,eligible,ratings,now) ?? nextDriver(pickup,eligible,ratings,now,IDLE_POSITION_MAX_AGE_MS);
       if(next){
         const expiresAt=new Date(now+OFFER_SECONDS*1000);
         await tx.orderOffer.create({data:{orderId:id,driverId:next,expiresAt}});
@@ -194,7 +204,9 @@ export class OrdersService {
         await tx.driverProfile.update({where:{userId:actor.id},data:{deposit:balanceAfter,...(balanceAfter<this.config.minimumDeposit?{online:false,locationLatitude:null,locationLongitude:null,locationAccuracyM:null,locationMeasuredAt:null}:{})}});
         await tx.ledgerEntry.create({data:{driverId:actor.id,orderId:id,kind:'COMMISSION',amount:-order.commission,balanceAfter,idempotencyKey:`commission:${id}`,note:'Комиссия за поездку'}});
       }
-      await tx.order.update({where:{id},data:{status,...(status==='COMPLETED'?{completedAt:new Date(),driverLocation:Prisma.DbNull}:{}),history:{create:{status,actorId:actor.id}}}});
+      const now=new Date();
+      const waiting=status==='IN_PROGRESS'&&order.arrivedAt?calculateWaiting(order.arrivedAt,now,order):null;
+      await tx.order.update({where:{id},data:{status,...(status==='ARRIVED'?{arrivedAt:now}:{}),...(waiting?{waitingCharge:waiting.charge,waitingBilledMinutes:waiting.billedMinutes,price:order.price+waiting.charge}:{}),...(status==='COMPLETED'?{completedAt:now,driverLocation:Prisma.DbNull}:{}),history:{create:{status,actorId:actor.id}}}});
       if(status==='ARRIVED') await this.push(tx,[order.clientId],'trip:arrived',id);
       else await this.push(tx,this.participants(order),status==='COMPLETED'?'trip:completed':'order:updated',id);
     });
@@ -217,7 +229,7 @@ export class OrdersService {
         await tx.orderOffer.deleteMany({where:{orderId:id,driverId:{not:actor.id},skipped:false}});
       }
       const status = byDriver?'SEARCHING':'CANCELLED';
-      await tx.order.update({where:{id},data:{status,driverLocation:Prisma.DbNull,...(byDriver?{driverId:null,searchExpiresAt:new Date(Date.now()+OFFER_SECONDS*1000)}:{}),history:{create:{status,actorId:actor.id,reason:byDriver?'DRIVER_CANCELLED':'CLIENT_CANCELLED'}}}});
+      await tx.order.update({where:{id},data:{status,driverLocation:Prisma.DbNull,...(byDriver?{driverId:null,arrivedAt:null,searchExpiresAt:new Date(Date.now()+OFFER_SECONDS*1000)}:{}),history:{create:{status,actorId:actor.id,reason:byDriver?'DRIVER_CANCELLED':'CLIENT_CANCELLED'}}}});
       await this.push(tx,this.participants(order),'order:updated',id);
     });
     await this.publish(id,previousDriver?[previousDriver]:[]);await this.dispatchOrder(id);

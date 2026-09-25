@@ -197,8 +197,8 @@ npm --prefix mobile run test:ui
 
 Репозиторий содержит `Dockerfile.railway` и `railway.json`. Для API создайте сервис из корня репозитория, подключите PostgreSQL и задайте `DATABASE_URL=${{Postgres.DATABASE_URL}}`. Миграции выполняются автоматически перед запуском, а Railway проверяет `/api/health`. Секреты и ключи задаются только в Railway Variables.
 
-Текущий демонстрационный API опубликован по адресу `https://api-production-3839.up.railway.app/api`. В `mobile/.env.example` уже указан этот адрес. Пока не подключён настоящий SMS-шлюз, Railway использует development-вход с кодом `123456`; перед рабочим запуском его необходимо отключить.
+Текущий демонстрационный API опубликован по адресу `https://api-production-47be.up.railway.app/api`. В `mobile/.env.example` уже указан этот адрес. Пока не подключён настоящий SMS-шлюз, Railway использует development-вход с кодом `123456`; перед рабочим запуском его необходимо отключить.
 
-Обновление API с доставкой, каталогом, баннерами и административными маршрутами развёрнуто успешно. Панель размещается вместе с API на Railway: [api-production-3839.up.railway.app/admin/](https://api-production-3839.up.railway.app/admin/). Доступ владельца сохранён в `.local/admin-access.txt`. Четыре ресторана из референсов остаются демонстрационными. Сведения о проверке и резервной копии — в [docs/ADMIN.md](docs/ADMIN.md).
+Обновление API с доставкой, каталогом, баннерами и административными маршрутами развёрнуто успешно. Панель размещается вместе с API на Railway: [api-production-47be.up.railway.app/admin/](https://api-production-47be.up.railway.app/admin/). Доступ владельца сохранён в `.local/admin-access.txt`. Четыре ресторана из референсов остаются демонстрационными. Сведения о проверке и резервной копии — в [docs/ADMIN.md](docs/ADMIN.md).
 
 Workflow нативных сборок использует тот же адрес; для собственного сервера задайте переменную GitHub Actions `EXPO_PUBLIC_API_URL` в настройках репозитория.

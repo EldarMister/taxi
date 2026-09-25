@@ -133,6 +133,21 @@ test('avatar upload is driver-only, validates bytes and serves versioned public 
   const replaced=await api.post('/api/users/me/avatar').set(headers(driver1)).attach('avatar',pngAvatar,{filename:'avatar.png',contentType:'image/png'}).expect(201);
   assert.notEqual(replaced.body.photoUrl,uploaded.body.photoUrl);
 });
+test('a refreshed push token replaces the oldest device when the account has reached its limit',async()=>{
+  const tokens=Array.from({length:10},(_,index)=>`ExponentPushToken[old-device-${index}]`);
+  for(const [index,token] of tokens.entries()) {
+    await db.pushToken.create({data:{userId:driver1.user.id,token,platform:'android'}});
+    await db.pushToken.update({where:{token},data:{updatedAt:new Date(Date.now()-(10-index)*60000)}});
+  }
+  const replacement='ExponentPushToken[current-device]';
+  await api.post('/api/users/me/push-token').set(headers(driver1)).send({token:replacement,platform:'android'}).expect(201);
+  const registered=await db.pushToken.findMany({where:{userId:driver1.user.id},select:{token:true}});
+  assert.equal(registered.length,10);
+  assert.equal(registered.some(item=>item.token===tokens[0]),false);
+  assert.equal(registered.some(item=>item.token===replacement),true);
+  await api.post('/api/users/me/push-token').set(headers(driver1)).send({token:replacement,platform:'android'}).expect(201);
+  assert.equal(await db.pushToken.count({where:{userId:driver1.user.id}}),10);
+});
 test('legacy self-registration is closed; an approved truck driver receives only truck deliveries',async()=>{
   const legacyApplicant=await login('+996700444444');
   await api.post('/api/driver/register').set(headers(legacyApplicant)).expect(410);
@@ -408,12 +423,18 @@ test('arrival, coming, chat, restoration, cash income and idempotent commission'
   riderSocket.disconnect();const reconnected=await socket(client);
   assert.equal((await api.get('/api/orders/active').set(headers(client))).body.id,order.id);
   await api.post(`/api/orders/${order.id}/start`).set(headers(driver1)).expect(201);
+  await db.statusHistory.updateMany({where:{orderId:order.id,status:'IN_PROGRESS'},data:{createdAt:new Date(Date.now()-7*60_000)}});
   await api.post(`/api/orders/${order.id}/cancel`).set(headers(client)).expect(400);
   const before=(await api.get('/api/driver/balance').set(headers(driver1))).body;
   const completions=await Promise.all(Array.from({length:5},()=>api.post(`/api/orders/${order.id}/complete`).set(headers(driver1))));
   completions.forEach(response=>assert.equal(response.status,201));
   const after=(await api.get('/api/driver/balance').set(headers(driver1))).body;
   const stored=await db.order.findUniqueOrThrow({where:{id:order.id}});
+  const completed=(await api.get(`/api/orders/${order.id}`).set(headers(client)).expect(200)).body;
+  assert.ok(Math.abs(completed.actualDurationSeconds-420)<=2,'completed trip reports elapsed time since start');
+  assert.equal(completed.durationSeconds,order.durationSeconds,'quoted duration remains available separately');
+  const history=(await api.get('/api/orders/history?period=all').set(headers(driver1)).expect(200)).body;
+  assert.equal(history.find((entry:any)=>entry.id===order.id)?.actualDurationSeconds,completed.actualDurationSeconds);
   assert.equal(after.deposit,before.deposit-stored.commission);assert.equal(after.cashIncome,before.cashIncome+stored.price);
   assert.equal(await db.ledgerEntry.count({where:{orderId:order.id,kind:'COMMISSION'}}),1);
   assert.deepEqual((await db.pushJob.findMany({where:{orderId:order.id,event:'trip:completed'},select:{userId:true}})).map(job=>job.userId).sort(),[client.user.id,driver1.user.id].sort());
@@ -423,6 +444,50 @@ test('arrival, coming, chat, restoration, cash income and idempotent commission'
   assert.equal(await db.rating.count({where:{orderId:order.id}}),1);
   assert.equal((await api.get('/api/orders/active').set(headers(client))).body,null);
   reconnected.disconnect();driverSocket.disconnect();otherSocket.disconnect();
+});
+
+test('taxi and truck waiting policies are snapshotted and charged when the trip starts',async()=>{
+  const truck=await login('+996700444445');
+  for(const scenario of [
+    {tariffId:'economy',customer:client,driver:driver1,rate:7,delivery:false},
+    {tariffId:'delivery-truck',customer:client2,driver:truck,rate:9,delivery:true},
+  ]) {
+    const tariff=await db.tariff.findUniqueOrThrow({where:{id:scenario.tariffId}});
+    await api.patch(`/api/admin/tariffs/${scenario.tariffId}`).set(headers(admin)).send({waitingGraceMinutes:1,freeWaitingMinutes:5,waitingPricePerMinute:scenario.rate}).expect(200);
+    try {
+      await setOnline(scenario.driver);
+      const quote=(await api.post('/api/orders/quote').set(headers(scenario.customer)).send({pickup,dropoff,tariffId:scenario.tariffId}).expect(201)).body;
+      const created=(await api.post('/api/orders').set(headers(scenario.customer)).send({quoteId:quote.id,idempotencyKey:randomUUID(),...(scenario.delivery?{delivery:{goodsDescription:'Шкаф',doorToDoor:true}}:{})}).expect(201)).body;
+      assert.equal((await db.order.findUniqueOrThrow({where:{id:created.id}})).waitingPricePerMinute,scenario.rate);
+      await api.patch(`/api/admin/tariffs/${scenario.tariffId}`).set(headers(admin)).send({waitingPricePerMinute:scenario.rate+2}).expect(200);
+      await api.post(`/api/orders/${created.id}/accept`).set(headers(scenario.driver)).expect(201);
+      const arrived=(await api.post(`/api/orders/${created.id}/arrive`).set(headers(scenario.driver)).expect(201)).body;
+      assert.equal(arrived.waiting.pricePerMinute,scenario.rate);
+      await db.order.update({where:{id:created.id},data:{arrivedAt:new Date(Date.now()-7*60000-10000)}});
+      const waiting=(await api.get(`/api/orders/${created.id}`).set(headers(scenario.customer)).expect(200)).body;
+      assert.equal(waiting.waiting.phase,'PAID');
+      assert.equal(waiting.waiting.billedMinutes,2);
+      assert.equal(waiting.waiting.totalPrice,created.price+scenario.rate*2);
+      const started=(await api.post(`/api/orders/${created.id}/start`).set(headers(scenario.driver)).expect(201)).body;
+      assert.equal(started.price,created.price+scenario.rate*2);
+      assert.equal(started.waiting.charge,scenario.rate*2);
+      await api.post(`/api/orders/${created.id}/complete`).set(headers(scenario.driver)).expect(201);
+    } finally {
+      await api.patch(`/api/admin/tariffs/${scenario.tariffId}`).set(headers(admin)).send({waitingGraceMinutes:tariff.waitingGraceMinutes,freeWaitingMinutes:tariff.freeWaitingMinutes,waitingPricePerMinute:tariff.waitingPricePerMinute}).expect(200);
+      if(scenario.delivery) await setOnline(scenario.driver,false);
+    }
+  }
+});
+
+test('cancelling during paid waiting does not add a cash charge',async()=>{
+  await setOnline(driver1);
+  const created=await create();
+  await api.post(`/api/orders/${created.id}/accept`).set(headers(driver1)).expect(201);
+  await api.post(`/api/orders/${created.id}/arrive`).set(headers(driver1)).expect(201);
+  await db.order.update({where:{id:created.id},data:{arrivedAt:new Date(Date.now()-10*60000)}});
+  const cancelled=(await api.post(`/api/orders/${created.id}/cancel`).set(headers(client)).expect(201)).body;
+  assert.equal(cancelled.price,created.price);
+  assert.equal((await db.order.findUniqueOrThrow({where:{id:created.id}})).waitingCharge,0);
 });
 
 test('another passenger is saved separately from the booking client and shown to the assigned driver',async()=>{

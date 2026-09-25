@@ -18,17 +18,17 @@ type EditField = 'entrance' | 'comment';
 type Surface = 'summary' | 'details' | 'payment' | 'passenger' | EditField;
 type Props = {
   pickup: Point | null; dropoff: Point | null; tariffs: Tariff[]; tariffId: string;
-  quote: Quote | null; quotes: Record<string, Quote>; calculating: boolean; quoteError: string; bookingError?: string; busy: boolean;
+  quote: Quote | null; previewQuote?: Quote | null; quotes: Record<string, Quote>; calculating: boolean; quoteError: string; bookingError?: string; busy: boolean;
   language: User['language']; details: RideDetails; onDetails: (value: RideDetails) => void;
   onAddress: (field: 'pickup' | 'dropoff') => void; onTariff: (id: string) => void;
   registerAddressOpener?: (open: ((field: 'pickup' | 'dropoff') => void) | null) => void;
-  onSwap: () => void; onBook: () => void; onRefresh: () => void;
+  onSwap: () => void; onBook: () => void;
   onHeight: (height: number) => void; hidden?: boolean;
 };
 const carColor = (index: number) => index === 0 ? '#E5ECF4' : index === 1 ? '#67788D' : '#253447';
 const titles: Record<EditField, string> = { entrance: 'Укажите номер подъезда', comment: 'Комментарий водителю' };
 
-export function BookingPanel({ pickup, dropoff, tariffs, tariffId, quote, quotes, calculating, quoteError, bookingError, busy, language, details, onDetails, onAddress, registerAddressOpener, onTariff, onSwap, onBook, onRefresh, onHeight, hidden }: Props) {
+export function BookingPanel({ pickup, dropoff, tariffs, tariffId, quote, previewQuote, quotes, calculating, quoteError, bookingError, busy, language, details, onDetails, onAddress, registerAddressOpener, onTariff, onSwap, onBook, onHeight, hidden }: Props) {
   const { isDark, palette } = useTheme();
   const b = useThemeStyles(baseB);
   const t = tr(language);
@@ -45,6 +45,7 @@ export function BookingPanel({ pickup, dropoff, tariffs, tariffId, quote, quotes
   const [passengerError, setPassengerError] = useState('');
   const [contactsBusy, setContactsBusy] = useState(false);
   const ready = !!pickup && !!dropoff;
+  const shownQuote = quote ?? previewQuote;
   const tooLong = rideComment(details).length > 500;
   const visibleError = tooLong ? 'Сократите комментарий до 500 символов.' : bookingError || quoteError;
   const index = Math.max(0, tariffs.findIndex(item => item.id === tariffId));
@@ -87,8 +88,8 @@ export function BookingPanel({ pickup, dropoff, tariffs, tariffId, quote, quotes
   };
   const footer = (expanded = false) => <View style={b.footer}>
     <Pressable accessibilityRole="button" accessibilityLabel={t('Способы оплаты')} onPress={payment} disabled={busy} style={b.iconButton}><Icon name="cash-outline" size={27} color={colors.blue}/></Pressable>
-    <Pressable testID="book-ride" accessibilityRole="button" accessibilityState={{ disabled: busy || calculating || tooLong }} disabled={busy || (ready && calculating) || tooLong} onPress={!ready ? () => onAddress(pickup ? 'dropoff' : 'pickup') : quote ? onBook : onRefresh} style={({ pressed }) => [b.primary, { flex: 1 }, (pressed || busy || calculating || tooLong) && { opacity: .6 }]}>
-    {(busy || calculating) && <ActivityIndicator color={palette.accentText} size="small"/>}<Text style={b.primaryText}>{t(!ready ? 'Укажите маршрут' : calculating ? 'Считаем…' : quote ? 'Заказать' : 'Обновить расчёт')}</Text>
+    <Pressable testID="book-ride" accessibilityRole="button" accessibilityState={{ disabled: busy || (ready && !quote) || tooLong }} disabled={busy || (ready && !quote) || tooLong} onPress={!ready ? () => onAddress(pickup ? 'dropoff' : 'pickup') : onBook} style={({ pressed }) => [b.primary, { flex: 1 }, (pressed || busy || (ready && !quote) || tooLong) && { opacity: .6 }]}>
+    {(busy || (ready && !quote && calculating)) && <ActivityIndicator color={palette.accentText} size="small"/>}<Text style={b.primaryText}>{t(!ready ? 'Укажите маршрут' : quote ? 'Заказать' : quoteError ? 'Повторим автоматически' : shownQuote ? 'Обновляем цену…' : 'Считаем…')}</Text>
     </Pressable>
     <Pressable accessibilityRole="button" accessibilityLabel={t(expanded ? 'Свернуть детали поездки' : 'Детали поездки')} onPress={() => navigate(expanded ? 'summary' : 'details')} style={b.iconButton}><Icon name={expanded ? 'chevron-down' : 'options-outline'} size={25}/></Pressable>
   </View>;
@@ -101,13 +102,13 @@ export function BookingPanel({ pickup, dropoff, tariffs, tariffId, quote, quotes
       </View> : <>
         <View style={b.addressRow}><Pressable accessibilityRole="button" accessibilityLabel={t('Откуда')} disabled={busy} onPress={() => requestAddress('pickup')} style={b.address}><PickupIcon size={20}/><Text numberOfLines={1} style={b.addressText}>{shortAddress(pickup?.address) || t('Место подачи')}</Text></Pressable><Pressable accessibilityRole="button" accessibilityLabel={t('Подъезд')} onPress={() => edit('entrance')} style={b.pill}><Text numberOfLines={1} style={b.pillText}>{details.entrance ? t('Подъезд') + ' ' + details.entrance : t('Подъезд')}</Text></Pressable></View>
         <View style={b.addressRow}><Pressable accessibilityRole="button" accessibilityLabel={t('Куда')} disabled={busy} onPress={() => requestAddress('dropoff')} style={b.address}><Icon name="flag" size={20}/><Text numberOfLines={1} style={b.addressText}>{shortAddress(dropoff.address)}</Text></Pressable><Pressable accessibilityRole="button" accessibilityLabel={t('Поменять адреса местами')} onPress={onSwap} disabled={busy} style={b.iconButton}><Icon name="swap-vertical" size={20}/></Pressable></View>
-        <View style={b.serviceRow}><Text style={b.caption}>{quote ? km(quote.distanceMeters) + ' · ≈ ' + mins(quote.durationSeconds, language) + ' ' + t('в пути') : t('Выберите тариф')}</Text></View>
+        <View style={b.serviceRow}><Text style={b.caption}>{shownQuote ? km(shownQuote.distanceMeters) + ' · ≈ ' + mins(shownQuote.durationSeconds, language) + ' ' + t('в пути') : t('Выберите тариф')}</Text></View>
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={b.tariffs}>
           {tariffs.map((item, i) => <Pressable key={item.id} accessibilityRole="radio" accessibilityLabel={item.name + ', ' + (quotes[item.id] ? money(quotes[item.id].price) : t('Расчёт стоимости'))} accessibilityState={{ checked: item.id === tariffId }} disabled={busy} onPress={() => item.id === tariffId ? navigate('details') : onTariff(item.id)} style={[b.tariff, item.id === tariffId && b.selected, isDark && item.id === tariffId && { borderColor: palette.ink }]}>
             <Car color={carColor(i)} size={86}/><Text style={b.tariffName} numberOfLines={1}>{item.name}</Text><Text style={b.price}>{quotes[item.id] ? money(quotes[item.id].price) : calculating ? '…' : '—'}</Text>
           </Pressable>)}
         </ScrollView>
-        {!tariffs.length && <Pressable accessibilityRole="button" onPress={onRefresh} style={b.requests}><Text style={b.addressText}>{t('Обновить тарифы')}</Text></Pressable>}
+        {!tariffs.length && <Text style={b.caption}>{t('Загружаем тарифы…')}</Text>}
         {!!visibleError && <Text accessibilityRole="alert" style={b.error}>{t(visibleError)}</Text>}
         {footer()}
       </>}
@@ -115,7 +116,7 @@ export function BookingPanel({ pickup, dropoff, tariffs, tariffId, quote, quotes
     {surface !== 'summary' && <BottomPanel key={surface} closeRequested={sheetClosing} onClose={dismiss} label={t('Закрыть')}>
       {surface === 'details' && <>
         <View style={b.detailsHeader}><Pressable accessibilityRole="button" accessibilityLabel={t('Назад')} onPress={close} style={b.iconButton}><Icon name="arrow-back"/></Pressable><View style={{ flex: 1, alignItems: 'center' }}><Text numberOfLines={1} style={b.routeLabel}>{shortAddress(pickup?.address)}</Text><Text numberOfLines={1} style={b.routeLabel}>{shortAddress(dropoff?.address)}</Text></View><View style={b.iconButton}><Icon name="information-circle-outline" color={colors.muted}/></View></View>
-        <View style={b.hero}><View style={{ alignItems: 'center' }}><Car size={height < 740 ? 160 : 210} color={carColor(index)}/></View><Text style={b.detailTitle}>{tariff?.name || t('Такси')}</Text><Text numberOfLines={2} style={b.caption}>{tariff?.description || t('Выберите тариф')}</Text><Text style={b.detailPrice}>{quote ? money(quote.price) + ' · ≈ ' + mins(quote.durationSeconds, language) + ' ' + t('в пути') : t('Выберите маршрут')}</Text></View>
+        <View style={b.hero}><View style={{ alignItems: 'center' }}><Car size={height < 740 ? 160 : 210} color={carColor(index)}/></View><Text style={b.detailTitle}>{tariff?.name || t('Такси')}</Text><Text numberOfLines={2} style={b.caption}>{tariff?.description || t('Выберите тариф')}</Text><Text style={b.detailPrice}>{shownQuote ? money(shownQuote.price) + ' · ≈ ' + mins(shownQuote.durationSeconds, language) + ' ' + t('в пути') : t('Выберите маршрут')}</Text></View>
         <View style={b.optionsBody}>
           <View style={b.optionsList}>
             <Pressable accessibilityRole="button" accessibilityLabel={t(titles.comment)} onPress={() => edit('comment')} style={b.optionRow}><Icon name="chatbubble-outline" size={21}/><View style={{ flex: 1 }}><Text style={b.addressText}>{t(titles.comment)}</Text>{!!details.comment && <Text numberOfLines={1} style={b.caption}>{details.comment}</Text>}</View><Icon name="chevron-forward" size={17}/></Pressable>

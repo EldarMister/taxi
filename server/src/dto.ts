@@ -1,5 +1,5 @@
 import { Type } from 'class-transformer';
-import { IsBoolean, IsDefined, IsIn, IsInt, IsISO8601, IsNumber, IsOptional, IsString, IsUUID, Matches, Max, MaxLength, Min, MinLength, ValidateNested } from 'class-validator';
+import { ArrayMaxSize, ArrayMinSize, IsArray, IsBoolean, IsDefined, IsIn, IsInt, IsISO8601, IsNumber, IsOptional, IsString, IsUUID, Matches, Max, MaxLength, Min, MinLength, ValidateNested } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 export class PhoneDto {
   @ApiProperty({example:'+996700123456'}) @Matches(/^\+[1-9]\d{7,14}$/) phone!:string;
@@ -24,6 +24,26 @@ export class RouteDto {
   @ApiProperty({type:PointDto}) @IsDefined() @ValidateNested() @Type(()=>PointDto) pickup!:PointDto;
   @ApiProperty({type:PointDto}) @IsDefined() @ValidateNested() @Type(()=>PointDto) dropoff!:PointDto;
   @ApiPropertyOptional({enum:['ru','ky']}) @IsOptional() @IsIn(['ru','ky']) language?:'ru'|'ky';
+  @ApiPropertyOptional() @IsOptional() @IsNumber() @Min(0) @Max(359.999) bearing?:number;
+  @ApiPropertyOptional() @IsOptional() @IsBoolean() fast?:boolean;
+}
+export class MatchFixDto {
+  @IsNumber() @Min(-90) @Max(90) latitude!:number;
+  @IsNumber() @Min(-180) @Max(180) longitude!:number;
+  @IsNumber() @Min(0) @Max(80) accuracy!:number;
+  @IsOptional() @IsNumber() @Min(0) @Max(359.999) heading?:number;
+  @IsOptional() @IsNumber() @Min(0) @Max(100) speed?:number;
+}
+export class MatchTraceDto {
+  @IsArray() @ArrayMinSize(3) @ArrayMaxSize(10) @ValidateNested({each:true}) @Type(()=>MatchFixDto) points!:MatchFixDto[];
+}
+export class RoadFeaturePointDto {
+  @IsNumber() @Min(-90) @Max(90) latitude!:number;
+  @IsNumber() @Min(-180) @Max(180) longitude!:number;
+}
+export class RoadFeaturesDto {
+  @IsNumber() @Min(0) @Max(500000) startAlong!:number;
+  @IsArray() @ArrayMinSize(2) @ArrayMaxSize(80) @ValidateNested({each:true}) @Type(()=>RoadFeaturePointDto) points!:RoadFeaturePointDto[];
 }
 export class QuoteDto extends RouteDto {
   @ApiProperty({example:'economy'}) @IsString() @MaxLength(80) tariffId!:string;

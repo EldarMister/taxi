@@ -19,12 +19,12 @@ export function registrationProjectionIssueText(code:string|null|undefined) {
   return null;
 }
 
-const COMMON_UPLOADS = ['profile_photo','identity_front','identity_back'] as const;
 const DRIVER_LICENSE_UPLOADS = ['license_front','license_back'] as const;
-const TAXI_PHOTOS = ['front','back','left','right','interior_front','interior_back','trunk'].map(side=>`taxi_photo_${side}`);
-const CARGO_PHOTOS = ['front','back','left','right','cabin','cargo_bay','plate'].map(side=>`cargo_photo_${side}`);
-const ADDITIONAL_VEHICLE_PHOTOS={TAXI:['front','back','left','right','interior_front','interior_back','trunk'],CARGO:['front','back','left','right','cabin','cargo_bay','plate'],COURIER:['front']} as const;
-const MOTOR_COURIER_METHODS = new Set(['MOPED','SCOOTER','MOTORCYCLE','CAR','TRUCK','CARGO_CAR']);
+const TAXI_PHOTOS = ['taxi_photo_front'];
+const CARGO_PHOTOS = ['cargo_photo_front'];
+const ADDITIONAL_VEHICLE_PHOTOS={TAXI:['front'],CARGO:['front'],COURIER:['front']} as const;
+export const DOCUMENTED_COURIER_METHODS = new Set(['MOPED','MOTORCYCLE','CAR','TRUCK','CARGO_CAR']);
+export const LIGHT_COURIER_METHODS = new Set(['FOOT','BICYCLE','E_BICYCLE','SCOOTER']);
 const ACCEPTABLE_UPLOAD_STATUSES = new Set(['UPLOADED','UNDER_REVIEW','APPROVED','ACTIVE','EXPIRING']);
 const REQUIRED_EXPIRY_UPLOAD_SLOTS = new Set(['identity_front','identity_back','license_front','license_back','taxi_insurance','cargo_insurance','courier_insurance']);
 export const MAX_ADDITIONAL_VEHICLES=5;
@@ -51,7 +51,7 @@ export function correctableRegistrationRoles(roles:readonly {role:PerformerRoleV
 }
 
 export function registrationCapabilityCeiling(roles:readonly PerformerRoleValue[],modes:readonly string[],transportClass:'ECONOMY'|'COMFORT'|'TRUCK') {
-  const selected=new Set(roles),motorCourier=modes.some(mode=>MOTOR_COURIER_METHODS.has(mode));
+  const selected=new Set(roles),motorCourier=modes.some(mode=>DOCUMENTED_COURIER_METHODS.has(mode));
   return {
     acceptsEconomy:selected.has('TAXI_DRIVER')&&transportClass!=='TRUCK',
     acceptsComfort:selected.has('TAXI_DRIVER')&&transportClass==='COMFORT',
@@ -128,7 +128,7 @@ export function registrationUploadsWithEffectiveExpiry<T extends {slotKey:string
 }
 
 export const REGISTRATION_CONFIG = {
-  version:'kg-2026-09-22',
+  version:'kg-2026-09-24',
   country:'KG',
   minimumAge:18,
   minimumAgeByRole:{TAXI_DRIVER:18,CARGO_DRIVER:18,COURIER:18},
@@ -222,20 +222,22 @@ export function registrationAdditionalVehicles(data:RegistrationData) {
 
 export function requiresDriverLicense(roles:readonly PerformerRoleValue[],data:RegistrationData) {
   if(roles.includes('TAXI_DRIVER')||roles.includes('CARGO_DRIVER'))return true;
-  return roles.includes('COURIER')&&courierTransportModes(data).some(mode=>MOTOR_COURIER_METHODS.has(mode));
+  return roles.includes('COURIER')&&courierTransportModes(data).some(mode=>DOCUMENTED_COURIER_METHODS.has(mode));
 }
 
 export function registrationSteps(roles:readonly PerformerRoleValue[],data:RegistrationData) {
-  const steps=['ROLES','PERSONAL_DATA','PROFILE_PHOTO','IDENTITY_DOCUMENT'];
+  const steps=['ROLES'];
   if(roles.includes('COURIER'))steps.push('COURIER_TRANSPORT');
+  steps.push('PERSONAL_DATA');
+  if(requiresDriverLicense(roles,data))steps.push('PROFILE_PHOTO');
+  steps.push('IDENTITY_DOCUMENT');
   if(requiresDriverLicense(roles,data))steps.push('DRIVER_LICENSE');
   if(roles.includes('TAXI_DRIVER'))steps.push('TAXI_VEHICLE','TAXI_DOCUMENTS','TAXI_PHOTOS');
-  if(roles.includes('CARGO_DRIVER'))steps.push('CARGO_VEHICLE','CARGO_EQUIPMENT','CARGO_DOCUMENTS','CARGO_PHOTOS');
+  if(roles.includes('CARGO_DRIVER'))steps.push('CARGO_VEHICLE','CARGO_DOCUMENTS','CARGO_PHOTOS');
   if(roles.includes('COURIER')) {
-    if(courierTransportModes(data).some(mode=>MOTOR_COURIER_METHODS.has(mode))&&!usesExistingVehicle(data))steps.push('COURIER_VEHICLE');
-    steps.push('COURIER_SETTINGS');
+    if(courierTransportModes(data).some(mode=>DOCUMENTED_COURIER_METHODS.has(mode))&&!usesExistingVehicle(data))steps.push('COURIER_VEHICLE');
   }
-  steps.push('WORK_PREFERENCES','LOCATION','PAYMENT','REVIEW');
+  steps.push('REVIEW');
   return steps;
 }
 
@@ -257,7 +259,7 @@ export function registrationUploadSlotSpecs(roles:readonly PerformerRoleValue[],
   const specs:RegistrationUploadSlotSpec[]=[];
   const add=(slotKey:string,kind:RegistrationUploadKindValue,role:PerformerRoleValue|null,required=true)=>{if(!specs.some(item=>item.slotKey===slotKey))specs.push({slotKey,kind,role,required});};
   if(roles.length) {
-    add('profile_photo','PROFILE_PHOTO',null);
+    add('profile_photo','PROFILE_PHOTO',null,requiresDriverLicense(roles,data));
     add('identity_front','IDENTITY_DOCUMENT',null);add('identity_back','IDENTITY_DOCUMENT',null);
   }
   if(requiresDriverLicense(roles,data)) {add('license_front','DRIVER_LICENSE',null);add('license_back','DRIVER_LICENSE',null);}
@@ -274,7 +276,7 @@ export function registrationUploadSlotSpecs(roles:readonly PerformerRoleValue[],
     if(vehicleOwnership(data,'CARGO')==='RENT')add('cargo_rental','VEHICLE_DOCUMENT','CARGO_DRIVER');
   }
   if(roles.includes('COURIER')) {
-    if(courierTransportModes(data).some(mode=>MOTOR_COURIER_METHODS.has(mode))&&!usesExistingVehicle(data)) {
+    if(courierTransportModes(data).some(mode=>DOCUMENTED_COURIER_METHODS.has(mode))&&!usesExistingVehicle(data)) {
       add('courier_registration','VEHICLE_DOCUMENT','COURIER');add('courier_insurance','VEHICLE_DOCUMENT','COURIER');add('courier_photo','VEHICLE_PHOTO','COURIER');
     }
     const orderTypes=stringArray(firstValue(data,[['courier','orderTypes'],['courierSettings','orderTypes']]));
@@ -326,20 +328,11 @@ function validateVehicleRecord(errors:RegistrationValidationError[],vehicle:Reco
   if(usage==='CARGO') {
     if(!text(vehicle.type))errors.push({field:`${prefix}.type`,code:'REQUIRED',message:'Выберите тип грузового транспорта'});
     if(!text(vehicle.capacityKg))errors.push({field:`${prefix}.capacityKg`,code:'REQUIRED',message:'Укажите грузоподъёмность'});
-  } else if(usage==='TAXI'&&!stringArray(vehicle.tariffs).length)errors.push({field:`${prefix}.tariffs`,code:'REQUIRED',message:'Выберите хотя бы один предпочтительный тариф'});
+  }
 }
 function validateVehicle(errors:RegistrationValidationError[],data:RegistrationData,usage:'TAXI'|'CARGO') {
   const prefix=usage==='TAXI'?'taxiVehicle':'cargoVehicle';
   validateVehicleRecord(errors,vehicleFor(data,usage),prefix,usage);
-}
-function validateCargoEquipmentRequired(errors:RegistrationValidationError[],equipment:Record<string,unknown>|null,prefix:string) {
-  if(!equipment) {errors.push({field:prefix,code:'REQUIRED',message:'Заполните оснащение грузового транспорта'});return;}
-  if(!stringArray(equipment.loadingTypes).length)errors.push({field:`${prefix}.loadingTypes`,code:'REQUIRED',message:'Выберите тип загрузки'});
-  if(equipment.refrigerator===true) {
-    if(!text(equipment.minTemperature))errors.push({field:`${prefix}.minTemperature`,code:'REQUIRED',message:'Укажите минимальную температуру'});
-    if(!text(equipment.maxTemperature))errors.push({field:`${prefix}.maxTemperature`,code:'REQUIRED',message:'Укажите максимальную температуру'});
-  }
-  if(equipment.worksWithLoaders===true&&!text(equipment.loaderCount))errors.push({field:`${prefix}.loaderCount`,code:'REQUIRED',message:'Укажите количество грузчиков'});
 }
 
 function parsedBirthDate(value:string):Date|null {
@@ -429,7 +422,7 @@ export function validateRegistrationDataValues(data:RegistrationData,roles:reado
   };
   validateVehicleValues('taxiVehicle',record(data.taxiVehicle),'TAXI',roles.includes('TAXI_DRIVER')&&data.taxiVehicle!==undefined);
   validateVehicleValues('cargoVehicle',record(data.cargoVehicle),'CARGO',roles.includes('CARGO_DRIVER')&&data.cargoVehicle!==undefined);
-  validateVehicleValues('courierVehicle',record(data.courierVehicle),'COURIER',roles.includes('COURIER')&&data.courierVehicle!==undefined&&courierTransportModes(data).some(mode=>MOTOR_COURIER_METHODS.has(mode))&&!usesExistingVehicle(data));
+  validateVehicleValues('courierVehicle',record(data.courierVehicle),'COURIER',roles.includes('COURIER')&&data.courierVehicle!==undefined&&courierTransportModes(data).some(mode=>DOCUMENTED_COURIER_METHODS.has(mode))&&!usesExistingVehicle(data));
 
   const extraVehicles=registrationAdditionalVehicles(data),seenVehicleIds=new Set<string>();
   if(data.vehicles!==undefined&&!Array.isArray(data.vehicles))invalid('vehicles','Дополнительный транспорт должен быть списком');
@@ -507,12 +500,8 @@ export function validateRegistrationSubmission(input:{roles:readonly PerformerRo
       if(age<minimum)errors.push({field:'personal.birthDate',code:'MINIMUM_AGE',message:`Минимальный возраст — ${minimum} лет`});
     }
   }
-  required(errors,data,'identity.number',[['identity','number'],['identityDocument','number']],'Введите номер документа');
-  required(errors,data,'identity.issuedAt',[['identity','issuedAt'],['identityDocument','issueDate']],'Укажите дату выдачи документа');
   required(errors,data,'identity.expiresAt',[['identity','expiresAt'],['identityDocument','expiryDate']],'Укажите срок действия документа');
-  required(errors,data,'identity.issuedBy',[['identity','issuedBy'],['identityDocument','issuedBy']],'Укажите, кем выдан документ');
   if(requiresDriverLicense(roles,data)) {
-    required(errors,data,'driverLicense.number',[['driverLicense','number']],'Введите номер водительского удостоверения');
     if(!stringArray(valueAt(data,'driverLicense','categories')).length)errors.push({field:'driverLicense.categories',code:'REQUIRED',message:'Выберите категорию водительских прав'});
     required(errors,data,'driverLicense.expiresAt',[['driverLicense','expiresAt'],['driverLicense','expiryDate']],'Укажите срок действия водительского удостоверения');
   }
@@ -524,31 +513,23 @@ export function validateRegistrationSubmission(input:{roles:readonly PerformerRo
     if(!role||!roles.includes(role)||!ADDITIONAL_VEHICLE_CLIENT_ID_PATTERN.test(clientId))continue;
     const prefix=`vehicles.${clientId}`;
     validateVehicleRecord(errors,vehicle,prefix,usage as VehicleUsage);
-    if(usage==='CARGO')validateCargoEquipmentRequired(errors,record(vehicle.equipment),`${prefix}.equipment`);
   }
   if(roles.includes('COURIER')) {
     if(!courierTransportModes(data).length)errors.push({field:'courier.transportModes',code:'REQUIRED',message:'Выберите способ доставки'});
-    if(!stringArray(firstValue(data,[['courier','orderTypes'],['courierSettings','orderTypes']])).length)errors.push({field:'courier.orderTypes',code:'REQUIRED',message:'Выберите типы заказов'});
-    required(errors,data,'courier.maxWeightKg',[['courier','maxWeightKg'],['courierSettings','maxWeightKg']],'Укажите максимальный вес');
     required(errors,data,'courier.city',[['courier','city'],['personal','city'],['courierSettings','city']],'Выберите город работы курьера');
-    if(usesExistingVehicle(data)) {
+    if(courierTransportModes(data).some(mode=>DOCUMENTED_COURIER_METHODS.has(mode))&&usesExistingVehicle(data)) {
       const usage=text(valueAt(data,'courier','existingVehicleUsage')).toUpperCase();
       const clientId=text(valueAt(data,'courier','existingVehicleClientId'));
       const selectedRoles=input.selectedRoles??roles;
       if(usage!=='TAXI'&&usage!=='CARGO'||usage==='TAXI'&&!selectedRoles.includes('TAXI_DRIVER')||usage==='CARGO'&&!selectedRoles.includes('CARGO_DRIVER'))errors.push({field:'courier.existingVehicleUsage',code:'INVALID',message:'Выберите транспорт из одного из выбранных направлений'});
       else if(clientId&&!registrationAdditionalVehicles(data).some(item=>item.vehicle&&text(item.vehicle.clientId)===clientId&&text(item.vehicle.usage).toUpperCase()===usage))errors.push({field:'courier.existingVehicleClientId',code:'INVALID',message:'Выбранный дополнительный транспорт не найден или относится к другому направлению'});
     }
-    if(courierTransportModes(data).some(mode=>MOTOR_COURIER_METHODS.has(mode))&&!usesExistingVehicle(data)) {
+    if(courierTransportModes(data).some(mode=>DOCUMENTED_COURIER_METHODS.has(mode))&&!usesExistingVehicle(data)) {
       const vehicle=record(data.courierVehicle);
       if(!vehicle)errors.push({field:'courierVehicle',code:'REQUIRED',message:'Заполните данные транспорта курьера'});
       else for(const [key,message] of [['ownership','Укажите владение транспортом'],['brand','Укажите марку транспорта'],['model','Укажите модель транспорта'],['year','Укажите год выпуска'],['plateNumber','Введите государственный номер']] as const)if(!text(vehicle[key]))errors.push({field:`courierVehicle.${key}`,code:'REQUIRED',message});
     }
   }
-  if(roles.includes('CARGO_DRIVER')) {
-    validateCargoEquipmentRequired(errors,record(data.cargoEquipment),'cargoEquipment');
-  }
-  const payment=record(data.payment)??record(data.paymentMethod);
-  if(payment&&text(payment.type)&&!/^\d{4}$/.test(text(payment.last4)))errors.push({field:'payment.last4',code:'INVALID',message:'Укажите только последние четыре цифры платёжного способа'});
   const uploaded=new Map(uploads.map(upload=>[upload.slotKey,upload]));
   const specs=new Map(registrationUploadSlotSpecs(roles,data).map(spec=>[spec.slotKey,spec]));
   for(const slotKey of requiredUploadSlots(roles,data)) {

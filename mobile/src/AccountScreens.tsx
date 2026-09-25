@@ -31,7 +31,7 @@ function HistoryRow({ order, user, expanded, onPress }: { order: Order; user: Us
       <View style={styles.timeColumn}><Text style={styles.historyTime}>{new Date(order.createdAt).toLocaleTimeString(user.language === 'ky' ? 'ky-KG' : 'ru-RU', { hour: '2-digit', minute: '2-digit' })}</Text></View>
       <View style={styles.historyRoute}>
         <View style={styles.routePins}><Icon name="radio-button-on" color={palette.accent} size={15}/><View style={styles.routeDash}/><Icon name="location" color={palette.ink} size={16}/></View>
-        <View style={{ flex: 1, gap: 5 }}><Text style={styles.historyAddress} numberOfLines={1}>{shortAddress(order.pickup.address)}</Text><Text style={styles.historyAddress} numberOfLines={1}>{shortAddress(order.dropoff.address)}</Text><Text style={styles.historyMeta}>{km(order.distanceMeters)} · {mins(order.durationSeconds, user.language)}</Text></View>
+        <View style={{ flex: 1, gap: 5 }}><Text style={styles.historyAddress} numberOfLines={1}>{shortAddress(order.pickup.address)}</Text><Text style={styles.historyAddress} numberOfLines={1}>{shortAddress(order.dropoff.address)}</Text><Text style={styles.historyMeta}>{km(order.distanceMeters)} · {mins(order.status === 'COMPLETED' ? order.actualDurationSeconds ?? order.durationSeconds : order.durationSeconds, user.language)}</Text></View>
       </View>
       <View style={styles.historyAmount}><View style={[styles.statusPill, { backgroundColor: isDark ? '#252525' : done ? '#E3F9ED' : colors.pale }]}><Text style={[styles.statusText, { color: isDark ? '#FFFFFF' : done ? '#159447' : palette.muted }]}>{t(orderStatus[order.status])}</Text></View><Text style={styles.historyPrice} numberOfLines={1} adjustsFontSizeToFit>{money(order.price)}</Text></View>
       <Icon name={expanded ? 'chevron-down' : 'chevron-forward'} color={palette.muted} size={17}/>
@@ -40,7 +40,7 @@ function HistoryRow({ order, user, expanded, onPress }: { order: Order; user: Us
   </View>;
 }
 
-export function AccountScreen({ page, user, config, onUser, onError, onOnline, onNavigate, busy, themePreference, onThemePreferenceChange, historyDetailId, onHistoryDetailId }: { page: Page; user: User; config: AppConfig | null; onUser: (user: User) => void; onError: (error: string) => void; onOnline: (online: boolean) => void; onNavigate: (page: Page) => void; busy: boolean; themePreference: ThemePreference; onThemePreferenceChange: (preference: ThemePreference) => void; historyDetailId: string | null; onHistoryDetailId: (id: string | null) => void }) {
+export function AccountScreen({ page, user, config, onUser, onError, onOnline, onNavigate, busy, themePreference, onThemePreferenceChange, historyDetailId, onHistoryDetailId, voiceEnabled, onVoiceEnabledChange }: { page: Page; user: User; config: AppConfig | null; onUser: (user: User) => void; onError: (error: string) => void; onOnline: (online: boolean) => void; onNavigate: (page: Page) => void; busy: boolean; themePreference: ThemePreference; onThemePreferenceChange: (preference: ThemePreference) => void; historyDetailId: string | null; onHistoryDetailId: (id: string | null) => void; voiceEnabled?: boolean; onVoiceEnabledChange?: (enabled: boolean) => void }) {
   const styles = useAccountStyles();
   const s = useAccountUi();
   const t = tr(user.language);
@@ -207,6 +207,11 @@ export function AccountScreen({ page, user, config, onUser, onError, onOnline, o
     </> : <Empty icon="wallet-outline" title={loading ? t('Подключаемся…') : t('Баланс')}/>}</>}
 
     {page === 'settings' && <>
+      {user.role === 'DRIVER' && onVoiceEnabledChange && <View style={[s.card, isDark && styles.darkSettingsCard, { gap: 10 }]}>
+        <View style={s.spread}><View style={[s.row, { flex: 1 }]}><Icon name="volume-high-outline" color={isDark ? '#FFFFFF' : palette.accent}/><Text style={[s.h3, isDark && styles.darkSettingsText, { flex: 1 }]}>{local('Озвучивать маршрут', 'Маршрутту үн менен айтуу')}</Text></View>
+          <ToggleSwitch label={local('Озвучивать маршрут', 'Маршрутту үн менен айтуу')} value={voiceEnabled !== false} onValueChange={onVoiceEnabledChange}/>
+        </View>
+      </View>}
       {driverProfile && <View style={[s.card, isDark && styles.darkSettingsCard, { gap: 4 }]}>
         <View style={{ gap: 4, paddingBottom: 9 }}><Text style={[s.h3, isDark && styles.darkSettingsText]}>{local('Какие заказы принимать', 'Кайсы буюртмаларды кабыл алуу')}</Text><Text style={s.caption}>{local(`Назначенный класс: ${driverProfile.transportClass === 'COMFORT' ? 'Комфорт' : driverProfile.transportClass === 'TRUCK' ? 'Грузовой' : 'Эконом'}`, `Унаа классы: ${driverProfile.transportClass}`)}</Text></View>
         {driverProfile.transportClass !== 'TRUCK' && <PreferenceRow title="Эконом" caption="Обычные поездки" value={!!driverProfile.acceptsEconomy} disabled={saving} onChange={acceptsEconomy => void updatePreferences({ acceptsEconomy })}/>}

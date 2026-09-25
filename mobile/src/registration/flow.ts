@@ -25,14 +25,14 @@ export function correctionUploadDeleteAllowed(scope: readonly string[] | undefin
   return scope === undefined;
 }
 
-const MOTOR_TRANSPORT = new Set<CourierTransportMode>(['MOPED', 'SCOOTER', 'MOTORCYCLE', 'CAR', 'TRUCK']);
+const MOTOR_TRANSPORT = new Set<CourierTransportMode>(['MOPED', 'MOTORCYCLE', 'CAR', 'TRUCK']);
 
 export function courierNeedsMotorVehicle(application: Pick<RegistrationApplication, 'data'>) {
   return application.data.courier.transportModes.some(mode => MOTOR_TRANSPORT.has(mode));
 }
 
 export function courierNeedsLicense(application: Pick<RegistrationApplication, 'data'>) {
-  return application.data.courier.transportModes.some(mode => ['MOPED', 'SCOOTER', 'MOTORCYCLE', 'CAR', 'TRUCK'].includes(mode));
+  return courierNeedsMotorVehicle(application);
 }
 
 const fallbackDocumentRequirements: BaseDocumentRequirement[] = [
@@ -40,9 +40,9 @@ const fallbackDocumentRequirements: BaseDocumentRequirement[] = [
   { id: 'identity', title: 'Удостоверение личности', kind: 'IDENTITY_DOCUMENT', slots: ['identity_front', 'identity_back'], requiredFor: ['TAXI_DRIVER', 'CARGO_DRIVER', 'COURIER'] },
   { id: 'driver-license', title: 'Водительское удостоверение', kind: 'DRIVER_LICENSE', slots: ['license_front', 'license_back'], requiredFor: ['TAXI_DRIVER', 'CARGO_DRIVER'], condition: 'Также требуется для моторизованной доставки' },
   { id: 'taxi-registration', title: 'Документы автомобиля', kind: 'VEHICLE_DOCUMENT', slots: ['taxi_registration', 'taxi_insurance'], expirySlots: ['taxi_insurance'], requiredFor: ['TAXI_DRIVER'] },
-  { id: 'taxi-photos', title: 'Фотографии автомобиля такси', kind: 'VEHICLE_PHOTO', slots: ['taxi_photo_front', 'taxi_photo_back', 'taxi_photo_left', 'taxi_photo_right', 'taxi_photo_interior_front', 'taxi_photo_interior_back', 'taxi_photo_trunk'], requiredFor: ['TAXI_DRIVER'] },
+  { id: 'taxi-photos', title: 'Фотографии автомобиля такси', kind: 'VEHICLE_PHOTO', slots: ['taxi_photo_front'], requiredFor: ['TAXI_DRIVER'] },
   { id: 'cargo-registration', title: 'Документы грузового автомобиля', kind: 'VEHICLE_DOCUMENT', slots: ['cargo_registration', 'cargo_insurance'], expirySlots: ['cargo_insurance'], requiredFor: ['CARGO_DRIVER'] },
-  { id: 'cargo-photos', title: 'Фотографии грузового автомобиля', kind: 'VEHICLE_PHOTO', slots: ['cargo_photo_front', 'cargo_photo_back', 'cargo_photo_left', 'cargo_photo_right', 'cargo_photo_cabin', 'cargo_photo_cargo_bay', 'cargo_photo_plate'], requiredFor: ['CARGO_DRIVER'] },
+  { id: 'cargo-photos', title: 'Фотографии грузового автомобиля', kind: 'VEHICLE_PHOTO', slots: ['cargo_photo_front'], requiredFor: ['CARGO_DRIVER'] },
   { id: 'courier-vehicle', title: 'Документы транспорта курьера', kind: 'VEHICLE_DOCUMENT', slots: ['courier_registration', 'courier_insurance'], expirySlots: ['courier_insurance'], requiredFor: ['COURIER'], condition: 'Только для моторизованной доставки с отдельным транспортом' },
   { id: 'courier-vehicle-photo', title: 'Фотография транспорта курьера', kind: 'VEHICLE_PHOTO', slots: ['courier_photo'], requiredFor: ['COURIER'], condition: 'Только для моторизованной доставки с отдельным транспортом' },
   { id: 'rental-proof', title: 'Договор аренды или доверенность', kind: 'VEHICLE_DOCUMENT', slots: [], requiredFor: ['TAXI_DRIVER', 'CARGO_DRIVER'], condition: 'Только для арендованного транспорта' },
@@ -52,8 +52,8 @@ const requirements = (config?: Pick<RegistrationConfig, 'documentRequirements'>)
 const hasRequirement = (config: Pick<RegistrationConfig, 'documentRequirements'> | undefined, id: string) => requirements(config).some(item => item.id === id);
 
 function requirementApplies(requirement: BaseDocumentRequirement, application: Pick<RegistrationApplication, 'roles' | 'data'>) {
+  if (requirement.id === 'driver-license' || requirement.id === 'profile-photo') return application.roles.includes('TAXI_DRIVER') || application.roles.includes('CARGO_DRIVER') || application.roles.includes('COURIER') && courierNeedsLicense(application);
   if (!requirement.requiredFor.some(role => application.roles.includes(role))) return false;
-  if (requirement.id === 'driver-license') return application.roles.includes('TAXI_DRIVER') || application.roles.includes('CARGO_DRIVER') || application.roles.includes('COURIER') && courierNeedsLicense(application);
   if (requirement.id === 'rental-proof') return application.roles.includes('TAXI_DRIVER') && application.data.taxiVehicle.ownership === 'RENT' || application.roles.includes('CARGO_DRIVER') && application.data.cargoVehicle.ownership === 'RENT';
   if (requirement.id.startsWith('courier-vehicle')) return application.roles.includes('COURIER') && courierNeedsMotorVehicle(application) && !application.data.courier.useExistingVehicle;
   return true;
@@ -69,8 +69,8 @@ const knownSlotTitles: Record<string, string> = {
 export type ConfiguredUploadSlot = { slotKey: string; title: string; description?: string; kind: RegistrationUpload['kind']; required: boolean; requiresExpiry: boolean; exampleImageUrl?: string };
 
 const additionalVehiclePhotoSuffixes: Record<VehicleUsage, readonly string[]> = {
-  TAXI: ['front', 'back', 'left', 'right', 'interior_front', 'interior_back', 'trunk'],
-  CARGO: ['front', 'back', 'left', 'right', 'cabin', 'cargo_bay', 'plate'],
+  TAXI: ['front'],
+  CARGO: ['front'],
   COURIER: ['front'],
 };
 
@@ -149,11 +149,11 @@ export function buildRegistrationSteps(application: Pick<RegistrationApplication
   const roles = new Set<PerformerRole>(application.roles);
   const steps: RegistrationStep[] = [
     { id: 'ROLES', title: 'Направления работы' },
-    { id: 'PERSONAL_DATA', title: 'Личные данные' },
   ];
-  if (hasRequirement(config, 'profile-photo')) steps.push({ id: 'PROFILE_PHOTO', title: 'Фотография профиля' });
-  if (hasRequirement(config, 'identity')) steps.push({ id: 'IDENTITY_DOCUMENT', title: 'Удостоверение личности' });
   if (roles.has('COURIER')) steps.push({ id: 'COURIER_TRANSPORT', title: 'Способ доставки' });
+  steps.push({ id: 'PERSONAL_DATA', title: 'Личные данные' });
+  if (configuredUploadSlotsForStep('PROFILE_PHOTO', application, config).length) steps.push({ id: 'PROFILE_PHOTO', title: 'Фотография профиля' });
+  if (hasRequirement(config, 'identity')) steps.push({ id: 'IDENTITY_DOCUMENT', title: 'Удостоверение личности' });
   if (hasRequirement(config, 'driver-license') && (roles.has('TAXI_DRIVER') || roles.has('CARGO_DRIVER') || roles.has('COURIER') && courierNeedsLicense(application))) steps.push({ id: 'DRIVER_LICENSE', title: 'Водительское удостоверение' });
   if (roles.has('TAXI_DRIVER')) {
     steps.push({ id: 'TAXI_VEHICLE', title: 'Легковой автомобиль' });
@@ -161,20 +161,14 @@ export function buildRegistrationSteps(application: Pick<RegistrationApplication
     if (registrationUploadSlotsForStep('TAXI_PHOTOS', application, config).length) steps.push({ id: 'TAXI_PHOTOS', title: 'Фотографии автомобиля' });
   }
   if (roles.has('CARGO_DRIVER')) {
-    steps.push({ id: 'CARGO_VEHICLE', title: 'Грузовой транспорт' }, { id: 'CARGO_EQUIPMENT', title: 'Оснащение транспорта' });
+    steps.push({ id: 'CARGO_VEHICLE', title: 'Грузовой транспорт' });
     if (registrationUploadSlotsForStep('CARGO_DOCUMENTS', application, config).length) steps.push({ id: 'CARGO_DOCUMENTS', title: 'Документы транспорта' });
     if (registrationUploadSlotsForStep('CARGO_PHOTOS', application, config).length) steps.push({ id: 'CARGO_PHOTOS', title: 'Фотографии транспорта' });
   }
   if (roles.has('COURIER')) {
     if (courierNeedsMotorVehicle(application) && !application.data.courier.useExistingVehicle) steps.push({ id: 'COURIER_VEHICLE', title: 'Транспорт курьера' });
-    steps.push({ id: 'COURIER_SETTINGS', title: 'Параметры курьера' });
   }
-  steps.push(
-    { id: 'WORK_PREFERENCES', title: 'График и территория', optional: true },
-    { id: 'LOCATION', title: 'Геолокация', optional: true },
-    { id: 'PAYMENT', title: 'Платёжные данные', optional: true },
-    { id: 'REVIEW', title: 'Проверка анкеты' },
-  );
+  steps.push({ id: 'REVIEW', title: 'Проверка анкеты' });
   return steps;
 }
 
@@ -221,14 +215,13 @@ export function validateRegistrationStep(step: RegistrationStepId, application: 
       else if (!displayDate(value) || displayDate(value)!.getTime() < Date.now()) errors[`expiry_${item.slotKey}`] = 'Документ должен быть действующим';
     }
   });
-  const validateAdditionalVehicles = (usage: VehicleUsage, cargo = false, taxi = false) => {
+  const validateAdditionalVehicles = (usage: VehicleUsage, cargo = false) => {
     const vehicles = d.vehicles || [];
     const clientIds = vehicles.map(vehicle => vehicle.clientId);
     if (vehicles.length > MAX_ADDITIONAL_VEHICLES) errors.vehicles = `Можно добавить не более ${MAX_ADDITIONAL_VEHICLES} дополнительных машин`;
     if (clientIds.some(clientId => !additionalVehicleClientIdPattern.test(clientId)) || new Set(clientIds).size !== clientIds.length) errors.vehicles = 'Не удалось определить одну из дополнительных машин. Удалите её и добавьте заново.';
     additionalVehiclesForUsage(d, usage).forEach(vehicle => {
       if (!vehicleReady(vehicle, cargo)) errors[`vehicle_${vehicle.clientId}`] = 'Заполните обязательные данные транспорта';
-      if (taxi && !vehicle.tariffs.length) errors[`vehicle_${vehicle.clientId}_tariffs`] = 'Выберите хотя бы один предпочтительный тариф';
     });
   };
   switch (step) {
@@ -245,25 +238,25 @@ export function validateRegistrationStep(step: RegistrationStepId, application: 
     }
     case 'PROFILE_PHOTO': requireRegistrationUploads(step); break;
     case 'IDENTITY_DOCUMENT':
-      requireRegistrationUploads(step); required('identityNumber', d.identity.number, 'Введите номер документа'); required('identityIssuedAt', d.identity.issuedAt, 'Укажите дату выдачи'); required('identityExpiresAt', d.identity.expiresAt, 'Укажите срок действия'); required('identityIssuedBy', d.identity.issuedBy, 'Укажите, кем выдан документ');
+      requireRegistrationUploads(step); required('identityExpiresAt', d.identity.expiresAt, 'Укажите срок действия');
       if (d.identity.issuedAt && (!displayDate(d.identity.issuedAt) || displayDate(d.identity.issuedAt)!.getTime() > Date.now())) errors.identityIssuedAt = 'Укажите корректную дату выдачи';
       if (d.identity.expiresAt && (!displayDate(d.identity.expiresAt) || displayDate(d.identity.expiresAt)!.getTime() < Date.now())) errors.identityExpiresAt = 'Документ должен быть действующим';
       break;
     case 'COURIER_TRANSPORT':
       if (!d.courier.transportModes.length) errors.transportModes = 'Выберите хотя бы один способ доставки';
-      if (d.courier.useExistingVehicle) {
+      if (courierNeedsMotorVehicle(application) && d.courier.useExistingVehicle) {
         if (!d.courier.existingVehicleUsage) errors.existingVehicleUsage = 'Выберите транспорт для доставки';
         else if (!application.roles.includes(d.courier.existingVehicleUsage === 'TAXI' ? 'TAXI_DRIVER' : 'CARGO_DRIVER')) errors.existingVehicleUsage = 'Выбранное направление больше не доступно';
         else if (d.courier.existingVehicleClientId && !d.vehicles.some(vehicle => vehicle.clientId === d.courier.existingVehicleClientId && vehicle.usage === d.courier.existingVehicleUsage)) errors.existingVehicleUsage = 'Выбранная машина больше не доступна';
       }
       break;
     case 'DRIVER_LICENSE':
-      requireRegistrationUploads(step); required('licenseNumber', d.driverLicense.number, 'Введите номер удостоверения'); if (!d.driverLicense.categories.length) errors.licenseCategories = 'Выберите категорию прав'; required('licenseExpiresAt', d.driverLicense.expiresAt, 'Укажите срок действия');
+      requireRegistrationUploads(step); if (!d.driverLicense.categories.length) errors.licenseCategories = 'Выберите категорию прав'; required('licenseExpiresAt', d.driverLicense.expiresAt, 'Укажите срок действия');
       if (d.driverLicense.issuedAt && (!displayDate(d.driverLicense.issuedAt) || displayDate(d.driverLicense.issuedAt)!.getTime() > Date.now())) errors.licenseIssuedAt = 'Укажите корректную дату выдачи';
       if (d.driverLicense.expiresAt && (!displayDate(d.driverLicense.expiresAt) || displayDate(d.driverLicense.expiresAt)!.getTime() < Date.now())) errors.licenseExpiresAt = 'Удостоверение должно быть действующим';
       if (d.driverLicense.experienceYears && !integerAtLeast(d.driverLicense.experienceYears, 0)) errors.experienceYears = 'Укажите стаж целым числом';
       break;
-    case 'TAXI_VEHICLE': if (!vehicleReady(d.taxiVehicle)) errors.vehicle = 'Заполните обязательные данные автомобиля'; if (!d.taxiVehicle.tariffs.length) errors.tariffs = 'Выберите хотя бы один предпочтительный тариф'; validateAdditionalVehicles('TAXI', false, true); break;
+    case 'TAXI_VEHICLE': if (!vehicleReady(d.taxiVehicle)) errors.vehicle = 'Заполните обязательные данные автомобиля'; validateAdditionalVehicles('TAXI'); break;
     case 'CARGO_VEHICLE': if (!vehicleReady(d.cargoVehicle, true)) errors.vehicle = 'Заполните обязательные данные транспорта'; validateAdditionalVehicles('CARGO', true); break;
     case 'COURIER_VEHICLE':
       if (!vehicleReady(d.courierVehicle)) errors.vehicle = 'Заполните данные моторного транспорта';

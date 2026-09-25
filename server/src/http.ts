@@ -95,9 +95,18 @@ export class UsersController {
   }
   @Post('me/push-token') async push(@Req() req:AuthedRequest,@Body() dto:PushTokenDto) {
     await this.limits.take(`push-register:${req.actor.id}`,20,60);
-    const count=await this.db.pushToken.count({where:{userId:req.actor.id}});
-    if(count>=10 && !await this.db.pushToken.findFirst({where:{userId:req.actor.id,token:dto.token}})) throw new BadRequestException('Превышен лимит устройств');
-    await this.db.pushToken.upsert({where:{token:dto.token},create:{userId:req.actor.id,...dto},update:{userId:req.actor.id,platform:dto.platform}});return {ok:true};
+    await this.db.$transaction(async tx=>{
+      await tx.$queryRaw`SELECT "id" FROM "User" WHERE "id"=${req.actor.id}::uuid FOR UPDATE`;
+      const existing=await tx.pushToken.findUnique({where:{token:dto.token},select:{userId:true}});
+      if(existing?.userId!==req.actor.id) {
+        const tokens=await tx.pushToken.findMany({where:{userId:req.actor.id},orderBy:{updatedAt:'asc'},select:{id:true}});
+        // A token can change after reinstalling the app. Keep active devices
+        // registered and make room for the replacement instead of rejecting it.
+        if(tokens.length>=10) await tx.pushToken.deleteMany({where:{id:{in:tokens.slice(0,tokens.length-9).map(token=>token.id)}}});
+      }
+      await tx.pushToken.upsert({where:{token:dto.token},create:{userId:req.actor.id,...dto},update:{userId:req.actor.id,platform:dto.platform}});
+    });
+    return {ok:true};
   }
   @Delete('me/push-token') async removePush(@Req() req:AuthedRequest,@Body() dto:RemovePushTokenDto) {await this.db.pushToken.deleteMany({where:{userId:req.actor.id,token:dto.token}});return {ok:true};}
 }

@@ -21,11 +21,13 @@ async function setup(options = {}) {
   let clock = Date.now(), props = { userId: 'driver1', enabled: true, locationEnabled: true, mapVisible: options.initialMapVisible ?? true, language: options.language ?? 'ru', order: options.initialOrder === undefined ? order : options.initialOrder }, value, renderer;
   let appStateListener, gps, gpsError, watchConfig, backgroundFix, speechOptions, removed = 0, stops = 0;
   const speaks = [], requests = [], intervals = new Map();
+  const voiceStorage = options.voiceStorage ?? new Map();
   class TestDate extends Date { static now() { return clock; } }
   const navigation = compile('../src/navigation.ts', {}, { Date: TestDate });
+  const roadFeatures = compile('../src/roadFeatures.ts', {});
   let lastReliableFix = null, pendingJump = null;
   const hook = compile('../src/useDriverNavigation.ts', {
-    react: React, './navigation': navigation,
+    react: React, './navigation': navigation, './roadFeatures': roadFeatures,
     './native/driverTracking': { setDriverTrackingSession: async () => {}, startDriverBackgroundTracking: async () => options.backgroundReady ?? false, requestDriverBackgroundAccess: async () => true,
       ingestDriverLocation: async raw => {
         if (!navigation.usableNavigationFix(raw, clock)) return null;
@@ -45,9 +47,18 @@ async function setup(options = {}) {
       return { remove: () => removed++ };
     } },
     'expo-speech': { getAvailableVoicesAsync: async () => options.voices ?? [{ identifier: 'ru', language: 'ru-RU' }], stop: async () => { stops++; if (options.speechStopPending && speaks.length) await options.speechStopPending.promise; }, speak: (text, options) => { speaks.push(text); speechOptions = options; } },
+    'expo-secure-store': { getItemAsync: async key => voiceStorage.get(key) ?? null, setItemAsync: async (key, value) => { voiceStorage.set(key, value); } },
+    './native/routeVoice': { routeVoice: {
+      stop: async () => { stops++; if (options.speechStopPending && speaks.length) await options.speechStopPending.promise; },
+      speak: (text, options) => { speaks.push(text); speechOptions = options; },
+    } },
     'expo-keep-awake': { activateKeepAwakeAsync: async () => {}, deactivateKeepAwake: async () => {} },
     './api': { messageOf: error => error.message, api: { request: async (path, init) => {
+      if (path === '/routes/road-features') return { features: options.roadFeatures ?? [] };
       const body = JSON.parse(init.body); requests.push({ path, init, body });
+      if (options.legacyRouteServer && ('fast' in body || 'bearing' in body)) {
+        const error = new Error(`property ${'fast' in body ? 'fast' : 'bearing'} should not exist`); error.status = 400; throw error;
+      }
       if (options.routeFailureAt === requests.length) throw new Error('Сеть недоступна');
       if (options.routePending) return options.routePending.promise;
       const start = body.pickup, end = body.dropoff;
@@ -57,7 +68,7 @@ async function setup(options = {}) {
   function Probe() { value = hook.useDriverNavigation(props); return null; }
   await act(async () => { renderer = create(React.createElement(Probe)); });
   return {
-    get value() { return value; }, get removed() { return removed; }, get stops() { return stops; }, get speechOptions() { return speechOptions; }, get watchConfig() { return watchConfig; }, speaks, requests,
+    get value() { return value; }, get removed() { return removed; }, get stops() { return stops; }, get speechOptions() { return speechOptions; }, get watchConfig() { return watchConfig; }, speaks, requests, voiceStorage,
     async gps(point = a, accuracy = 5) { clock += 1000; await act(async () => { gps({ timestamp: clock, coords: { ...point, accuracy, speed: 10, heading: 0 } }); }); },
     async serviceFix(point = a, accuracy = 5) { clock += 1000; await act(async () => { backgroundFix?.({ ...point, timestamp: clock, accuracy, speed: 10, heading: 0 }); }); },
     async advance(milliseconds) { clock += milliseconds; await act(async () => { for (const callback of intervals.values()) callback(); }); },
@@ -78,11 +89,12 @@ test('idle driver uses a fresh location before the GPS watch reports a new fix',
     assert.equal(app.watchConfig.distanceInterval, 0);
   } finally { await app.close(); }
 });
-test('active native foreground service replaces the fallback GPS watcher', async () => {
+test('active native foreground service and fast map GPS watcher keep the latest fix', async () => {
   const app = await setup({ backgroundReady: true });
   try {
     assert.equal(app.value.backgroundReady, true);
-    assert.equal(app.removed, 1);
+    assert.equal(app.removed, 0);
+    assert.equal(app.watchConfig.timeInterval, 1000);
     await app.serviceFix(a);
     assert.equal(app.value.position.latitude, a.latitude);
   } finally { await app.close(); }
@@ -110,6 +122,18 @@ test('a new trip stage resets a paused map to driver follow', async () => {
     assert.equal(app.value.followDriver, true);
   } finally { await app.close(); }
 });
+test('active navigation resumes a paused camera after a short inspection and a fresh GPS fix', async () => {
+  const app = await setup();
+  try {
+    await app.gps(a);
+    await app.run(() => app.value.setFollowDriver(false));
+    assert.equal(app.value.followDriver, false);
+    await app.advance(12000);
+    assert.equal(app.value.followDriver, false, 'stale GPS must not recenter the camera');
+    await app.gps(a);
+    assert.equal(app.value.followDriver, true);
+  } finally { await app.close(); }
+});
 test('navigation uses authenticated endpoint and does not reload on each GPS fix; cue is spoken once', async () => {
   const app = await setup();
   try {
@@ -119,6 +143,28 @@ test('navigation uses authenticated endpoint and does not reload on each GPS fix
     const count = app.speaks.length;
     await app.gps({ ...a, latitude: 42.87412 });
     assert.equal(app.requests.length, 1); assert.equal(app.speaks.length, count);
+  } finally { await app.close(); }
+});
+test('a visible road sign speaks once and its remaining distance follows GPS progress', async () => {
+  const signs = [
+    { id: 'stop-1', kind: 'stop', latitude: 42.8727, longitude: 74.59, along: 300 },
+    { id: 'stop-2', kind: 'stop', latitude: 42.873, longitude: 74.59, along: 330 },
+    { id: 'light-1', kind: 'traffic_light', latitude: 42.8732, longitude: 74.59, along: 350 },
+  ];
+  const app = await setup({ roadFeatures: signs });
+  try {
+    await app.gps(a); await app.gps(a);
+    assert.equal(app.value.roadFeatures.length, 2);
+    assert.equal(app.value.roadFeatures[0].id, 'stop-1');
+    assert.equal(app.speaks.filter(text => /знак Стоп/.test(text)).length, 1);
+    assert.match(app.speaks.find(text => /знак Стоп/.test(text)), /светофор/);
+    const before = app.value.roadFeatures[0].along - app.value.progress.along;
+    await app.speechStarted();
+    await app.run(() => app.speechOptions?.onDone?.());
+    await app.gps({ ...a, latitude: 42.8702 });
+    assert.ok(app.value.roadFeatures[0].along - app.value.progress.along < before);
+    await app.advance(3000);
+    assert.equal(app.speaks.filter(text => /знак Стоп/.test(text)).length, 1);
   } finally { await app.close(); }
 });
 test('inaccurate and stale GPS stops prompts; muting cancels and blocks speech', async () => {
@@ -149,12 +195,38 @@ test('a route received after GPS is stale and fails cannot resume voice guidance
     assert.match(app.value.gpsStatus, /Актуальное местоположение недоступно/); assert.equal(app.speaks.length, 0);
   } finally { await app.close(); }
 });
+test('driver navigation retries without unsupported route fields on the deployed legacy server', async () => {
+  const app = await setup({ legacyRouteServer: true });
+  try {
+    await app.gps(a);
+    assert.equal(app.requests.length, 2);
+    assert.equal(app.requests[0].body.bearing, 0);
+    assert.equal(app.requests[1].body.bearing, undefined);
+    assert.ok(app.value.route?.geometry?.length > 1);
+    assert.equal(app.value.error, '');
+    await app.advance(31000);
+    await app.gps({ ...a, latitude: a.latitude + .0001 });
+    assert.equal(app.requests.at(-1).body.fast, undefined);
+    assert.equal(app.requests.at(-1).body.bearing, undefined);
+  } finally { await app.close(); }
+});
+test('route voice choice persists for the driver across app sessions', async () => {
+  const voiceStorage = new Map();
+  const first = await setup({ voiceStorage });
+  try {
+    await first.run(() => first.value.setVoiceEnabled(false));
+    assert.equal(voiceStorage.get('atlas.driver.routeVoice.v1.driver1'), '0');
+  } finally { await first.close(); }
+  const second = await setup({ voiceStorage });
+  try { assert.equal(second.value.voiceEnabled, false); }
+  finally { await second.close(); }
+});
 test('driver route request carries the selected language into road-name lookup', async () => {
   const app = await setup({ language: 'ky' });
   try {
     await app.gps({ ...a, latitude: 42.8741 });
     assert.equal(app.requests[0].body.language, 'ky');
-    assert.equal(app.speechOptions.language, 'ky-KG');
+    assert.equal(app.speechOptions.language, 'ky');
   } finally { await app.close(); }
 });
 test('the driver keeps the last position while 5-second and 15-second freshness states change', async () => {
@@ -271,12 +343,13 @@ test('trip start changes target; terminal status aborts old work and stops guida
     assert.equal(app.value.active, false); assert.equal(app.value.route, null);
   } finally { await app.close(); }
 });
-test('three distinct accurate off-route fixes and cooldown are required to reroute', async () => {
+test('three confirmed accurate off-route fixes trigger prompt rerouting', async () => {
   const app = await setup();
   try {
-    await app.gps(); await app.advance(14000);
+    await app.gps(); await app.advance(7000);
     const away = { latitude: 42.87, longitude: 74.596 };
-    await app.gps(away); await app.advance(1000); assert.equal(app.requests.length, 1);
+    await app.gps(away); assert.equal(app.requests.length, 1);
+    await app.advance(1000); await app.gps(away); assert.equal(app.requests.length, 1);
     await app.gps(away); assert.equal(app.requests.length, 1);
     await app.gps(away); assert.equal(app.requests.length, 2);
   } finally { await app.close(); }
@@ -286,9 +359,9 @@ test('a failed reroute retains the previous geometry and reports the unavailable
   try {
     await app.gps(a);
     const original = app.value.route;
-    await app.advance(14000);
+    await app.advance(8000);
     const away = { latitude: 42.87, longitude: 74.596 };
-    await app.gps(away); await app.gps(away); await app.gps(away);
+    await app.gps(away); await app.gps(away); await app.gps(away); await app.gps(away);
     assert.equal(app.requests.length, 2);
     assert.equal(app.value.route, original);
     assert.match(app.value.error, /Сеть недоступна/);

@@ -14,7 +14,7 @@
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate deploy",
     "db:seed": "tsx prisma/seed.ts",
-    "test": "tsx --test test/domain.test.ts test/dispatch-ranking.test.ts test/push-presentation.test.ts test/push-policy.test.ts test/food.test.ts test/content.test.ts test/admin.test.ts test/maps.test.ts test/rating.test.ts test/tracking.test.ts test/registration.test.ts",
+    "test": "tsx --test test/domain.test.ts test/dispatch-ranking.test.ts test/push-presentation.test.ts test/push-policy.test.ts test/expo-push.test.ts test/push-registration.test.ts test/food.test.ts test/content.test.ts test/admin.test.ts test/maps.test.ts test/rating.test.ts test/tracking.test.ts test/registration.test.ts test/road-features.test.ts",
     "admin:bootstrap": "node dist/src/admin.bootstrap.js",
     "test:integration": "tsx --test --test-concurrency=1 test/integration.test.ts test/content.integration.test.ts"
   },

@@ -7,7 +7,7 @@ import { PrismaService } from './prisma.service';
 import { AdminAuditService } from './admin.security';
 import { RealtimeEvents } from './events';
 import { ACTIVE_FOOD_STATUSES } from './food-domain';
-import { PerformerRoleValue, registrationCapabilityCeiling } from './registration-domain';
+import { LIGHT_COURIER_METHODS, PerformerRoleValue, registrationCapabilityCeiling } from './registration-domain';
 
 @Injectable()
 export class DriverService {
@@ -18,10 +18,10 @@ export class DriverService {
     await this.db.$transaction(async tx=>{
       await tx.$queryRaw`SELECT "userId" FROM "DriverProfile" WHERE "userId"=${actor.id}::uuid FOR UPDATE`;
       const profile = await tx.driverProfile.findUnique({where:{userId:actor.id},include:{vehicle:true}});
-      const nonMotorCourier=profile?.courierModes.some(mode=>['FOOT','BICYCLE','E_BICYCLE'].includes(mode))??false;
-      if(!profile?.verified||!profile.vehicle&&!nonMotorCourier) throw new ForbiddenException('Профиль исполнителя не подтверждён');
+      const lightCourier=profile?.courierModes.some(mode=>LIGHT_COURIER_METHODS.has(mode))??false;
+      if(!profile?.verified||!profile.vehicle&&!lightCourier) throw new ForbiddenException('Профиль исполнителя не подтверждён');
       if(online&&profile.deposit<this.config.minimumDeposit) throw new BadRequestException('Пополните депозит у администратора');
-      if(online&&!([profile.acceptsEconomy,profile.acceptsComfort,profile.acceptsDeliveryCar,profile.acceptsDeliveryTruck].some(Boolean)||nonMotorCourier))throw new BadRequestException('Включите хотя бы один вид заказов в настройках');
+      if(online&&!([profile.acceptsEconomy,profile.acceptsComfort,profile.acceptsDeliveryCar,profile.acceptsDeliveryTruck].some(Boolean)||lightCourier))throw new BadRequestException('Включите хотя бы один вид заказов в настройках');
       if(!online&&await tx.order.findFirst({where:{driverId:actor.id,status:{in:ACTIVE_STATUSES}}})) throw new ConflictException('Сначала завершите или отмените активный заказ');
       await tx.driverProfile.update({where:{userId:actor.id},data:{online,...(!online?{locationLatitude:null,locationLongitude:null,locationAccuracyM:null,locationMeasuredAt:null}:{})}});
     });
@@ -47,7 +47,7 @@ export class DriverService {
       if(profile.transportClass==='ECONOMY'&&(next.acceptsComfort||next.acceptsDeliveryTruck)
         ||profile.transportClass==='COMFORT'&&next.acceptsDeliveryTruck
         ||profile.transportClass==='TRUCK'&&(next.acceptsEconomy||next.acceptsComfort||next.acceptsDeliveryCar))throw new ForbiddenException('Категория автомобиля не позволяет включить этот вид заказов');
-      if(!Object.values(next).some(Boolean)&&!profile.courierModes.some(mode=>['FOOT','BICYCLE','E_BICYCLE'].includes(mode)))throw new BadRequestException('Оставьте включённым хотя бы один вид заказов');
+      if(!Object.values(next).some(Boolean)&&!profile.courierModes.some(mode=>LIGHT_COURIER_METHODS.has(mode)))throw new BadRequestException('Оставьте включённым хотя бы один вид заказов');
       await tx.driverProfile.update({where:{userId:actor.id},data:next});
     });
     this.events.adminChanged('drivers',actor.id);

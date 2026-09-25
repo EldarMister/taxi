@@ -49,9 +49,9 @@ const fallbackConfig: RegistrationConfig = {
     { id: 'identity', title: 'Удостоверение личности', kind: 'IDENTITY_DOCUMENT', slots: ['identity_front', 'identity_back'], requiredFor: ['TAXI_DRIVER', 'CARGO_DRIVER', 'COURIER'] },
     { id: 'driver-license', title: 'Водительское удостоверение', kind: 'DRIVER_LICENSE', slots: ['license_front', 'license_back'], requiredFor: ['TAXI_DRIVER', 'CARGO_DRIVER'], condition: 'Также требуется для моторизованной доставки' },
     { id: 'taxi-registration', title: 'Документы автомобиля', kind: 'VEHICLE_DOCUMENT', slots: ['taxi_registration', 'taxi_insurance'], expirySlots: ['taxi_insurance'], requiredFor: ['TAXI_DRIVER'] },
-    { id: 'taxi-photos', title: 'Фотографии автомобиля такси', kind: 'VEHICLE_PHOTO', slots: ['taxi_photo_front', 'taxi_photo_back', 'taxi_photo_left', 'taxi_photo_right', 'taxi_photo_interior_front', 'taxi_photo_interior_back', 'taxi_photo_trunk'], requiredFor: ['TAXI_DRIVER'] },
+    { id: 'taxi-photos', title: 'Фотографии автомобиля такси', kind: 'VEHICLE_PHOTO', slots: ['taxi_photo_front'], requiredFor: ['TAXI_DRIVER'] },
     { id: 'cargo-registration', title: 'Документы грузового автомобиля', kind: 'VEHICLE_DOCUMENT', slots: ['cargo_registration', 'cargo_insurance'], expirySlots: ['cargo_insurance'], requiredFor: ['CARGO_DRIVER'] },
-    { id: 'cargo-photos', title: 'Фотографии грузового автомобиля', kind: 'VEHICLE_PHOTO', slots: ['cargo_photo_front', 'cargo_photo_back', 'cargo_photo_left', 'cargo_photo_right', 'cargo_photo_cabin', 'cargo_photo_cargo_bay', 'cargo_photo_plate'], requiredFor: ['CARGO_DRIVER'] },
+    { id: 'cargo-photos', title: 'Фотографии грузового автомобиля', kind: 'VEHICLE_PHOTO', slots: ['cargo_photo_front'], requiredFor: ['CARGO_DRIVER'] },
     { id: 'courier-vehicle', title: 'Документы транспорта курьера', kind: 'VEHICLE_DOCUMENT', slots: ['courier_registration', 'courier_insurance'], expirySlots: ['courier_insurance'], requiredFor: ['COURIER'], condition: 'Только для моторизованной доставки с отдельным транспортом' },
     { id: 'courier-vehicle-photo', title: 'Фотография транспорта курьера', kind: 'VEHICLE_PHOTO', slots: ['courier_photo'], requiredFor: ['COURIER'], condition: 'Только для моторизованной доставки с отдельным транспортом' },
     { id: 'rental-proof', title: 'Договор аренды или доверенность', kind: 'VEHICLE_DOCUMENT', slots: [], requiredFor: ['TAXI_DRIVER', 'CARGO_DRIVER'], condition: 'Только для арендованного транспорта' },
@@ -895,11 +895,17 @@ export function DriverRegistrationScreen({ user, deepLink, statusRevision = 0, o
       await flushSync();
       const endpoint = resubmit ? '/driver/registration/resubmit' : '/driver/registration/submit';
       const response = await api.request<{ application?: unknown }>(endpoint, { method: 'POST', headers: { 'Idempotency-Key': requestId() }, body: JSON.stringify({ truthConfirmed: true, termsAccepted: true, acceptedConsentIds: appRef.current.data.agreements.acceptedIds, legalTermsVersion: configRef.current.legalTermsVersion }) });
-      const submitted = normalizeApplication(responseApplication(response), user.language, appRef.current.data.uploads);
+      // After the server accepts the application, its upload review states are
+      // authoritative. Reapplying the local upload cache would show stale
+      // UPLOADED badges over the server's UNDER_REVIEW states.
+      const submitted = normalizeApplication(responseApplication(response), user.language);
       const next = { ...submitted, localSync: { dirty: false, baseVersion: submitted.version } };
       applyApplication(next);
-      await writeRegistrationDraft(user.id, next);
       setDirty(false); setSaveState('saved');
+      // A local draft write must not turn an accepted server submission into a
+      // visible failure or invite the applicant to submit again.
+      void writeRegistrationDraft(user.id, next).catch(caught =>
+        console.warn('[registration:draft] submitted copy could not be saved', { message: messageOf(caught) }));
       trackRegistration(resubmit ? 'registration_resubmitted' : 'registration_submitted');
       return true;
     } catch (caught) {

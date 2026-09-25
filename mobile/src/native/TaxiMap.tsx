@@ -1,14 +1,15 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, Linking, Pressable, StyleSheet, Text, View } from 'react-native';
 import * as Device from 'expo-device';
-import { Camera, MapView, PointAnnotation, ShapeSource, LineLayer, SymbolLayer, UserLocation, addCustomHeader, type CameraRef, type MapViewRef } from '@maplibre/maplibre-react-native';
+import { Camera, MapView, PointAnnotation, MarkerView, ShapeSource, LineLayer, FillLayer, SymbolLayer, UserLocation, addCustomHeader, type CameraRef, type MapViewRef } from '@maplibre/maplibre-react-native';
 import { Button, Icon, PickupIcon, colors, shortAddress } from '../ui';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { api } from '../api';
 import { BISHKEK, MapPoint, reverseGeocode } from './mapkit';
 import { getCurrentPosition } from './location';
-import { isMapPoint, routeFrame } from './routeFrame';
-import { sampleCarRoutePath, trustedCarDirectPath, trustedCarRoutePath } from './carRouteAnimation';
+import { accuracyCircle, isMapPoint, routeFrame } from './routeFrame';
+import { matchedCarRoutePath, sampleCarRoutePath, trustedCarDirectPath, trustedCarRoutePath } from './carRouteAnimation';
+import { pointAlongRoad, remainingRoad, roadHeadingAt, snapCarToRoad } from './roadMatch';
 import { darkRasterMapFallback, mapStyleForLanguage, rasterMapFallback } from './taxiMapStyle';
 import type { Language } from '../types';
 
@@ -41,8 +42,9 @@ export interface TaxiMapProps {
   contentBottomInset?: number;
   selecting?: boolean;
   driverPosition?: (MapPoint & { heading?: number; accuracy?: number; accuracyM?: number | null;
-    speed?: number; speedMps?: number | null;
-    measuredAtMs?: number; trackingSessionId?: string; sequence?: number; assignmentId?: string;
+    snappedLatitude?: number; snappedLongitude?: number; routeAlong?: number; routeIndex?: number; routeProgress?: number;
+    distanceToRoute?: number; matched?: boolean; matchedPath?: MapPoint[]; courseDeg?: number | null; speed?: number; speedMps?: number | null;
+    measuredAtMs?: number; timestamp?: number; trackingSessionId?: string; sequence?: number; assignmentId?: string;
     stateVersion?: number; receivedAtMs?: number }) | null;
   navigationActive?: boolean;
   followDriver?: boolean;
@@ -65,9 +67,9 @@ function pointFromFeature(feature: GeoJSON.Feature): MapPoint | null {
 }
 
 type DriverPoint = NonNullable<TaxiMapProps['driverPosition']>;
+type DisplayDriverPoint = DriverPoint & { roadAlong?: number; authoritativePosition?: boolean };
 const EMPTY_CAR_ROUTE: MapPoint[] = [];
-const trackingDiagnosticsEnabled = typeof __DEV__ !== 'undefined' && __DEV__
-  && typeof process !== 'undefined' && process.env.EXPO_PUBLIC_TRACKING_DIAGNOSTICS === '1';
+const trackingDiagnosticsEnabled = typeof process !== 'undefined' && process.env.EXPO_PUBLIC_TRACKING_DIAGNOSTICS === '1';
 
 function metresBetween(a: MapPoint, b: MapPoint) {
   return Math.hypot(
@@ -75,13 +77,19 @@ function metresBetween(a: MapPoint, b: MapPoint) {
     (b.longitude - a.longitude) * 111320 * Math.cos(a.latitude * Math.PI / 180),
   );
 }
+function pointAhead(point: MapPoint, heading: number, metres: number): MapPoint {
+  const radians = heading * Math.PI / 180;
+  return { latitude: point.latitude + Math.cos(radians) * metres / 111320,
+    longitude: point.longitude + Math.sin(radians) * metres / (111320 * Math.max(.1, Math.cos(point.latitude * Math.PI / 180))) };
+}
 
-// Only a uniquely matched forward piece of the active road route may bend
-// visual movement. Every destination frame still ends at the actual GPS fix.
-function useAnimatedCarPosition(point?: DriverPoint | null, session = '', road: MapPoint[] = EMPTY_CAR_ROUTE): DriverPoint | null {
-  const [rendered, setRendered] = useState<DriverPoint | null>(point && isMapPoint(point) ? point : null);
+// A matched car moves along road geometry. Its icon bearing is sampled at the
+// animated position, so it cannot face the next street while still on this one.
+function useAnimatedCarPosition(point?: DisplayDriverPoint | null, session = '', road: MapPoint[] = EMPTY_CAR_ROUTE): DisplayDriverPoint | null {
+  const [rendered, setRendered] = useState<DisplayDriverPoint | null>(point && isMapPoint(point) ? point : null);
   const renderedRef = useRef(rendered);
-  const rawRef = useRef<DriverPoint | null>(point && isMapPoint(point) ? point : null);
+  const rawRef = useRef<DisplayDriverPoint | null>(point && isMapPoint(point) ? point : null);
+  const renderedRoadRef = useRef<MapPoint[] | null>(point?.roadAlong != null ? road : null);
   const sessionRef = useRef(session);
   const arrivalRef = useRef(Date.now());
   const roadRef = useRef(road); roadRef.current = road;
@@ -91,20 +99,59 @@ function useAnimatedCarPosition(point?: DriverPoint | null, session = '', road: 
     arrivalRef.current = arrivedAt;
     const changedSession = sessionRef.current !== session;
     sessionRef.current = session;
-    if (!point || !isMapPoint(point)) { rawRef.current = null; renderedRef.current = null; setRendered(null); return; }
+    if (!point || !isMapPoint(point)) { rawRef.current = null; renderedRef.current = null; renderedRoadRef.current = null; setRendered(null); return; }
     const previousRaw = rawRef.current;
     rawRef.current = point;
     const from = renderedRef.current;
     // A delayed fix is a new known point, not evidence that the car travelled
     // along any route between two widely separated observations.
     if (!from || !previousRaw || changedSession || typeof requestAnimationFrame !== 'function') {
+      renderedRoadRef.current = point.roadAlong != null ? road : null;
       renderedRef.current = point; setRendered(point); return;
     }
-    const path = trustedCarRoutePath(previousRaw, point, from, roadRef.current, fixInterval)
-      ?? trustedCarDirectPath(previousRaw, point, from, fixInterval);
-    if (!path) { renderedRef.current = point; setRendered(point); return; }
+    const roadMotion = point.roadAlong != null && from.roadAlong != null && renderedRoadRef.current === road
+      && fixInterval >= 200 && fixInterval <= 15000 && point.roadAlong > from.roadAlong + 1
+      && point.roadAlong - from.roadAlong <= Math.min(350, Math.max(35, fixInterval / 1000 * 55 + 20));
+    if (roadMotion) {
+      const startAlong = from.roadAlong!;
+      const endAlong = point.roadAlong!;
+      const start = Date.now();
+      const duration = Math.max(700, Math.min(1100, fixInterval * .9));
+      let frame = 0, lastPaint = 0;
+      const step = () => {
+        const elapsed = Date.now() - start;
+        const fraction = Math.min(1, elapsed / duration);
+        if (elapsed - lastPaint >= 40 || fraction === 1) {
+          const along = startAlong + (endAlong - startAlong) * fraction;
+          const coordinate = pointAlongRoad(road, along);
+          if (coordinate) {
+            const next = { ...point, ...coordinate, roadAlong: along, heading: roadHeadingAt(road, along) ?? point.heading };
+            renderedRoadRef.current = road;
+            renderedRef.current = next; setRendered(next); lastPaint = elapsed;
+          }
+        }
+        if (fraction < 1) frame = requestAnimationFrame(step);
+      };
+      frame = requestAnimationFrame(step);
+      return () => { if (typeof cancelAnimationFrame === 'function') cancelAnimationFrame(frame); };
+    }
+    // Never draw a straight shortcut between two points already matched to a
+    // road (for example across the inside of a right-angle turn).
+    if (point.roadAlong != null || from.roadAlong != null) {
+      renderedRoadRef.current = point.roadAlong != null ? road : null;
+      renderedRef.current = point; setRendered(point); return;
+    }
+    // A client must not invent a straight journey across a block or rematch a
+    // confirmed driver fix to the fare preview's potentially different road.
+    const authoritativeMotion = point.authoritativePosition || from.authoritativePosition;
+    const path = authoritativeMotion
+      ? point.authoritativePosition && previousRaw.authoritativePosition
+        ? matchedCarRoutePath(previousRaw, point, from, roadRef.current, fixInterval) : null
+      : trustedCarRoutePath(previousRaw, point, from, roadRef.current, fixInterval)
+        ?? trustedCarDirectPath(previousRaw, point, from, fixInterval);
+    if (!path) { renderedRoadRef.current = null; renderedRef.current = point; setRendered(point); return; }
     const start = Date.now();
-    const duration = Math.max(500, Math.min(900, fixInterval * .8));
+    const duration = Math.max(700, Math.min(1100, fixInterval * .9));
     const movementHeading = (Math.atan2(
       (point.longitude - from.longitude) * Math.cos(point.latitude * Math.PI / 180),
       point.latitude - from.latitude,
@@ -137,7 +184,9 @@ function useAnimatedCarPosition(point?: DriverPoint | null, session = '', road: 
         const next = {
           ...point,
           ...coordinate,
-          heading: path.points.length > 2 && fraction > .25 ? segmentHeading : (fromHeading + headingDelta * fraction + 360) % 360,
+          heading: authoritativeMotion
+            ? fraction === 1 ? point.heading : segmentHeading
+            : path.points.length > 2 && fraction > .25 ? segmentHeading : (fromHeading + headingDelta * fraction + 360) % 360,
         };
         renderedRef.current = next; setRendered(next); lastPaint = elapsed;
       }
@@ -146,35 +195,74 @@ function useAnimatedCarPosition(point?: DriverPoint | null, session = '', road: 
     frame = requestAnimationFrame(step);
     return () => { if (typeof cancelAnimationFrame === 'function') cancelAnimationFrame(frame); };
   }, [point?.latitude, point?.longitude, point?.heading, point?.accuracy, point?.accuracyM,
-    point?.measuredAtMs, point?.sequence, session]);
+    point?.measuredAtMs, point?.sequence, point?.roadAlong, point?.authoritativePosition, session, road]);
   return rendered;
 }
 
-function useStableDriverHeading(point?: DriverPoint | null, session = ''): number {
-  const last = useRef<{ point: DriverPoint; heading: number; session: string } | null>(null);
-  if (!point || !isMapPoint(point)) return last.current?.heading ?? 0;
+const AnimatedDriverMarker = React.memo(function AnimatedDriverMarker({ point, session, road, passengerView }:
+  { point: DisplayDriverPoint | null; session: string; road: MapPoint[]; passengerView: boolean }) {
+  // The driver's route line advances with each accepted GPS fix. Delaying the
+  // arrow by another animation leaves it behind the already-trimmed line.
+  const animatedPassenger = useAnimatedCarPosition(passengerView ? point : null, session, road);
+  const marker = passengerView ? animatedPassenger : point;
+  // Keep the symbol layer mounted before GPS arrives so late route layers can
+  // always be inserted below it, including after a reroute or style reload.
+  const shape = useMemo<GeoJSON.Point | GeoJSON.FeatureCollection>(() => marker && isMapPoint(marker)
+    ? { type: 'Point', coordinates: toCoordinate(marker) } : { type: 'FeatureCollection', features: [] }, [marker?.latitude, marker?.longitude]);
+  return passengerView ? <ShapeSource id="client-driver-position" shape={shape} testID="client-driver-position">
+    <SymbolLayer id="client-driver-car" style={{
+      iconImage: require('../../assets/tracking-car-white.png'), iconSize: .025,
+      iconRotate: Number.isFinite(marker?.heading) && marker!.heading! >= 0 ? marker!.heading! : 0,
+      iconRotationAlignment: 'map', iconPitchAlignment: 'map', iconAnchor: 'center', iconOffset: [0, 0],
+      iconAllowOverlap: true, iconIgnorePlacement: true,
+    }}/>
+  </ShapeSource> : <ShapeSource id="driver-navigation-position" shape={shape}>
+    <SymbolLayer id="driver-navigation-arrow" style={{ iconImage: require('../../assets/driver-navigation-arrow.png'), iconSize: .42,
+      iconRotate: Number.isFinite(marker?.heading) && marker!.heading! >= 0 ? marker!.heading! : 0,
+      iconRotationAlignment: 'map', iconPitchAlignment: 'map', iconAllowOverlap: true, iconIgnorePlacement: true }}/>
+  </ShapeSource>;
+});
+
+const headingDifference = (a: number, b: number) => Math.abs(((a - b + 540) % 360) - 180);
+
+function useStableDriverHeading(point?: DriverPoint | null, session = ''): { heading: number | null; reliable: boolean } {
+  const last = useRef<{ point: DriverPoint; heading: number | null; reliable: boolean; confirmedAtMs?: number; session: string } | null>(null);
+  if (!point || !isMapPoint(point)) return { heading: last.current?.heading ?? null, reliable: false };
   const previous = last.current;
+  if (previous?.session === session && previous.point.latitude === point.latitude && previous.point.longitude === point.longitude
+    && (previous.point === point || previous.point.measuredAtMs != null && previous.point.measuredAtMs === point.measuredAtMs))
+    return { heading: previous.heading, reliable: previous.reliable };
   const travel = previous?.session === session ? metresBetween(previous.point, point) : 0;
   const reported = Number.isFinite(point.heading) && point.heading! >= 0 ? point.heading! : null;
-  const courseChanged = reported != null && previous?.session === session && (point.speedMps ?? point.speed ?? 0) >= 1.5
-    && Math.abs(((reported - previous.heading + 540) % 360) - 180) >= 12;
+  const speed = point.speedMps ?? point.speed ?? 0;
+  const courseChanged = reported != null && speed >= 1.5 && previous?.heading != null
+    && headingDifference(reported, previous.heading) >= 12;
   if (!previous || previous.session !== session || travel >= 5 || courseChanged) {
-    let heading = reported ?? (previous?.session === session ? previous.heading : 0);
+    let heading = previous?.session === session ? previous.heading : reported;
     const accuracy = point.accuracyM ?? point.accuracy ?? Infinity;
     const previousAccuracy = previous?.point.accuracyM ?? previous?.point.accuracy ?? Infinity;
     const previousMeasuredAt = previous?.point.measuredAtMs;
-    if (previous?.session === session && accuracy <= 10 && previousAccuracy <= 10
+    const measuredAt = point.measuredAtMs;
+    const confidentMovement = previous?.session === session && accuracy <= 15 && previousAccuracy <= 15
       && travel >= Math.max(8, accuracy + previousAccuracy)
-      && (point.measuredAtMs == null || previousMeasuredAt == null || point.measuredAtMs - previousMeasuredAt <= 4000)) {
-      const movement = (Math.atan2(
+      && (measuredAt == null || previousMeasuredAt == null || measuredAt > previousMeasuredAt && measuredAt - previousMeasuredAt <= 8000);
+    const movement = confidentMovement && previous ? (Math.atan2(
         (point.longitude - previous.point.longitude) * Math.cos(point.latitude * Math.PI / 180),
         point.latitude - previous.point.latitude,
-      ) * 180 / Math.PI + 360) % 360;
-      if (reported == null || Math.abs(((reported - movement + 540) % 360) - 180) > 50) heading = movement;
-    }
-    last.current = { point, heading, session };
+      ) * 180 / Math.PI + 360) % 360 : null;
+    const fixAt = point.measuredAtMs ?? point.timestamp ?? Date.now();
+    if (movement == null && previous?.confirmedAtMs != null && fixAt - previous.confirmedAtMs <= 6000
+      && reported != null && previous.heading != null && headingDifference(reported, previous.heading) > 100)
+      return { heading: previous.heading, reliable: true };
+    if (movement != null && (reported == null || headingDifference(reported, movement) > 45)) heading = movement;
+    else if (reported != null && (speed >= 1.5 || travel >= 5 || !previous || previous.session !== session)) heading = reported;
+    const reliable = movement != null || reported != null && speed >= 1.5;
+    last.current = { point, heading, reliable, confirmedAtMs: movement != null ? fixAt : previous?.confirmedAtMs, session };
   }
-  return last.current?.heading ?? 0;
+  const current = last.current;
+  const sameFix = current?.point === point || current?.point.measuredAtMs != null
+    && current.point.measuredAtMs === point.measuredAtMs;
+  return { heading: current?.heading ?? null, reliable: !!current?.reliable && (sameFix || speed >= 1.5) };
 }
 
 export default function TaxiMap({
@@ -218,10 +306,25 @@ export default function TaxiMap({
   const followPaused = useRef(false);
   const manualCamera = useRef(false);
   const followCameraKey = useRef('');
-  const lastFollowCamera = useRef<{ point: MapPoint; top: number; height: number } | null>(null);
+  const lastFollowCamera = useRef<{ point: MapPoint; heading: number; top: number; bottom: number; height: number } | null>(null);
   const followedOrder = useRef(cameraSession.split(':')[0]);
   const lastRecenter = useRef(recenterKey);
   const followActive = passengerView ? passengerFollowing && !!driverPosition : followDriver;
+  const driverLayerID = passengerView ? 'client-driver-car' : 'driver-navigation-arrow';
+  const userLocationCallback = useRef(onUserLocation);
+  userLocationCallback.current = onUserLocation;
+  useEffect(() => {
+    if (!showUserPosition || !passengerView || !browsePickup) return;
+    let live = true;
+    void getCurrentPosition().then(point => {
+      if (!live) return;
+      setUserLocation(point);
+      userLocationCallback.current?.(point);
+    }).catch(error => {
+      if (live) setLocationError(error instanceof Error ? error.message : 'Не удалось определить местоположение. Выберите адрес на карте.');
+    });
+    return () => { live = false; };
+  }, [showUserPosition, passengerView, browsePickup]);
   useEffect(() => {
     // A status change within an order must not undo a deliberate map gesture.
     const orderId = cameraSession.split(':')[0];
@@ -239,21 +342,101 @@ export default function TaxiMap({
   const routeKey = pickup && dropoff ? [pickup.latitude, pickup.longitude, dropoff.latitude, dropoff.longitude].join(',') : '';
   const route = suppliedRoute.length > 1 ? suppliedRoute : serverRoute?.key === routeKey && (!navigationActive || routeOverview) ? serverRoute.points : EMPTY_CAR_ROUTE;
   const driverIdentity = `${cameraSession.split(':')[0]}:${driverPosition?.assignmentId || driverPosition?.trackingSessionId || ''}`;
-  // In pickup/overview stages the blue fare route is not the driver's road;
-  // even a late approach prop cannot replace the ride route once it begins.
-  const carAnimationRoute = passengerView ? routeOverview ? approachRoute : route : EMPTY_CAR_ROUTE;
-  const driverHeading = useStableDriverHeading(driverPosition, driverIdentity);
-  const animatedDriverPosition = useAnimatedCarPosition(passengerView && driverPosition ? { ...driverPosition, heading: driverHeading } : null, driverIdentity, carAnimationRoute);
-  const markerPosition = passengerView ? animatedDriverPosition : driverPosition;
-  const driverMarkerShape = useMemo<GeoJSON.Point | null>(() => markerPosition && isMapPoint(markerPosition) ? { type: 'Point', coordinates: toCoordinate(markerPosition) } : null, [markerPosition?.latitude, markerPosition?.longitude]);
-  const routeShape = useMemo<GeoJSON.LineString>(() => ({ type: 'LineString', coordinates: route.map(toCoordinate) }), [route]);
-  const approachShape = useMemo<GeoJSON.LineString>(() => ({ type: 'LineString', coordinates: approachRoute.map(toCoordinate) }), [approachRoute]);
+  const observedCourse = useStableDriverHeading(driverPosition, driverIdentity);
+  const activeRoad = routeOverview ? approachRoute : route;
+  const lastRoadMatch = useRef<{ road: MapPoint[]; driver: string; along: number; point: MapPoint; heading: number;
+    fixAt: number } | null>(null);
+  const lastRoadCalculation = useRef<{ road: MapPoint[]; driver: string; fix: string;
+    match: ReturnType<typeof snapCarToRoad>; courseMatch: ReturnType<typeof snapCarToRoad> } | null>(null);
+  const previousAlong = lastRoadMatch.current?.road === activeRoad && lastRoadMatch.current.driver === driverIdentity
+    ? lastRoadMatch.current.along : undefined;
+  const fixAt = driverPosition?.measuredAtMs ?? driverPosition?.timestamp ?? driverPosition?.receivedAtMs ?? Date.now();
+  const lastMatch = lastRoadMatch.current;
+  const forwardWindow = lastMatch ? Math.max(180, Math.min(1000, (fixAt - lastMatch.fixAt) / 1000 * 55)) : 180;
+  const serverMatchedPoint = passengerView && driverPosition?.matched === true && isMapPoint(driverPosition) ? driverPosition : null;
+  const matchEnabled = !!driverPosition && !serverMatchedPoint
+    && (passengerView || navigationActive && driverPosition.matched !== false);
+  const movingDriver = !passengerView && (driverPosition?.speedMps ?? driverPosition?.speed ?? 0) >= 1.5;
+  const fixKey = driverPosition ? [driverPosition.latitude, driverPosition.longitude,
+    driverPosition.accuracyM ?? driverPosition.accuracy, driverPosition.heading,
+    driverPosition.snappedLatitude, driverPosition.snappedLongitude, driverPosition.routeAlong, driverPosition.matched,
+    driverPosition.measuredAtMs ?? driverPosition.timestamp ?? driverPosition.receivedAtMs,
+    driverPosition.sequence, driverPosition.stateVersion, matchEnabled].join(':') : '';
+  const calculated = lastRoadCalculation.current;
+  const reused = calculated?.road === activeRoad && calculated.driver === driverIdentity && calculated.fix === fixKey;
+  const authoritative = !passengerView && !routeOverview && driverPosition?.matched === true
+    && Number.isFinite(driverPosition.snappedLatitude) && Number.isFinite(driverPosition.snappedLongitude)
+    && Number.isFinite(driverPosition.routeAlong);
+  let roadMatch = reused ? calculated.match : authoritative ? {
+    latitude: driverPosition!.snappedLatitude!, longitude: driverPosition!.snappedLongitude!,
+    along: driverPosition!.routeAlong!, distance: driverPosition!.distanceToRoute ?? 0,
+    heading: roadHeadingAt(activeRoad, driverPosition!.routeAlong!) ?? driverPosition!.heading ?? 0,
+    segmentIndex: driverPosition!.routeIndex ?? 0,
+    progress: driverPosition!.routeProgress ?? 0,
+  } : matchEnabled ? snapCarToRoad(driverPosition!, activeRoad, previousAlong, forwardWindow) : null;
+  let courseMatch = reused ? calculated.courseMatch : null;
+  if (!reused && !roadMatch && matchEnabled && passengerView && observedCourse.reliable && driverPosition)
+    courseMatch = snapCarToRoad({ ...driverPosition, heading: undefined }, activeRoad, previousAlong, forwardWindow);
+  const hasFixTime = driverPosition?.measuredAtMs != null || driverPosition?.timestamp != null || driverPosition?.receivedAtMs != null;
+  if (!reused && roadMatch && hasFixTime && lastMatch?.road === activeRoad && lastMatch.driver === driverIdentity) {
+    const elapsed = Math.max(0, (fixAt - lastMatch.fixAt) / 1000);
+    const accuracy = driverPosition?.accuracyM ?? driverPosition?.accuracy ?? 20;
+    if (roadMatch.along - lastMatch.along > Math.max(30, elapsed * 35 + Math.min(accuracy, 45))) roadMatch = null;
+  }
+  if (!reused && roadMatch && !authoritative && observedCourse.reliable && observedCourse.heading != null
+    && headingDifference(roadMatch.heading, observedCourse.heading) > 65) {
+    // Keep the car on a plausible street, but do not borrow the route's
+    // conflicting bearing or trim the route as though it had been driven.
+    courseMatch = passengerView ? snapCarToRoad({ ...driverPosition!, heading: undefined }, activeRoad, previousAlong, forwardWindow) ?? roadMatch : null;
+    roadMatch = null;
+  }
+  if (!reused) {
+    lastRoadCalculation.current = { road: activeRoad, driver: driverIdentity, fix: fixKey, match: roadMatch, courseMatch };
+    if (roadMatch) lastRoadMatch.current = { road: activeRoad, driver: driverIdentity, along: roadMatch.along,
+      point: { latitude: roadMatch.latitude, longitude: roadMatch.longitude }, heading: roadMatch.heading,
+      fixAt };
+  }
+  const heldMatch = !roadMatch && !courseMatch && driverPosition && lastMatch?.driver === driverIdentity
+    && (!movingDriver || passengerView)
+    && metresBetween(driverPosition, lastMatch.point) <= (passengerView ? Math.max(30, Math.min(65,
+      (driverPosition.accuracyM ?? driverPosition.accuracy ?? 20) * 1.5)) : 15) ? lastMatch : null;
+  const displayedMatch = roadMatch || courseMatch || heldMatch;
+  const localRoadConfirmed = !serverMatchedPoint || roadMatch && metresBetween(serverMatchedPoint, roadMatch) <= 7
+    && (driverPosition?.heading == null || headingDifference(driverPosition.heading, roadMatch.heading) <= 60);
+  const displayedRoadPoint = serverMatchedPoint || roadMatch || courseMatch || heldMatch?.point;
+  const snappedDriverPosition: DisplayDriverPoint | null | undefined = serverMatchedPoint
+    ? { ...serverMatchedPoint, authoritativePosition: true, roadAlong: undefined }
+    : driverPosition && displayedMatch && displayedRoadPoint
+    ? { ...driverPosition, latitude: displayedRoadPoint.latitude,
+      longitude: displayedRoadPoint.longitude, heading: courseMatch ? observedCourse.heading ?? courseMatch.heading : displayedMatch.heading,
+      ...(roadMatch && localRoadConfirmed ? { roadAlong: roadMatch.along } : {}) } : driverPosition;
+  const reportedHeading = driverPosition?.courseDeg ?? driverPosition?.heading;
+  const driverHeading = !passengerView && roadMatch ? roadMatch.heading
+    : (authoritative || serverMatchedPoint) && reportedHeading != null
+    ? reportedHeading
+    : courseMatch ? observedCourse.heading ?? courseMatch.heading : displayedMatch?.heading ?? observedCourse.heading ?? 0;
+  const markerPoint = snappedDriverPosition ? { ...snappedDriverPosition, heading: driverHeading } : null;
+  const markerRoad = serverMatchedPoint ? serverMatchedPoint.matchedPath ?? EMPTY_CAR_ROUTE : activeRoad;
+  const shownRoute = useMemo(() => route.length > 1 && ((navigationActive && !routeOverview && roadMatch && localRoadConfirmed)
+    || (passengerView && !routeOverview && roadMatch && localRoadConfirmed))
+    ? remainingRoad(route, roadMatch?.along ?? 0) : route,
+  [route, navigationActive, routeOverview, passengerView, roadMatch?.along, localRoadConfirmed]);
+  const shownApproach = useMemo(() => approachRoute.length > 1 && ((navigationActive && routeOverview && roadMatch && localRoadConfirmed)
+    || (passengerView && routeOverview && roadMatch && localRoadConfirmed))
+    ? remainingRoad(approachRoute, roadMatch?.along ?? 0) : approachRoute,
+  [approachRoute, navigationActive, routeOverview, passengerView, roadMatch?.along, localRoadConfirmed]);
+  const routeShape = useMemo<GeoJSON.LineString>(() => ({ type: 'LineString', coordinates: shownRoute.map(toCoordinate) }), [shownRoute]);
+  const approachShape = useMemo<GeoJSON.LineString>(() => ({ type: 'LineString', coordinates: shownApproach.map(toCoordinate) }), [shownApproach]);
+  const debugAccuracyShape = trackingDiagnosticsEnabled && !passengerView && driverPosition
+    ? accuracyCircle({ ...driverPosition, accuracy: driverPosition.accuracy ?? driverPosition.accuracyM ?? undefined }) : null;
   const moveTo = (point: MapPoint, zoom = 16) => {
     zoomLevel.current = zoom;
     cameraCenter.current = toCoordinate(point);
+    if (!passengerView && navigationActive) cameraHeading.current = driverHeading;
     cameraPadding.current = { paddingTop: 0, paddingBottom: 0, paddingLeft: 0, paddingRight: 0 };
     camera.current?.setCamera({
       centerCoordinate: toCoordinate(point), zoomLevel: zoom,
+      ...(!passengerView && navigationActive ? { heading: driverHeading } : {}),
       padding: cameraPadding.current,
       animationDuration: 300, animationMode: 'easeTo',
     });
@@ -267,7 +450,7 @@ export default function TaxiMap({
     const request = ++zoomRequest.current;
     const observedCenter = mapView.current ? await mapView.current.getCenter().catch(() => null) : null;
     if (request !== zoomRequest.current) return;
-    if (followActive && driverPosition && isMapPoint(driverPosition)) cameraCenter.current = toCoordinate(driverPosition);
+    if (followActive && snappedDriverPosition && isMapPoint(snappedDriverPosition)) cameraCenter.current = toCoordinate(snappedDriverPosition);
     else if (observedCenter && isMapPoint({ latitude: observedCenter[1], longitude: observedCenter[0] })) cameraCenter.current = observedCenter;
     camera.current?.setCamera({
       centerCoordinate: cameraCenter.current, heading: cameraHeading.current, zoomLevel: next,
@@ -278,12 +461,12 @@ export default function TaxiMap({
   const locateOnMap = async () => {
     if (!attached || locatingRef.current) return;
     setLocationError('');
-    if (driverPosition && isMapPoint(driverPosition)) {
+    if (snappedDriverPosition && isMapPoint(snappedDriverPosition)) {
       followPaused.current = false;
       manualCamera.current = false;
       if (passengerView) setPassengerFollowing(true);
       else onFollowDriverChange?.(true);
-      moveTo(driverPosition, navigationActive ? 17 : 16);
+      moveTo(snappedDriverPosition, navigationActive ? 17 : 16);
       return;
     }
     locatingRef.current = true;
@@ -343,19 +526,21 @@ export default function TaxiMap({
     const point = userLocation ?? center;
     moveTo(point);
     setCandidate(point);
-  }, [attached, browsePickup, recenterKey, userLocation?.latitude, userLocation?.longitude]);
+  }, [attached, mapReadyRevision, browsePickup, recenterKey, userLocation?.latitude, userLocation?.longitude]);
 
   useEffect(() => {
     if (!attached || !focusPoint) return;
-    if (picking) setCandidate(focusPoint);
-    moveTo(focusPoint);
+    const point = browsePickup && userLocation && !manualCamera.current ? userLocation : focusPoint;
+    if (picking) setCandidate(point);
+    moveTo(point);
   }, [focusPoint, attached]);
 
   useEffect(() => {
-    if (!attached || picking || navigationActive && !routeOverview || followActive || manualCamera.current) return;
+    if (!attached || viewport.width <= 0 || viewport.height <= 0 || picking || navigationActive && !routeOverview || followActive || manualCamera.current) return;
     if ((pickup && dropoff) || route.length > 1 || approachRoute.length > 1) {
       const frame = routeFrame([
         ...route, ...approachRoute,
+        ...(!passengerView && driverPosition && isMapPoint(driverPosition) ? [driverPosition] : []),
         ...(pickup ? [pickup] : []), ...(dropoff ? [dropoff] : []),
       ], viewport.width, viewport.height, contentTopInset, contentBottomInset);
       if (frame) {
@@ -365,28 +550,39 @@ export default function TaxiMap({
         camera.current?.fitBounds(frame.ne, frame.sw, frame.padding, 400);
       }
     } else moveTo(driverPosition && isMapPoint(driverPosition) ? driverPosition : userLocation ?? center, 15);
-  }, [attached, picking, navigationActive, routeOverview, followActive, routeKey, suppliedRoute, approachRoute, serverRoute, recenterKey, viewport.width, viewport.height, contentTopInset, contentBottomInset, cameraSession.split(':')[0], driverPosition?.latitude, driverPosition?.longitude, userLocation?.latitude, userLocation?.longitude]);
+  }, [attached, mapReadyRevision, picking, navigationActive, routeOverview, followActive, routeKey, suppliedRoute, approachRoute, serverRoute, recenterKey, viewport.width, viewport.height, contentTopInset, contentBottomInset, cameraSession.split(':')[0], driverPosition?.latitude, driverPosition?.longitude, userLocation?.latitude, userLocation?.longitude]);
 
   useEffect(() => { if (followActive) { followPaused.current = false; manualCamera.current = false; } }, [followActive, recenterKey]);
   useEffect(() => {
-    if (!attached || picking || !followActive || followPaused.current || !driverPosition || !isMapPoint(driverPosition)) return;
+    if (!attached || picking || !followActive || followPaused.current || !snappedDriverPosition || !isMapPoint(snappedDriverPosition)) return;
     const key = `${cameraSession.split(':')[0]}:${recenterKey}:${navigationActive}`;
     const resetView = followCameraKey.current !== key;
     followCameraKey.current = key;
     const previousCamera = lastFollowCamera.current;
-    if (!resetView && previousCamera && metresBetween(previousCamera.point, driverPosition) < 4
-      && previousCamera.top === contentTopInset && previousCamera.height === viewport.height) return;
-    lastFollowCamera.current = { point: driverPosition, top: contentTopInset, height: viewport.height };
-    cameraCenter.current = toCoordinate(driverPosition);
-    cameraHeading.current = navigationActive ? driverHeading : 0;
-    cameraPadding.current = { paddingTop: Math.min(contentTopInset + 48, viewport.height * .4), paddingBottom: 70, paddingLeft: 0, paddingRight: 0 };
+    if (!resetView && previousCamera && metresBetween(previousCamera.point, snappedDriverPosition) < 2
+      && headingDifference(previousCamera.heading, driverHeading) < 3
+      && previousCamera.top === contentTopInset && previousCamera.height === viewport.height && previousCamera.bottom === contentBottomInset) return;
+    lastFollowCamera.current = { point: snappedDriverPosition, heading: driverHeading, top: contentTopInset, bottom: contentBottomInset, height: viewport.height };
+    const drivingFollow = navigationActive && !passengerView;
+    const speed = driverPosition?.speedMps ?? driverPosition?.speed ?? 0;
+    const lookAhead = Math.max(35, Math.min(80, 40 + speed * 3));
+    // Follow the bend itself, so the next road section stays above the arrow
+    // on screen instead of sliding sideways as the car approaches a turn.
+    const roadAhead = drivingFollow && roadMatch && activeRoad.length > 1
+      ? pointAlongRoad(activeRoad, roadMatch.along + lookAhead) : null;
+    const center = drivingFollow ? roadAhead ?? pointAhead(snappedDriverPosition, driverHeading, lookAhead) : snappedDriverPosition;
+    cameraCenter.current = toCoordinate(center);
+    cameraHeading.current = drivingFollow ? cameraHeading.current + ((driverHeading - cameraHeading.current + 540) % 360 - 180) : 0;
+    cameraPadding.current = drivingFollow
+      ? { paddingTop: contentTopInset + 16, paddingBottom: contentBottomInset + 16, paddingLeft: 0, paddingRight: 0 }
+      : { paddingTop: Math.min(contentTopInset + 48, viewport.height * .4), paddingBottom: Math.max(70, contentBottomInset + 30), paddingLeft: 0, paddingRight: 0 };
     camera.current?.setCamera({
-      centerCoordinate: toCoordinate(driverPosition), heading: navigationActive ? driverHeading : 0, pitch: navigationActive ? 35 : 0,
+      centerCoordinate: cameraCenter.current, heading: cameraHeading.current, pitch: drivingFollow ? 40 : 0,
       ...(resetView ? { zoomLevel: navigationActive ? 17 : 16 } : {}),
       padding: cameraPadding.current,
-      animationDuration: resetView ? 350 : 650, animationMode: 'easeTo',
+      animationDuration: resetView ? 350 : 500, animationMode: 'easeTo',
     });
-  }, [attached, mapReadyRevision, picking, followActive, navigationActive, driverPosition?.latitude, driverPosition?.longitude, driverHeading, recenterKey, contentTopInset, viewport.height, cameraSession]);
+  }, [attached, mapReadyRevision, picking, followActive, navigationActive, snappedDriverPosition?.latitude, snappedDriverPosition?.longitude, driverHeading, roadMatch?.along, activeRoad, recenterKey, contentTopInset, contentBottomInset, viewport.height, cameraSession]);
 
   useEffect(() => {
     setRouteError(false);
@@ -423,13 +619,13 @@ export default function TaxiMap({
   const dropoffRouteParts = dropoffRouteLabel?.split(' · ');
   // A driver offer can leave a short map above its detail card. Keep all three
   // targets visible by laying the same controls in one row on short viewports.
-  const controlsBottomGap = passengerView ? (selectionMode ? panelHeight + 24 : 100) : 92;
-  const compactControls = viewport.height > 0 && viewport.height - contentTopInset < (passengerView ? 216 : 297);
+  const controlsBottomGap = navigationActive ? 16 : passengerView ? (selectionMode ? panelHeight + 24 : 100) : 92;
+  const compactControls = viewport.height > 0 && viewport.height - contentBottomInset - contentTopInset < (passengerView ? 216 : 297);
   const controlsHeight = compactControls ? 60 : 193;
   const controlsTop = viewport.height > 0
     ? Math.min(
-      Math.max(insets.top + 54, contentTopInset + 10, viewport.height - controlsHeight - controlsBottomGap),
-      Math.max(insets.top + 54, viewport.height - controlsHeight - 12),
+      Math.max(insets.top + 54, contentTopInset + 10, viewport.height - contentBottomInset - controlsHeight - controlsBottomGap),
+      Math.max(insets.top + 54, viewport.height - contentBottomInset - controlsHeight - 12),
     )
     : contentTopInset + 56;
 
@@ -464,16 +660,24 @@ export default function TaxiMap({
         onLongPress={selectFeature}
       >
         <Camera ref={camera} defaultSettings={initialCamera.current} maxZoomLevel={19} />
-        {route.length > 1 && <ShapeSource id="route" shape={routeShape}>
-          <LineLayer id="route-halo" style={{ lineColor: dark ? '#101010' : '#FFFFFF', lineWidth: 15, lineOpacity: .94, lineCap: 'round', lineJoin: 'round' }} />
-          <LineLayer id="route-outline" style={{ lineColor: dark ? '#858585' : '#0B55C5', lineWidth: 9, lineCap: 'round', lineJoin: 'round' }} />
-          <LineLayer id="route-line" style={{ lineColor: dark ? '#F0F0F0' : '#57AAFF', lineWidth: 5.5, lineCap: 'round', lineJoin: 'round' }} />
+        <AnimatedDriverMarker point={markerPoint} session={driverIdentity} road={markerRoad} passengerView={passengerView}/>
+        {shownRoute.length > 1 && <ShapeSource id="route" shape={routeShape}>
+          <LineLayer id="route-halo" belowLayerID={driverLayerID} style={{ lineColor: dark ? '#101010' : '#FFFFFF', lineWidth: 15, lineOpacity: .94, lineCap: 'round', lineJoin: 'round' }} />
+          <LineLayer id="route-outline" belowLayerID={driverLayerID} style={{ lineColor: dark ? '#858585' : '#0B55C5', lineWidth: 9, lineCap: 'round', lineJoin: 'round' }} />
+          <LineLayer id="route-line" belowLayerID={driverLayerID} style={{ lineColor: dark ? '#F0F0F0' : '#57AAFF', lineWidth: 5.5, lineCap: 'round', lineJoin: 'round' }} />
         </ShapeSource>}
-        {approachRoute.length > 1 && <ShapeSource id="approach-route" shape={approachShape}>
-          <LineLayer id="approach-route-halo" style={{ lineColor: dark ? '#101010' : '#FFFFFF', lineWidth: 13, lineOpacity: .95, lineCap: 'round', lineJoin: 'round' }} />
-          <LineLayer id="approach-route-outline" style={{ lineColor: dark ? '#9B5D00' : '#B77908', lineWidth: 9, lineCap: 'round', lineJoin: 'round' }} />
-          <LineLayer id="approach-route-line" style={{ lineColor: dark ? '#FFBC4B' : '#FFD54A', lineWidth: 6, lineCap: 'round', lineJoin: 'round' }} />
+        {shownApproach.length > 1 && <ShapeSource id="approach-route" shape={approachShape}>
+          <LineLayer id="approach-route-halo" belowLayerID={driverLayerID} style={{ lineColor: dark ? '#101010' : '#FFFFFF', lineWidth: 13, lineOpacity: .95, lineCap: 'round', lineJoin: 'round' }} />
+          <LineLayer id="approach-route-outline" belowLayerID={driverLayerID} style={{ lineColor: dark ? '#9B5D00' : '#B77908', lineWidth: 9, lineCap: 'round', lineJoin: 'round' }} />
+          <LineLayer id="approach-route-line" belowLayerID={driverLayerID} style={{ lineColor: dark ? '#FFBC4B' : '#FFD54A', lineWidth: 6, lineCap: 'round', lineJoin: 'round' }} />
         </ShapeSource>}
+        {debugAccuracyShape && <ShapeSource id="driver-accuracy" shape={debugAccuracyShape}>
+          <FillLayer id="driver-accuracy-fill" belowLayerID={driverLayerID} style={{ fillColor: '#FF7A00', fillOpacity: .13 }}/>
+          <LineLayer id="driver-accuracy-outline" belowLayerID={driverLayerID} style={{ lineColor: '#FF7A00', lineWidth: 1.5 }}/>
+        </ShapeSource>}
+        {trackingDiagnosticsEnabled && !passengerView && driverPosition && <PointAnnotation id="driver-raw-debug" coordinate={toCoordinate(driverPosition)}>
+          <View collapsable={false} style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: '#FF7A00', borderColor: '#FFFFFF', borderWidth: 1 }}/>
+        </PointAnnotation>}
         {showUserPosition && passengerView && <UserLocation visible={false} onUpdate={location => {
           const point = { latitude: location.coords.latitude, longitude: location.coords.longitude };
           const timestamp = location.timestamp;
@@ -485,11 +689,11 @@ export default function TaxiMap({
         {showUserPosition && passengerView && userLocation && <PointAnnotation id="client-user-position" coordinate={toCoordinate(userLocation)}>
           <View collapsable={false} style={styles.userPositionDot}/>
         </PointAnnotation>}
-        {pickup && !browsePickup && selectionMode !== 'pickup' && <PointAnnotation id="pickup" coordinate={toCoordinate(pickup)} onSelected={() => onEditPoint?.('pickup')} anchor={{ x: .5, y: 1 }}>
-          <View collapsable={false} style={{ width: 48, height: 67, alignItems: 'center' }}><View style={[styles.pinBody, dark && styles.darkPinBody]}><PickupIcon color={dark ? '#101010' : 'white'} size={24}/></View><View style={[styles.stem, dark && styles.darkStem]}/></View>
-        </PointAnnotation>}
-        {dropoff && selectionMode !== 'dropoff' && <PointAnnotation id="dropoff" coordinate={toCoordinate(dropoff)} onSelected={() => onEditPoint?.('dropoff')} anchor={{ x: .5, y: dropoffRouteLabel ? .81 : .5 }}>
-          <View collapsable={false} style={dropoffRouteLabel ? styles.destinationWithRoute : styles.destination}>
+        {pickup && !browsePickup && selectionMode !== 'pickup' && <MarkerView testID="pickup" coordinate={toCoordinate(pickup)} allowOverlap anchor={{ x: .5, y: 1 }}>
+          <Pressable onPress={() => onEditPoint?.('pickup')} accessibilityLabel="Место подачи" collapsable={false} style={{ width: 48, height: 67, alignItems: 'center' }}><View style={[styles.pinBody, dark && styles.darkPinBody]}><PickupIcon color={dark ? '#101010' : 'white'} size={24}/></View><View style={[styles.stem, dark && styles.darkStem]}/></Pressable>
+        </MarkerView>}
+        {dropoff && selectionMode !== 'dropoff' && <MarkerView testID="dropoff" coordinate={toCoordinate(dropoff)} allowOverlap anchor={{ x: .5, y: dropoffRouteLabel ? .81 : .5 }}>
+          <Pressable onPress={() => onEditPoint?.('dropoff')} accessibilityLabel="Пункт назначения" collapsable={false} style={dropoffRouteLabel ? styles.destinationWithRoute : styles.destination}>
             {!!dropoffRouteLabel && <View style={[styles.dropoffRouteBadge, dark && styles.darkDropoffRouteBadge]} accessible accessibilityLabel={`Пункт назначения Б, ${dropoffRouteLabel}`}>
               <View style={[styles.dropoffRouteLetter, dark && styles.darkDropoffRouteLetter]}><Text style={[styles.dropoffRouteLetterText, dark && styles.darkDropoffRouteLetterText]}>Б</Text></View>
               <View style={styles.dropoffRouteMetrics}>
@@ -498,19 +702,8 @@ export default function TaxiMap({
               </View>
             </View>}
             <View style={[styles.destination, dark && styles.darkDestination]}><Icon name="flag" color={dark ? '#101010' : 'white'} size={19}/></View>
-          </View>
-        </PointAnnotation>}
-        {passengerView && driverMarkerShape && <ShapeSource id="client-driver-position" shape={driverMarkerShape} testID="client-driver-position">
-          <SymbolLayer id="client-driver-car" style={{
-            iconImage: require('../../assets/tracking-car-white.png'), iconSize: .025,
-            iconRotate: Number.isFinite(markerPosition?.heading) && markerPosition!.heading! >= 0 ? markerPosition!.heading! : 0,
-            iconRotationAlignment: 'map', iconPitchAlignment: 'map', iconAnchor: 'center', iconOffset: [0, 0],
-            iconAllowOverlap: true, iconIgnorePlacement: true,
-          }}/>
-        </ShapeSource>}
-        {!passengerView && driverMarkerShape && <ShapeSource id="driver-navigation-position" shape={driverMarkerShape}>
-          <SymbolLayer id="driver-navigation-arrow" style={{ iconImage: require('../../assets/driver-navigation-arrow.png'), iconSize: .42, iconRotate: driverHeading, iconRotationAlignment: 'map', iconPitchAlignment: 'map', iconAllowOverlap: true, iconIgnorePlacement: true }}/>
-        </ShapeSource>}
+          </Pressable>
+        </MarkerView>}
       </MapView>
       {picking && <View pointerEvents="none" accessibilityLabel={selectionMode !== 'dropoff' ? 'Метка места подачи' : 'Метка пункта назначения'} style={[styles.centerPin, moving && { transform: [{ translateY: -8 }] }]}><View style={[styles.pinBody, dark && styles.darkPinBody]}>{selectionMode !== 'dropoff' ? <PickupIcon color={dark ? '#101010' : 'white'} size={24}/> : <Icon name="flag" color={dark ? '#101010' : 'white'} size={24}/>}</View><View style={[styles.stem, dark && styles.darkStem]}/></View>}
       <View style={styles.attribution}>
@@ -523,7 +716,7 @@ export default function TaxiMap({
       style={[styles.trackingDiagnostics, dark && styles.darkTrackingDiagnostics, { top: contentTopInset + 10 }]}>
       <Text style={[styles.trackingDiagnosticsText, dark && styles.darkTrackingDiagnosticsText]}>{[
         `GPS: ${driverPosition.latitude.toFixed(6)}, ${driverPosition.longitude.toFixed(6)}`,
-        `Карта: ${markerPosition ? `${markerPosition.latitude.toFixed(6)}, ${markerPosition.longitude.toFixed(6)}` : '—'}`,
+        `Карта: ${markerPoint ? `${markerPoint.latitude.toFixed(6)}, ${markerPoint.longitude.toFixed(6)}` : '—'}`,
         `Точность: ${driverPosition.accuracyM ?? driverPosition.accuracy ?? '—'} м · замер: ${driverPosition.measuredAtMs ? Math.max(0, Math.round((Date.now() - driverPosition.measuredAtMs) / 1000)) : '—'} с`,
         `Сессия: ${driverPosition.trackingSessionId || '—'} · № ${driverPosition.sequence ?? '—'}`,
         `Назначение: ${driverPosition.assignmentId || '—'} · версия: ${driverPosition.stateVersion ?? '—'}`,

@@ -6,6 +6,28 @@ const ts = require('typescript');
 const exportsObject = {};
 vm.runInNewContext(ts.transpileModule(fs.readFileSync(require.resolve('../src/navigation.ts'), 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText, { exports: exportsObject, Date });
 const { prepareRoute, routeProgress, guidanceCue, maneuverText, normalizeManeuver, bearingDelta, usableNavigationFix, stableNavigationFix, bestRussianVoice, bestVoiceForLanguage, navigationDestination, distanceBetween } = exportsObject;
+test('bearing interpolation takes the short path across north in both directions', () => {
+  assert.equal(exportsObject.interpolateBearing(350, 10, .5), 0);
+  assert.equal(exportsObject.interpolateBearing(10, 350, .5), 0);
+  assert.equal(exportsObject.shortestAngleDelta(350, 10), 20);
+  assert.equal(exportsObject.shortestAngleDelta(10, 350), -20);
+});
+test('route options fall back only for a legacy server DTO', () => {
+  assert.equal(exportsObject.unsupportedRouteOptions({ status: 400, message: 'property fast should not exist' }), true);
+  assert.equal(exportsObject.unsupportedRouteOptions({ status: 400, message: 'property bearing should not exist' }), true);
+  assert.equal(exportsObject.unsupportedRouteOptions({ status: 400, message: 'NoRoute' }), false);
+  assert.equal(exportsObject.unsupportedRouteOptions({ status: 500, message: 'property fast should not exist' }), false);
+});
+test('client map omits the driver-to-pickup path while driver navigation keeps it', () => {
+  const routes = {};
+  vm.runInNewContext(ts.transpileModule(fs.readFileSync(require.resolve('../src/tripMapRoutes.ts'), 'utf8'),
+    { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText,
+    { exports: routes });
+  const order = { status: 'ASSIGNED', routeProvider: 'osrm', geometry: [a, b] };
+  const navigationRoute = { geometry: [c, a] };
+  assert.equal(routes.tripMapRoutes({ driver: false, order, navigationRoute, approachRoute: navigationRoute }).approachGeometry, undefined);
+  assert.deepEqual(JSON.parse(JSON.stringify(routes.tripMapRoutes({ driver: true, order, navigationRoute }).approachGeometry)), [c, a]);
+});
 const point = (latitude, longitude) => ({ latitude, longitude });
 const a = point(42.87, 74.59), b = point(42.875, 74.59), c = point(42.875, 74.595);
 function step(type, location, geometry, modifier) { return { name: 'Улица', distanceMeters: 500, durationSeconds: 60, geometry, maneuver: { type, location, modifier, bearingBefore: 0, bearingAfter: 90 } }; }

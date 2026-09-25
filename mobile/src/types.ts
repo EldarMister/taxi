@@ -40,12 +40,16 @@ export type Tariff = {
   basePrice: number;
   pricePerKm?: number;
   pricePerMinute?: number;
+  waitingGraceMinutes?: number;
+  freeWaitingMinutes?: number;
+  waitingPricePerMinute?: number;
   minimumPrice: number;
   kind?: "RIDE" | "DELIVERY_CAR" | "DELIVERY_TRUCK";
   requiredClass?: "ECONOMY" | "COMFORT" | "TRUCK";
 };
 export type Quote = {
   id: string;
+  createdAt?: string;
   price: number;
   distanceMeters: number;
   durationSeconds: number;
@@ -67,7 +71,7 @@ export type OrderStatus =
 export type DriverLocation = Coordinate & { driverId: string; timestamp: number; receivedAt: number; accuracy: number; heading?: number; speed?: number;
   tripId?: string; trackingSessionId?: string; trackingStartedAt?: number; sequence?: number; measuredAt?: number; accuracyM?: number; speedMps?: number; bearingDeg?: number;
   schemaVersion?: 1; orderId?: string; assignmentId?: string; trackingStartedAtMs?: number; measuredAtMs?: number; courseDeg?: number | null;
-  stateVersion?: number; receivedAtMs?: number };
+  stateVersion?: number; receivedAtMs?: number; routeIndex?: number; routeProgress?: number; distanceToRoute?: number; matched?: boolean; matchedPath?: Coordinate[] };
 export type DriverLocationUpdate = {
   schemaVersion: 1;
   orderId: string;
@@ -81,6 +85,11 @@ export type DriverLocationUpdate = {
   speedMps: number | null;
   courseDeg: number | null;
   measuredAtMs: number;
+  routeIndex?: number;
+  routeProgress?: number;
+  distanceToRoute?: number;
+  matched?: boolean;
+  matchedPath?: Coordinate[];
 };
 export type Order = {
   driverLocation?: DriverLocation | null;
@@ -99,6 +108,19 @@ export type Order = {
   pickup: Point;
   dropoff: Point;
   price: number;
+  basePrice?: number;
+  waiting?: {
+    phase: "BEFORE_FREE" | "FREE" | "PAID" | "FINISHED";
+    arrivedAt: string;
+    graceMinutes: number;
+    freeMinutes: number;
+    pricePerMinute: number;
+    elapsedSeconds: number;
+    remainingSeconds: number;
+    billedMinutes: number;
+    charge: number;
+    totalPrice: number;
+  } | null;
   distanceMeters: number;
   durationSeconds: number;
   geometry: Coordinate[];
@@ -107,6 +129,7 @@ export type Order = {
   createdAt: string;
   updatedAt?: string;
   completedAt?: string | null;
+  actualDurationSeconds?: number | null;
   driver?: User | null;
   client?: User;
   searchExpiresAt?: string;

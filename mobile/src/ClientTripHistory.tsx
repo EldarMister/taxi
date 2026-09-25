@@ -30,7 +30,7 @@ export function ClientHistoryRow({ order, user, onPress }: { order: Order; user:
       <View style={[styles.listTimeColumn, { borderColor: palette.line }]}><Text style={[styles.listTime, { color: palette.ink }]}>{time}</Text></View>
       <View style={styles.listRoute}><RoutePins/><View style={{ flex: 1, justifyContent: 'space-between', gap: 6 }}><Text numberOfLines={1} style={[styles.listAddress, { color: palette.ink }]}>{shortAddress(order.pickup.address)}</Text><Text numberOfLines={1} style={[styles.listAddress, { color: palette.ink }]}>{shortAddress(order.dropoff.address)}</Text></View></View>
     </View>
-    <View style={styles.listBottom}><Text style={[styles.listMeta, { color: palette.muted }]}>{km(order.distanceMeters)} · {mins(order.durationSeconds, user.language)}</Text><View style={styles.listBottomRight}><Status order={order} language={user.language}/><Text style={[styles.listFare, { color: palette.ink }]}>{money(order.status === 'CANCELLED' ? 0 : order.price)}</Text><Icon name="chevron-forward" size={18} color={palette.muted}/></View></View>
+    <View style={styles.listBottom}><Text style={[styles.listMeta, { color: palette.muted }]}>{km(order.distanceMeters)} · {mins(order.status === 'COMPLETED' ? order.actualDurationSeconds ?? order.durationSeconds : order.durationSeconds, user.language)}</Text><View style={styles.listBottomRight}><Status order={order} language={user.language}/><Text style={[styles.listFare, { color: palette.ink }]}>{money(order.status === 'CANCELLED' ? 0 : order.price)}</Text><Icon name="chevron-forward" size={18} color={palette.muted}/></View></View>
   </Pressable>;
 }
 
@@ -61,7 +61,7 @@ export function ClientTripHistoryDetail({ order, user, onError }: { order: Order
     <Card>
       <View style={styles.detailRoute}><RoutePins/><View style={{ flex: 1, gap: 18 }}><Text style={[styles.detailAddress, { color: palette.ink }]}>{order.pickup.address}</Text><Text style={[styles.detailAddress, { color: palette.ink }]}>{order.dropoff.address}</Text></View></View>
       <View style={[styles.cardDivider, { backgroundColor: palette.line }]}/>
-      <Text style={[styles.routeMeta, { color: palette.muted }]}>{km(order.distanceMeters)} · {mins(order.durationSeconds, user.language)}</Text>
+      <Text style={[styles.routeMeta, { color: palette.muted }]}>{km(order.distanceMeters)} · {mins(order.status === 'COMPLETED' ? order.actualDurationSeconds ?? order.durationSeconds : order.durationSeconds, user.language)}</Text>
     </Card>
     {driver && <Card title={t('Ваш водитель')}>
       <View style={styles.driverRow}><Avatar user={driver} size={50}/><View style={{ flex: 1, gap: 5 }}><Text style={[styles.driverName, { color: palette.ink }]}>{driver.name || t('Водитель')}</Text>{car?.rating != null && <View style={styles.rating}><Icon name="star" size={16} color="#EBAF26"/><Text style={[styles.ratingText, { color: palette.ink }]}>{Number(car.rating).toFixed(1)}</Text></View>}</View>
@@ -75,7 +75,7 @@ export function ClientTripHistoryDetail({ order, user, onError }: { order: Order
       <InfoRow label={t('Время заказа')} value={orderTime}/>
       {completedTime && <InfoRow label={t('Время завершения')} value={completedTime}/>}
       <InfoRow label={t('Расстояние')} value={km(order.distanceMeters)}/>
-      <InfoRow label={t('Расчётное время в пути')} value={mins(order.durationSeconds, user.language)}/>
+      <InfoRow label={order.status === 'COMPLETED' && order.actualDurationSeconds != null ? user.language === 'ky' ? 'Жолдогу убакыт' : 'Время в пути' : t('Расчётное время в пути')} value={mins(order.status === 'COMPLETED' ? order.actualDurationSeconds ?? order.durationSeconds : order.durationSeconds, user.language)}/>
       <View style={styles.infoRow}><Text style={[styles.infoLabel, { color: palette.muted }]}>{t('Статус')}</Text><Status order={order} language={user.language}/></View>
     </Card>
     <Card title={t('Оплата')}>

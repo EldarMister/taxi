@@ -1,12 +1,25 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { DriverFix, DriverLocationDto, TrackingService, isNewDriverFix, normalizeDriverLocation, visibleDriverLocation } from '../src/tracking';
+import { DriverFix, DriverLocationDto, TrackingService, isNewDriverFix, normalizeDriverLocation, plausibleDriverFix, visibleDriverLocation } from '../src/tracking';
 import { Actor } from '../src/auth';
+import { ValidationPipe } from '@nestjs/common';
 
 const fix = (changes: Partial<DriverFix> = {}): DriverFix => ({
   driverId: 'driver', latitude: 41.1987, longitude: 72.1802, accuracy: 8,
   timestamp: 1000, measuredAt: 1000, receivedAt: 1010,
   trackingSessionId: 'session-a', trackingStartedAt: 500, sequence: 3, ...changes,
+});
+
+test('tracking road packets validate nested coordinates and enforce a small payload', async () => {
+  const pipe = new ValidationPipe({ transform: true, whitelist: true, forbidNonWhitelisted: true });
+  const packet = { latitude: 42, longitude: 74, accuracy: 12, timestamp: Date.now(), matched: true,
+    matchedPath: [{ latitude: 42, longitude: 74 }, { latitude: 42.001, longitude: 74 }] };
+  const metadata = { type: 'body' as const, metatype: DriverLocationDto };
+  const result = await pipe.transform(packet, metadata);
+  assert.equal(result.matchedPath.length, 2);
+  await assert.rejects(() => pipe.transform({ ...packet, matchedPath: Array(129).fill(packet.matchedPath[0]) }, metadata));
+  await assert.rejects(() => pipe.transform({ ...packet, matchedPath: [{ latitude: 91, longitude: 74 }, packet.matchedPath[1]] }, metadata));
+  await assert.rejects(() => pipe.transform({ ...packet, matchedPath: [{ longitude: 74 }, packet.matchedPath[1]] }, metadata));
 });
 
 test('a current location is ordered by session, sequence and measurement time', () => {
@@ -60,12 +73,19 @@ test('a retired tracking session cannot replace the next session when both carry
   assert.equal(isNewDriverFix({ ...previous, schemaVersion: 1 }, { latitude: 42, longitude: 74,
     accuracy: 5, timestamp: 2200 }, 20_000), false);
 });
+test('impossible jumps and old measurements cannot replace a live driver position',()=>{
+  const previous=fix({timestamp:1000,measuredAtMs:1000,accuracyM:5});
+  assert.equal(plausibleDriverFix(previous,{latitude:41.3,longitude:72.18,measuredAtMs:2000,accuracyM:5}),false);
+  assert.equal(plausibleDriverFix(previous,{latitude:41.1988,longitude:72.1802,measuredAtMs:2000,accuracyM:5}),true);
+  assert.equal(isNewDriverFix(previous,{latitude:41.1988,longitude:72.1802,measuredAtMs:999,sequence:4,trackingSessionId:'session-a'}),false);
+});
 
 test('server binds a v1 fix to the authorized assignment and publishes only fresh versions', async () => {
   const now = Date.now();
   const order: any = { id: 'order', status: 'ASSIGNED', driverId: 'driver', clientId: 'client',
     driverLocation: null, updatedAt: new Date(), pickup: {}, dropoff: {} };
   const published: any[] = [];
+  const roomPublished: any[] = [];
   const assignment = { id: 'assignment' };
   const tx = {
     $queryRaw: async () => [],
@@ -74,13 +94,15 @@ test('server binds a v1 fix to the authorized assignment and publishes only fres
   };
   const db = { $transaction: async (work: (transaction: typeof tx) => Promise<unknown>) => work(tx),
     order: { findUnique: async () => order }, statusHistory: tx.statusHistory };
-  const events = { publish: (users: string[], name: string, payload: unknown) => published.push({ users, name, payload }) };
+  const events = { publish: (users: string[], name: string, payload: unknown) => published.push({ users, name, payload }),
+    publishOrder: (orderId: string, name: string, payload: unknown) => roomPublished.push({ orderId, name, payload }) };
   const limits = { take: async () => undefined };
   const service = new TrackingService(db as any, events as any, limits as any);
   const actor = { id: 'driver', role: 'DRIVER' } as Actor;
   const packet: DriverLocationDto = { schemaVersion: 1, orderId: 'order', assignmentId: 'assignment',
     trackingSessionId: 'session', trackingStartedAtMs: now - 1000, sequence: 1,
-    latitude: 42.123456789, longitude: 74.987654321, accuracyM: 5, speedMps: 0, courseDeg: 0, measuredAtMs: now };
+    latitude: 42.123456789, longitude: 74.987654321, accuracyM: 5, speedMps: 0, courseDeg: 0, measuredAtMs: now,
+    matched: true, matchedPath: [{ latitude: 42.1234, longitude: 74.987654321 }, { latitude: 42.124, longitude: 74.987654321 }] };
   await assert.rejects(() => service.update({ ...actor, id: 'other' }, 'order', packet), { status: 403 });
   await assert.rejects(() => service.update(actor, 'order', { ...packet, assignmentId: 'previous' }), { status: 403 });
   assert.equal(published.length, 0);
@@ -90,10 +112,17 @@ test('server binds a v1 fix to the authorized assignment and publishes only fres
   assert.equal(accepted.location.measuredAtMs, now);
   assert.ok(accepted.location.receivedAtMs! <= accepted.serverTimeMs);
   assert.equal(published.length, 1);
+  assert.equal(roomPublished.length, 1);
+  assert.equal(roomPublished[0].name, 'driver:location:update');
+  assert.equal(roomPublished[0].payload.lat, packet.latitude);
+  assert.equal(roomPublished[0].payload.seq, 1);
+  assert.deepEqual(roomPublished[0].payload.location.matchedPath, packet.matchedPath);
+  assert.deepEqual(published[0].payload.location.matchedPath, packet.matchedPath);
   assert.deepEqual(published[0].users, ['client']);
   const snapshot = await service.get({ ...actor, id: 'client', role: 'CLIENT' }, 'order');
   assert.equal(snapshot.assignmentId, assignment.id);
   assert.equal(snapshot.stateVersion, accepted.stateVersion);
+  assert.deepEqual(snapshot.location?.matchedPath, packet.matchedPath, 'HTTP recovery retains the same road as the live event');
   assert.ok(snapshot.serverTimeMs >= accepted.serverTimeMs);
   await assert.rejects(() => service.get({ ...actor, id: 'outsider' }, 'order'), { status: 403 });
   await service.update(actor, 'order', { ...packet, latitude: 43, measuredAtMs: now + 1 });

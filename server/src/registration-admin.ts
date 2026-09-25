@@ -9,7 +9,7 @@ import { PrismaService } from './prisma.service';
 import { AdminRegistrationApplicationsDto, AdminRegistrationRoleReviewDto, AdminRegistrationUploadReviewDto, AdminStartRegistrationReviewDto } from './registration.dto';
 import { detectRegistrationMime } from './registration';
 import {
-  ADDITIONAL_VEHICLE_CLIENT_ID_PATTERN, PerformerRoleValue, RegistrationApplicationStatusValue, RegistrationData, aggregateRegistrationRoleStates,
+  ADDITIONAL_VEHICLE_CLIENT_ID_PATTERN, DOCUMENTED_COURIER_METHODS, PerformerRoleValue, RegistrationApplicationStatusValue, RegistrationData, aggregateRegistrationRoleStates,
   REGISTRATION_EXPIRY_WARNING_DAYS, courierTransportModes, parseRegistrationExpiryDate, redactRegistrationData, registrationCapabilityCeiling, registrationDocumentLifecycleStatus,
   registrationExpiryCorrectionFields, registrationProjectionIssueText, registrationRoleStatusAfterUploadDecision, registrationUploadCanExpire, registrationUploadRequiresExpiry,
   performerRoleForVehicleUsage, registrationAdditionalVehicles, registrationUploadSlotSpec, requiredUploadSlotsForRole, requiresDriverLicense, stripClientUploadState,
@@ -27,7 +27,7 @@ type Tx=Prisma.TransactionClient;
 
 const approvedDocumentStatuses=new Set<RegistrationDocumentStatus>(['APPROVED','ACTIVE','EXPIRING']);
 const terminalRoundStatuses=new Set<RegistrationApplicationStatus>(['APPROVED','CORRECTION_REQUIRED','REJECTED','BLOCKED']);
-const motorCourierModes=new Set(['MOPED','SCOOTER','MOTORCYCLE','CAR','TRUCK','CARGO_CAR']);
+const motorCourierModes=DOCUMENTED_COURIER_METHODS;
 const expiryBatchSize=200;
 
 function record(value:unknown):Record<string,unknown>|null {return value&&typeof value==='object'&&!Array.isArray(value)?value as Record<string,unknown>:null;}

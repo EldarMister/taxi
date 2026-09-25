@@ -31,6 +31,15 @@ export function newerTrackingLocation(previous: DriverLocation | null, next: Dri
   if (next.trackingSessionId && previous.trackingSessionId && next.trackingSessionId !== previous.trackingSessionId
     && next.trackingStartedAtMs != null && previous.trackingStartedAtMs != null
     && next.trackingStartedAtMs <= previous.trackingStartedAtMs) return false;
+  const elapsed = (nextAt - oldAt) / 1000;
+  if (elapsed < .8 && next.latitude === previous.latitude && next.longitude === previous.longitude
+    && (next.speedMps ?? next.speed ?? 0) < 1) return false;
+  if (elapsed <= 30) {
+    const north = (next.latitude - previous.latitude) * 111195;
+    const east = (next.longitude - previous.longitude) * 111195 * Math.cos(next.latitude * Math.PI / 180);
+    const allowed = 35 + Math.max(0, elapsed) * 55 + Math.min(60, (accuracy(previous) ?? 0) + (accuracy(next) ?? 0));
+    if (Math.hypot(north, east) > allowed) return false;
+  }
   return true;
 }
 export function trackingAgeStatus(position: DriverLocation | null, now = Date.now(), receivedLocallyAt?: number, serverTimeAtReceipt?: number) {

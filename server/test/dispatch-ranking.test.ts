@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { nextDriver, OFFER_SECONDS } from '../src/dispatch-ranking';
+import { nextDriver, OFFER_SECONDS, IDLE_POSITION_MAX_AGE_MS } from '../src/dispatch-ranking';
 import { driverCanTake, type DispatchProfile } from '../src/driver-eligibility';
 
 test('nearest driver wins outside the nearby range; rating breaks near-distance priority',()=>{
@@ -13,6 +13,13 @@ test('nearest driver wins outside the nearby range; rating breaks near-distance 
   assert.equal(nextDriver(pickup,[close,near],new Map(),now),'close');
   assert.equal(nextDriver(pickup,[{...close,locationMeasuredAt:new Date(now-30001)},near],new Map(),now),'near');
   assert.equal(OFFER_SECONDS,30);
+});
+test('an online driver with a recent idle position remains eligible when no fresh driver is available',()=>{
+  const now=Date.now(),pickup={latitude:42.8756,longitude:74.6040};
+  const idle={userId:'idle',locationLatitude:pickup.latitude,locationLongitude:pickup.longitude,locationMeasuredAt:new Date(now-3*60*1000)};
+  assert.equal(nextDriver(pickup,[idle],new Map(),now),null);
+  assert.equal(nextDriver(pickup,[idle],new Map(),now,IDLE_POSITION_MAX_AGE_MS),'idle');
+  assert.equal(nextDriver(pickup,[{...idle,locationMeasuredAt:new Date(now-IDLE_POSITION_MAX_AGE_MS-1)}],new Map(),now,IDLE_POSITION_MAX_AGE_MS),null);
 });
 
 test('driver class and preferences isolate ride and delivery offers',()=>{

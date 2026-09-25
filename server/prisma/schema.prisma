@@ -133,6 +133,9 @@ model Tariff {
   basePrice Int
   pricePerKm Int
   pricePerMinute Int
+  waitingGraceMinutes Int @default(1)
+  freeWaitingMinutes Int @default(5)
+  waitingPricePerMinute Int @default(0)
   minimumPrice Int
   commissionBps Int
   active Boolean @default(true)
@@ -181,6 +184,12 @@ model Order {
   price Int
   commission Int
   comment String @default("")
+  waitingGraceMinutes Int @default(1)
+  freeWaitingMinutes Int @default(5)
+  waitingPricePerMinute Int @default(0)
+  arrivedAt DateTime?
+  waitingCharge Int @default(0)
+  waitingBilledMinutes Int @default(0)
   passengerName String?
   passengerPhone String?
   createdAt DateTime @default(now())

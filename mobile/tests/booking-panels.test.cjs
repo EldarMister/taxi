@@ -44,8 +44,9 @@ function load(file) {
     if (id === 'expo-contacts') return contacts;
     if (id === 'react-native-svg') return { __esModule: true, default: 'Svg', Path: 'Path', Circle: 'Circle' };
     if (id === 'react-native-gesture-handler') return { PanGestureHandler: 'PanGestureHandler', State: { BEGAN: 2, END: 5, CANCELLED: 3, FAILED: 1 } };
-    if (id === './navigation') return { displayDistance: value => value + ' м', navigationConfig: { offRouteMeters: 40 },
+    if (id === './navigation') return { displayDistance: value => value + ' м', distanceBetween: () => 125, navigationConfig: { offRouteMeters: 40 }, offRouteThreshold: () => 40,
       normalizeManeuver: step => ({ kind: step.maneuver.type, side: step.maneuver.modifier }) };
+    if (id === './RoadFeatureAlerts') return { RoadFeatureAlerts: 'RoadFeatureAlerts' };
     if (id === './native/driverTracking') return { getDriverTrackingDiagnostics: () => ({ raw: null, processed: null, ageMs: null,
       trackingSessionId: null, sequence: 0, transportStatus: 'idle', lastDropReason: '' }), stopDriverGpsDiagnostic() {} };
     if (id === 'react-native-safe-area-context') return { useSafeAreaInsets: () => ({ top: 24, bottom: 24 }) };
@@ -59,6 +60,7 @@ function load(file) {
     if (id === './design/themeStyles') return { useThemeStyles: base => base };
     if (id === './design/tokens') return { motion: { sheet: 320 } };
     if (id === './usePanelTransition') return load('usePanelTransition.ts');
+    if (id === './waiting') return load('waiting.ts');
     if (id === './useSheetStageTransition') return load('useSheetStageTransition.ts');
     if (id === './useSheetDragToClose') return load('useSheetDragToClose.ts');
     if (id === './ClientCompletionPanel') return load('ClientCompletionPanel.tsx');
@@ -70,11 +72,12 @@ function load(file) {
   return exports;
 }
 const { BookingPanel, emptyRideDetails } = load('BookingPanel.tsx');
-const { ClientTripPanel } = load('ClientTripPanel.tsx');
+const { ClientTripPanel, splitKyrgyzPlate, splitOldKyrgyzPlate } = load('ClientTripPanel.tsx');
 const { DriverPanel, DriverOfferSkip, pickupCategory } = load('DriverPanel.tsx');
 const { TripPanel } = load('TripPanel.tsx');
 const { DriverNavigation } = load('DriverNavigation.tsx');
 const { DeliveryPanel, emptyDeliveryDetails } = load('DeliveryPanel.tsx');
+const { waitingAt } = load('waiting.ts');
 const point = address => ({ address, latitude: 42.87, longitude: 74.59 });
 const textOf = node => typeof node === 'string' ? node : node.children?.map(textOf).join('') || '';
 const button = (r, label) => r.root.findAllByType('Pressable').find(n => n.props.accessibilityLabel === label || textOf(n) === label);
@@ -90,11 +93,19 @@ const sliderGesture = async (r, label, gesture) => {
   let target = r.root.findAll(node => node.props.testID === 'driver-stage-slider' && node.props.accessibilityLabel === label)[0];
   assert.ok(target, label);
   await act(async () => target.props.onLayout({ nativeEvent: { layout: { width: 360 } } }));
-  const handler = r.root.findByType('PanGestureHandler');
+  const handler = r.root.findAllByType('PanGestureHandler').find(node => node.props.activeOffsetX?.join(',') === '-2,2');
   assert.equal(handler.props.minDist, undefined, 'the swipe handler must not combine minDist with failOffsetY');
   assert.equal(handler.props.activeOffsetX.join(','), '-2,2');
   await act(async () => handler.props.onHandlerStateChange({ nativeEvent: { state: 5, translationX: gesture.dx || 0 } }));
 };
+test('client and driver waiting countdowns agree with the billed fare at minute boundaries', () => {
+  const arrivedAt = '2026-09-24T06:00:00.000Z';
+  const order = { status: 'ARRIVED', price: 100, waiting: { arrivedAt, graceMinutes: 1, freeMinutes: 5, pricePerMinute: 4 } };
+  const at = seconds => waitingAt(order, Date.parse(arrivedAt) + seconds * 1000);
+  assert.deepEqual([at(0).phase, at(0).remainingSeconds, at(0).charge], ['BEFORE_FREE', 60, 0]);
+  assert.deepEqual([at(60).phase, at(60).remainingSeconds, at(60).charge], ['FREE', 300, 0]);
+  assert.deepEqual([at(361).phase, at(361).billedMinutes, at(361).totalPrice], ['PAID', 1, 104]);
+});
 test('detail sheets keep the route and saved requests; closing discards an unsaved edit', async t => {
   let saved = emptyRideDetails, renderer, booked = 0;
   const props = { pickup: point('A'), dropoff: point('B'), tariffs: [{ id: 'eco', name: 'Эконом', description: 'Город' }], tariffId: 'eco', quote: { price: 100 }, quotes: { eco: { price: 100 } }, language: 'ru', onAddress() {}, onTariff() {}, onSwap() {}, onRefresh() {}, onHeight() {}, onBook() { booked++; } };
@@ -251,6 +262,60 @@ test('driver comment panel replaces the order panel and restores it after its ex
   assert.equal(root().props.pointerEvents, 'auto');
 });
 
+test('cancelled driver order closes by button or downward pull and has no expand arrow', async t => {
+  let renderer;
+  const closed = [];
+  const order = { id: 'cancelled-driver-order', status: 'CANCELLED', pickup: point('A'), dropoff: point('B'), price: 100, distanceMeters: 1000, durationSeconds: 120 };
+  const props = { order, user: { role: 'DRIVER', language: 'ru' }, offer: null, busy: false, coming: false, onAccept() {}, onRateClient: async () => true, onOnline() {}, onAction() {}, onChat() {}, onDone(id) { closed.push(id); } };
+  await act(async () => { renderer = create(React.createElement(DriverPanel, props)); });
+  t.after(async () => act(async () => renderer.unmount()));
+  assert.equal(renderer.root.findAllByType('Icon').filter(node => ['chevron-up', 'chevron-down'].includes(node.props.name)).length, 0);
+  assert.equal(renderer.root.findAllByType('ScrollView').length, 0, 'cancelled order panel cannot scroll');
+  assert.match(textOf(renderer.root.findByProps({ testID: 'driver-terminal-summary' })), /A.*B.*100/);
+  await tap(renderer, 'К новым заказам');
+  assert.deepEqual(closed, [order.id]);
+  const gesture = renderer.root.findAllByType('PanGestureHandler').find(node => node.props.activeOffsetY?.join(',') === '-16,16');
+  assert.ok(gesture);
+  await act(async () => gesture.props.onHandlerStateChange({ nativeEvent: { state: 5, translationY: 90, velocityY: 0 } }));
+  assert.deepEqual(closed, [order.id, order.id]);
+});
+
+test('missing ride and delivery quotes wait for automatic pricing without a refresh button', async t => {
+  let ride, delivery, refreshes = 0, bookings = 0;
+  const common = { pickup: point('A'), dropoff: point('B'), quote: null, quotes: {}, calculating: true, busy: false,
+    onAddress() {}, onSwap() {}, onRefresh() { refreshes++; }, onBook() { bookings++; }, onHeight() {} };
+  await act(async () => {
+    ride = create(React.createElement(BookingPanel, { ...common, tariffs: [{ id: 'eco', name: 'Эконом' }], tariffId: 'eco',
+      quoteError: '', language: 'ru', details: emptyRideDetails, onDetails() {}, onTariff() {} }));
+    delivery = create(React.createElement(DeliveryPanel, { ...common, tariffs: [{ id: 'car', kind: 'DELIVERY_CAR', name: 'Доставка' }],
+      selectedKind: 'DELIVERY_CAR', details: emptyDeliveryDetails, onDetails() {}, onKind() {} }));
+  });
+  t.after(async () => act(async () => { ride.unmount(); delivery.unmount(); }));
+  for (const panel of [ride, delivery]) {
+    assert.match(textOf(panel.root), /Считаем…/);
+    assert.doesNotMatch(textOf(panel.root), /Обновить расчёт/);
+    const action = panel.root.findAllByType('Pressable').find(node => /Считаем…/.test(textOf(node)));
+    assert.equal(action.props.disabled, true);
+  }
+  assert.equal(refreshes, 0);
+  assert.equal(bookings, 0);
+  const previousPrice = { price: 100, distanceMeters: 900, durationSeconds: 180 };
+  await act(async () => {
+    ride.update(React.createElement(BookingPanel, { ...common, previewQuote: previousPrice,
+      quotes: { eco: previousPrice }, tariffs: [{ id: 'eco', name: 'Эконом' }], tariffId: 'eco',
+      quoteError: '', language: 'ru', details: emptyRideDetails, onDetails() {}, onTariff() {} }));
+    delivery.update(React.createElement(DeliveryPanel, { ...common, previewQuote: previousPrice,
+      quotes: { car: previousPrice }, tariffs: [{ id: 'car', kind: 'DELIVERY_CAR', name: 'Доставка' }],
+      selectedKind: 'DELIVERY_CAR', details: emptyDeliveryDetails, onDetails() {}, onKind() {} }));
+  });
+  for (const panel of [ride, delivery]) {
+    assert.match(textOf(panel.root), /100/);
+    const action = panel.root.findAllByType('Pressable').find(node => /Обновляем цену…/.test(textOf(node)));
+    assert.equal(action.props.disabled, true);
+    assert.doesNotMatch(textOf(panel.root), /Обновить расчёт|Обновить тарифы/);
+  }
+});
+
 test('assigned driver sees and calls the selected passenger while chat stays with the booking client', async t => {
   openedUrl = '';
   let renderer;
@@ -271,7 +336,54 @@ test('client trip panel omits the generic live-tracking banner', async t => {
   await act(async () => { renderer = create(React.createElement(ClientTripPanel, props)); });
   t.after(async () => act(async () => renderer.unmount()));
   assert.doesNotMatch(textOf(renderer.root), /Ваш водитель на карте|в реальном времени|Ожидаем сигнал GPS|Обновляем положение водителя/);
-  assert.match(textOf(renderer.root), /01 KG 777 AAA/);
+  assert.equal(renderer.root.findByProps({ testID: 'client-vehicle-plate' }).props.accessibilityLabel, 'Номер автомобиля 01 KG 777 AAA');
+  assert.match(textOf(renderer.root.findByProps({ testID: 'client-vehicle-plate' })), /01.*KG.*777 AAA/s);
+});
+
+test('client plate keeps the region separate and waiting matches the clock-and-fare card in both themes', async t => {
+  assert.deepEqual(JSON.parse(JSON.stringify(splitKyrgyzPlate('01 KG 777 AAA'))), { region: '01', registration: '777 AAA' });
+  assert.deepEqual(JSON.parse(JSON.stringify(splitKyrgyzPlate('01 777 AAA'))), { region: '01', registration: '777 AAA' });
+  assert.equal(splitKyrgyzPlate('CUSTOM 7'), null);
+  let renderer;
+  const order = { id: 'arrived-with-waiting', status: 'ARRIVED', pickup: point('A'), dropoff: point('B'), price: 90,
+    waiting: { arrivedAt: new Date(Date.now() - 70_000).toISOString(), graceMinutes: 1, freeMinutes: 5, pricePerMinute: 2 },
+    driver: { name: 'Азамат', phone: '+996700000000', driverProfile: { carPlate: '01 KG 777 AAA', carColor: 'Белый', carMake: 'Toyota Camry' } } };
+  const props = { order, user: { role: 'CLIENT', language: 'ru' }, busy: false, onAction() {}, onChat() {}, onDone() {}, onRating: async () => true, onHeight() {} };
+  await act(async () => { renderer = create(React.createElement(ClientTripPanel, props)); });
+  t.after(async () => { darkTheme = false; await act(async () => renderer.unmount()); });
+  const card = () => renderer.root.findByProps({ testID: 'client-waiting-card' });
+  assert.match(textOf(card()), /Бесплатное ожидание.*Затем 2.*90/s);
+  assert.equal(card().findAllByType('Icon').some(node => node.props.name === 'time-outline'), true);
+  assert.equal(card().props.style[0].flexDirection, 'row');
+  darkTheme = true;
+  await act(async () => renderer.update(React.createElement(ClientTripPanel, props)));
+  assert.equal(card().props.style[1].backgroundColor, '#242424');
+  assert.equal(renderer.root.findByProps({ testID: 'client-vehicle-plate' }).props.style[1].backgroundColor, '#242424');
+});
+
+test('client renders old Kyrgyz plates with a red flag and keeps other formats unchanged', async t => {
+  assert.equal(splitOldKyrgyzPlate('B777AE'), 'B 777 AE');
+  assert.equal(splitOldKyrgyzPlate('В 777 АЕ'), 'В 777 АЕ');
+  assert.equal(splitOldKyrgyzPlate('01 KG 777 AAA'), null);
+  assert.equal(splitOldKyrgyzPlate('CUSTOM 7'), null);
+  let renderer;
+  const order = { id: 'old-plate', status: 'ARRIVED', pickup: point('A'), dropoff: point('B'), price: 90,
+    driver: { name: 'Азамат', driverProfile: { carPlate: 'B777AE', carColor: 'Белый', carMake: 'Toyota Camry' } } };
+  const props = { order, user: { role: 'CLIENT', language: 'ru' }, busy: false, onAction() {}, onChat() {}, onDone() {}, onRating: async () => true, onHeight() {} };
+  await act(async () => { renderer = create(React.createElement(ClientTripPanel, props)); });
+  t.after(async () => { darkTheme = false; await act(async () => renderer.unmount()); });
+  const plate = () => renderer.root.findByProps({ testID: 'client-vehicle-plate' });
+  assert.match(textOf(plate()), /🇰🇬.*B 777 AE/s);
+  assert.equal(plate().props.accessibilityLabel, 'Номер автомобиля B777AE');
+  assert.equal(renderer.root.findByProps({ testID: 'client-old-plate-flag' }).props.style.backgroundColor, '#ED1C24');
+  darkTheme = true;
+  await act(async () => renderer.update(React.createElement(ClientTripPanel, props)));
+  assert.equal(plate().props.style[1].backgroundColor, '#242424');
+  assert.match(textOf(plate()), /B 777 AE/);
+  await act(async () => renderer.update(React.createElement(ClientTripPanel, { ...props,
+    order: { ...order, driver: { ...order.driver, driverProfile: { ...order.driver.driverProfile, carPlate: 'CUSTOM 7' } } } })));
+  assert.equal(renderer.root.findAllByProps({ testID: 'client-old-plate-flag' }).length, 0);
+  assert.match(textOf(plate()), /CUSTOM 7/);
 });
 test('cancelling confirms, then completion shows rating and thanks only after feedback saves', async t => {
   let renderer, done = 0; const actions = [], ratings = [];
@@ -348,9 +460,9 @@ test('driver keeps contacts and the stage slider visible while trip details coll
   assert.equal(button(renderer, 'Позвонить пассажиру'), undefined, 'an unaccepted offer has no private contact');
   assert.equal(button(renderer, 'Пропустить'), undefined, 'skip lives above the map, not beneath the accept slider');
   assert.doesNotMatch(textOf(renderer.root), /Новый заказ/);
-  assert.match(textOf(renderer.root), /До клиента.*2500.*420/s, 'pickup distance and time lead the offer panel');
+  assert.match(textOf(renderer.root), /До клиента.*2500.*прибытие ≈ \d{2}:\d{2}/s, 'pickup distance and arrival time lead the offer panel');
   assert.equal(renderer.root.findAllByProps({ testID: 'driver-offer-approach' }).length, 1);
-  assert.match(textOf(renderer.root), /2500.*420.*Средняя подача.*Эконом/s, 'approach metrics and category are shown separately from trip metrics');
+  assert.match(textOf(renderer.root), /2500.*прибытие ≈ \d{2}:\d{2}.*Средняя подача.*Эконом/s, 'approach metrics and category are shown separately from trip metrics');
   assert.match(textOf(renderer.root), /4800.*Маршрут поездки.*720.*Время поездки/s);
   assert.match(textOf(renderer.root), /Пассажир.*4,75/s);
   assert.doesNotMatch(textOf(renderer.root), /Кресло/);
@@ -366,13 +478,22 @@ test('driver keeps contacts and the stage slider visible while trip details coll
   assert.ok(renderer.root.findAllByType('Icon').some(node => node.props.name === 'person' && node.props.color === 'white'));
   assert.equal(renderer.root.findAllByProps({ testID: 'driver-trip-details' }).length, 0, 'navigation leaves space for the map on assignment');
   assert.equal(renderer.root.findAllByProps({ testID: 'driver-trip-metrics' }).length, 1);
-  assert.match(textOf(renderer.root), /490 м.*до клиента/s);
-  assert.doesNotMatch(textOf(renderer.root), /A|B|4800|321/, 'addresses, distance and fare stay inside the collapsed section');
+  assert.equal(renderer.root.findAllByProps({ testID: 'driver-current-destination' }).length, 0, 'pickup address is reserved for expanded details');
+  assert.match(textOf(renderer.root.findByProps({ testID: 'driver-trip-metrics' })), /490 м.*до клиента.*прибытие ≈/s);
+  assert.doesNotMatch(textOf(renderer.root), /4800|Маршрут поездки|321|мин|осталось|A|B/, 'compact pickup keeps trip details, price and countdown hidden');
+  assert.equal(renderer.root.findAllByProps({ testID: 'driver-compact-summary' }).length, 0);
   assert.ok(button(renderer, 'Позвонить пассажиру'));
   assert.ok(button(renderer, 'Чат с пассажиром'));
+  await act(async () => renderer.update(React.createElement(DriverPanel, { ...props, offer: null,
+    order: { ...offer, status: 'ASSIGNED', client: { name: 'Жылдыз' } },
+    navigation: { position: point('Водитель'), progress: null, gpsStatus: '', loading: true } })));
+  assert.match(textOf(renderer.root.findByProps({ testID: 'driver-trip-metrics' })), /≈125 м.*до клиента/s);
   assert.equal(renderer.root.findAll(node => node.props.accessibilityLabel === 'Приехал').length, 1);
   await tap(renderer, 'Раскрыть детали поездки');
   assert.equal(renderer.root.findAllByProps({ testID: 'driver-trip-details' }).length, 1);
+  assert.equal(renderer.root.findAllByProps({ testID: 'driver-current-destination' }).length, 0, 'expanded route shows the pickup address only once');
+  assert.match(textOf(renderer.root.findByProps({ testID: 'driver-trip-details' })), /A.*B.*321/s);
+  assert.doesNotMatch(textOf(renderer.root.findByProps({ testID: 'driver-trip-details' })), /4800|720|мин|Время поездки/, 'expanded pickup shows price and addresses without a second trip-duration metric');
   await tap(renderer, 'Отменить заказ'); await tap(renderer, 'Назад'); assert.deepEqual(actions, []);
   await slide(renderer, 'Приехал'); assert.deepEqual(actions, ['arrive']);
   await status('ASSIGNED', true); await slide(renderer, 'Приехал'); assert.deepEqual(actions, ['arrive'], 'busy request blocks duplicate swipes');
@@ -387,7 +508,7 @@ test('driver keeps contacts and the stage slider visible while trip details coll
   assert.equal(renderer.root.findAllByType('BottomPanel').length, 0);
   assert.equal(renderer.root.findAllByProps({ testID: 'driver-completion' }).length, 1);
   assert.equal(renderer.root.findAllByType('SuccessCelebration').length, 1, 'driver reuses the client success animation');
-  assert.match(textOf(renderer.root), /Заказ успешно.*Atlas.*Откуда.*A.*Куда.*B.*Общий путь.*4800.*Время в пути.*720.*Наличные.*Эконом.*321/s);
+  assert.match(textOf(renderer.root), /Заказ успешно.*Atlas.*Откуда.*A.*Куда.*B.*Общий путь.*4800.*Расчётное время в пути.*720.*Наличные.*Эконом.*321/s);
   assert.equal(button(renderer, 'Отправить'), undefined);
   await tap(renderer, 'Оценить пассажира');
   assert.match(textOf(renderer.root), /Как всё прошло/);
@@ -410,10 +531,11 @@ test('driver keeps contacts and the stage slider visible while trip details coll
 
 test('driver can skip feedback; a failed rating stays selected for retry', async t => {
   let renderer, done = 0, attempts = 0;
-  const order = { id: 'driver-completed', status: 'COMPLETED', pickup: point('A'), dropoff: point('B'), price: 100, distanceMeters: 200, durationSeconds: 60 };
+  const order = { id: 'driver-completed', status: 'COMPLETED', pickup: point('A'), dropoff: point('B'), price: 100, distanceMeters: 200, durationSeconds: 60, actualDurationSeconds: 420 };
   const props = { user: { role: 'DRIVER', language: 'ru' }, order, offer: null, busy: false, coming: false, onAccept() {}, onRateClient: async () => ++attempts > 1, onOnline() {}, onAction() {}, onChat() {}, onDone() { done++; } };
   await act(async () => { renderer = create(React.createElement(DriverPanel, props)); });
   t.after(async () => act(async () => renderer.unmount()));
+  assert.match(textOf(renderer.root), /Время в пути420/);
   await tap(renderer, 'Оценить пассажира');
   assert.ok(button(renderer, 'Пропустить'));
   assert.equal(attempts, 0);
@@ -550,7 +672,8 @@ test('driver navigation keeps only the turn cue above the map', async t => {
   assert.equal(cue.props.style[0].width, 250);
   assert.match(textOf(cue), /30 м/);
   assert.doesNotMatch(textOf(cue), /490 м|1 мин|прибытие/);
-  assert.ok(button(renderer, 'Голосовые подсказки'));
+  assert.equal(button(renderer, 'Голосовые подсказки'), undefined);
+  assert.equal(button(renderer, 'Проверить голос'), undefined);
 });
 
 test('dark driver navigation keeps the turn cue and GPS notice readable', async t => {
@@ -566,7 +689,7 @@ test('dark driver navigation keeps the turn cue and GPS notice readable', async 
   assert.ok(renderer.root.findAllByType('Path').some(node => node.props.stroke === '#050505'));
   const notice = button(renderer, 'Проверить местоположение');
   assert.equal(notice.props.style[1].backgroundColor, '#1D1D1D');
-  assert.ok(renderer.root.findAllByType('Text').some(node => textOf(node) === 'Показать водителя' && node.props.style[1].color === '#FFFFFF'));
+  assert.equal(button(renderer, 'Показать водителя'), undefined, 'recenter belongs in the map corner, not under navigation instructions');
 });
 
 test('delivery redesign has two price choices, a payment selector and only three details', () => {
@@ -581,7 +704,7 @@ test('delivery redesign has two price choices, a payment selector and only three
   assert.match(source, /Запланировать поездку/);
   assert.match(source, /От двери до двери/);
   assert.match(source, /Комментарий водителю/);
-  assert.match(source, /serviceImage: \{ width: '100%', height: 83 \}/);
+  assert.match(source, /serviceImageFrame: \{ width: '100%', height: 83/);
   assert.match(source, /car-economy\.png/);
   assert.doesNotMatch(source, /delivery-van-blue\.png/);
   assert.doesNotMatch(source, /taxi-yellow\.png/);
@@ -610,4 +733,33 @@ test('delivery payment and simplified details open from the new main panel', asy
   assert.equal(renderer.root.findByType('BottomPanel').props.expanded, undefined);
   assert.match(textOf(renderer.root), /Запланировать поездку.*От двери до двери.*Комментарий водителю/);
   assert.doesNotMatch(textOf(renderer.root), /Тип кузова|Грузчики|Что нужно доставить/);
+});
+
+test('delivery comment stays outside scroll and collapsed details; hidden root releases map inset', async t => {
+  let renderer;
+  const heights = [];
+  const offer = { id: 'delivery-comment', kind: 'DELIVERY_CAR', status: 'SEARCHING', pickup: point('A'), dropoff: point('B'), price: 100, distanceMeters: 1000, durationSeconds: 120, tariff: { name: 'Доставка' }, comment: 'Коробка кийим', deliveryDetails: { goodsDescription: 'Доставка', doorToDoor: true } };
+  const props = { order: null, offer, user: { role: 'DRIVER', language: 'ru' }, busy: false, coming: false, onHeight: height => heights.push(height), onAccept() {}, onRateClient: async () => true, onOnline() {}, onAction() {}, onChat() {}, onDone() {} };
+  await act(async () => { renderer = create(React.createElement(DriverPanel, props)); });
+  t.after(async () => { await act(async () => renderer.unmount()); });
+  const root = () => renderer.root.findAllByType('AnimatedView').find(node => node.props.accessibilityElementsHidden !== undefined);
+  await act(async () => root().props.onLayout({ nativeEvent: { layout: { height: 500 } } }));
+  assert.equal(heights.at(-1), 500);
+  assert.equal(renderer.root.findByProps({ testID: 'driver-trip-details' }).findAllByProps({ testID: 'driver-client-comment' }).length, 0);
+  assert.equal(renderer.root.findAllByType('Text').filter(node => textOf(node) === 'Доставка').length, 1);
+  assert.match(textOf(renderer.root), /От двери до двери/);
+  await tap(renderer, 'Свернуть детали доставки');
+  assert.equal(renderer.root.findAllByProps({ testID: 'driver-trip-details' }).length, 0);
+  assert.match(textOf(renderer.root.findByProps({ testID: 'driver-compact-summary' })), /Доставка.*От двери до двери.*100/);
+  assert.match(textOf(renderer.root.findByProps({ testID: 'driver-client-comment' })), /Коробка кийим/);
+  const sheetGesture = renderer.root.findAllByType('PanGestureHandler')[0];
+  await act(async () => sheetGesture.props.onHandlerStateChange({ nativeEvent: { state: 5, translationY: -85, velocityY: -200 } }));
+  assert.equal(renderer.root.findAllByProps({ testID: 'driver-trip-details' }).length, 1);
+  await act(async () => sheetGesture.props.onHandlerStateChange({ nativeEvent: { state: 5, translationY: 85, velocityY: 200 } }));
+  assert.equal(renderer.root.findAllByProps({ testID: 'driver-trip-details' }).length, 0);
+  await tap(renderer, 'Комментарий заказчика');
+  assert.equal(heights.at(-1), 0);
+  assert.match(textOf(renderer.root.findByType('BottomPanel')), /Комментарий заказчика/);
+  await tap(renderer, 'Готово');
+  assert.equal(heights.at(-1), 500);
 });

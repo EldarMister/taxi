@@ -2,12 +2,12 @@ import * as Device from 'expo-device';
 import Constants from 'expo-constants';
 import * as Notifications from 'expo-notifications';
 import * as SecureStore from 'expo-secure-store';
-import { Linking, Platform } from 'react-native';
+import { AppState, Linking, Platform } from 'react-native';
 import { driverSounds } from './driverSounds';
 
 Notifications.setNotificationHandler({
   // Foreground driver audio is sequenced by the shared event ledger, not both push and socket.
-  handleNotification: async () => ({ shouldShowBanner: true, shouldShowList: true, shouldPlaySound: !driverSounds.isDriver(), shouldSetBadge: false }),
+  handleNotification: async () => ({ shouldShowBanner: true, shouldShowList: true, shouldPlaySound: !driverSounds.isDriver() || AppState.currentState !== 'active', shouldSetBadge: false }),
 });
 export async function configureNotificationChannels(): Promise<void> {
   if (Platform.OS !== 'android') return;
@@ -65,7 +65,9 @@ async function registerPush(): Promise<string | null> {
   const generation = pushGeneration;
   const permission = await getNotificationPermissionState();
   if (!permission.granted || !Device.isDevice) return null;
-  const projectId = process.env.EXPO_PUBLIC_EAS_PROJECT_ID || Constants.expoConfig?.extra?.eas?.projectId || Constants.easConfig?.projectId;
+  // The shared .env may contain the client's legacy project ID. The packaged
+  // app config is variant-specific and must win for driver push tokens.
+  const projectId = Constants.expoConfig?.extra?.eas?.projectId || Constants.easConfig?.projectId || process.env.EXPO_PUBLIC_EAS_PROJECT_ID;
   if (!projectId) return null;
   let timeout: ReturnType<typeof setTimeout> | undefined;
   let result: { data: string };
@@ -78,12 +80,16 @@ async function registerPush(): Promise<string | null> {
   if (generation !== pushGeneration) return null;
   const { api } = await import('../api');
   if (!api.getTokens() || generation !== pushGeneration) return null;
-  await SecureStore.setItemAsync(PUSH_TOKEN_KEY, result.data);
+  const previous = await SecureStore.getItemAsync(PUSH_TOKEN_KEY);
   if (generation !== pushGeneration) return null;
   const operation = api.request('/users/me/push-token', { method: 'POST', body: JSON.stringify({ token: result.data, platform: Platform.OS }) });
   registrationNetwork = operation;
   try { await operation; }
   finally { if (registrationNetwork === operation) registrationNetwork = undefined; }
+  if (generation !== pushGeneration) return null;
+  await SecureStore.setItemAsync(PUSH_TOKEN_KEY, result.data);
+  if (previous && previous !== result.data && generation === pushGeneration)
+    void api.request('/users/me/push-token', { method: 'DELETE', body: JSON.stringify({ token: previous }) }).catch(() => undefined);
   return result.data;
 }
 

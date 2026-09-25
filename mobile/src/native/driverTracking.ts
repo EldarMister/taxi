@@ -6,7 +6,9 @@ import { Alert, AppState, Linking, Platform } from 'react-native';
 import { api, ApiError } from '../api';
 import { isRoleAllowed } from '../appVariant';
 import type { DriverLocationUpdate, Language, Order, Point } from '../types';
-import { DrivingRoute, NavigationFix, NavigationProgress, PreparedRoute, PreviousRouteProgress, bestVoiceForLanguage, distanceBetween, guidanceCue, navigationConfig, navigationDestination, prepareRoute, routeProgress, usableNavigationFix } from '../navigation';
+import { DrivingRoute, NavigationFix, NavigationProgress, PreparedRoute, PreviousRouteProgress, bestVoiceForLanguage, distanceBetween, guidanceCue, interpolateBearing, navigationConfig, navigationDestination, normalizeBearing, offRouteThreshold, prepareRoute, routeProgress, usableNavigationFix } from '../navigation';
+import { routeVoice } from './routeVoice';
+import { snapCarToRoad, trackingRoadWindow } from './roadMatch';
 
 const inForeground = () => AppState.currentState === 'active';
 const TASK = 'taxigo-driver-active-trip-v1';
@@ -45,6 +47,9 @@ let previous: PreviousRouteProgress | undefined;
 let bgRouteVersion = 0;
 let latestBgProgress: NavigationProgress | null = null;
 let lastReliableFix: NavigationFix | null = null;
+let activeTrackingRoute: DrivingRoute | null = null;
+let activeRouteAlong: number | undefined;
+let stableHeading: number | undefined;
 let lastRawFix: NavigationFix | null = null;
 let pendingJump: NavigationFix | null = null;
 let stationaryCandidate: NavigationFix | null = null;
@@ -60,11 +65,13 @@ let diagnosticMode: 'off' | 'freeze' | 'replay' = 'off';
 let recording = false;
 let recordedFixes: NavigationFix[] = [];
 let replayTimer: ReturnType<typeof setTimeout> | null = null;
-const diagnosticsAllowed = () => typeof __DEV__ !== 'undefined' && __DEV__
-  && typeof process !== 'undefined' && process.env.EXPO_PUBLIC_TRACKING_DIAGNOSTICS === '1'
+const diagnosticsAllowed = () => typeof process !== 'undefined' && process.env.EXPO_PUBLIC_TRACKING_DIAGNOSTICS === '1'
   && isRoleAllowed('DRIVER');
 const activeOrder = (order: Session['order'] | null | undefined) => !!order && ['ASSIGNED', 'ARRIVED', 'IN_PROGRESS'].includes(order.status);
 function resetGuidance() { bgRoute = null; previous = undefined; latestBgProgress = null; bgRouteVersion++; spoken.clear(); pendingSpeech = null; speaking = false; lastRoute = 0; offRoute = 0; selectedVoice = undefined; }
+export function setDriverTrackingRoute(route: DrivingRoute | null) {
+  if (activeTrackingRoute !== route) { activeTrackingRoute = route; activeRouteAlong = undefined; }
+}
 export function subscribeDriverFix(listener: (fix: NavigationFix) => void) { listeners.add(listener); return () => { listeners.delete(listener); }; }
 export function getDriverTrackingDiagnostics() {
   return { raw: lastRawFix, processed: lastReliableFix, ageMs: lastReliableFix ? Date.now() - lastReliableFix.timestamp : null,
@@ -137,7 +144,8 @@ export async function setDriverTrackingSession(next: Session | null) {
   if (key !== old) {
     stopDriverGpsDiagnostic();
     generation++; lastSent = 0; lastReliableFix = null; lastRawFix = null; pendingJump = null; stationaryCandidate = null;
-    stationaryCount = 0; queuedFix = null; sending = false; sendingVersion = null; transportStatus = 'idle'; resetGuidance();
+    stationaryCount = 0; queuedFix = null; sending = false; sendingVersion = null; transportStatus = 'idle';
+    activeTrackingRoute = null; activeRouteAlong = undefined; stableHeading = undefined; resetGuidance();
   }
   else if (guidanceKey !== previousGuidanceKey) {
     generation++; lastSent = 0; sending = false; sendingVersion = null; queuedFix = null; resetGuidance();
@@ -191,8 +199,8 @@ export async function startDriverBackgroundTracking(): Promise<boolean> {
 export async function requestDriverBackgroundAccess(): Promise<boolean> {
   if (Platform.OS === 'web' || !isRoleAllowed('DRIVER')) return false;
   if ((await Location.getBackgroundPermissionsAsync()).granted) return true;
-  const proceed = await new Promise<boolean>(resolve => Alert.alert('Навигация в фоне',
-    'Во время активной поездки Atlas pro использует геолокацию с выключенным экраном: озвучивает повороты и показывает вашу машину только вашему пассажиру. В настройках выберите «Разрешить всегда».',
+  const proceed = await new Promise<boolean>(resolve => Alert.alert('Геолокация в фоне',
+    'Когда вы на линии, Atlas pro обновляет ваше местоположение с выключенным экраном, чтобы находить заказы рядом. Во время поездки это также нужно для навигации. В настройках выберите «Разрешить всегда».',
     [{ text: 'Позже', style: 'cancel', onPress: () => resolve(false) }, { text: 'Продолжить', onPress: () => resolve(true) }], { cancelable: true, onDismiss: () => resolve(false) }));
   if (!proceed) return false;
   const permission = await Location.getBackgroundPermissionsAsync();
@@ -207,18 +215,19 @@ async function backgroundGuidance(fix: NavigationFix, current: Session, version:
   const language = current.language || 'ru';
   const key = `${current.order.id}:${current.order.status}:${language}`;
   if (bgSession !== key) { bgSession = key; resetGuidance(); }
-  if (!bgRoute && Date.now() - lastRoute >= 15000) {
+  if (!bgRoute && Date.now() - lastRoute >= 3500) {
     lastRoute = Date.now();
     const route = await api.post<DrivingRoute>('/routes', { pickup: { latitude: fix.latitude, longitude: fix.longitude, address: 'Положение водителя' }, dropoff: target, language });
     if (version !== generation || inForeground()) return;
-    bgRoute = prepareRoute(route); previous = { along: 0, timestamp: fix.timestamp }; bgRouteVersion++; latestBgProgress = null; spoken.clear();
+    bgRoute = prepareRoute(route); setDriverTrackingRoute(bgRoute.route);
+    previous = { along: 0, timestamp: fix.timestamp }; bgRouteVersion++; latestBgProgress = null; spoken.clear();
   }
   if (!bgRoute || version !== generation || inForeground()) return;
   const progress = routeProgress(bgRoute, fix, previous, language);
-  if (progress.offRouteMeters > navigationConfig.offRouteMeters) {
-    offRoute = progress.offRouteMeters > Math.max(navigationConfig.offRouteMeters, fix.accuracy * 2) ? offRoute + 1 : 0;
-    if (offRoute >= navigationConfig.rerouteFixes && Date.now() - lastRoute >= 15000) { bgRoute = null; previous = undefined; latestBgProgress = null; }
-    pendingSpeech = null; speaking = false; await Speech.stop(); return;
+  if (progress.offRouteMeters > offRouteThreshold(fix.accuracy)) {
+    offRoute++;
+    if (offRoute >= navigationConfig.rerouteFixes && Date.now() - lastRoute >= 3500) { bgRoute = null; previous = undefined; latestBgProgress = null; }
+    pendingSpeech = null; speaking = false; await routeVoice.stop(); return;
   }
   offRoute = 0; previous = { along: progress.along, timestamp: fix.timestamp, stepIndex: progress.stepIndex,
     pendingStepIndex: progress.pendingStepIndex, pendingStepCount: progress.pendingStepCount };
@@ -229,7 +238,7 @@ async function backgroundGuidance(fix: NavigationFix, current: Session, version:
     selectedVoice ??= Speech.getAvailableVoicesAsync().then(voices => bestVoiceForLanguage(voices, language)).catch(() => undefined);
     const voice = await selectedVoice;
     if (version !== generation || inForeground() || !session?.voice || routeVersion !== bgRouteVersion) return;
-    if (speaking) await Speech.stop();
+    if (speaking) await routeVoice.stop();
     if (version !== generation || inForeground() || !session?.voice || routeVersion !== bgRouteVersion) return;
     const liveFix = lastReliableFix;
     if (!usableNavigationFix(liveFix) || Date.now() - liveFix.timestamp > 15_000 || !bgRoute) return;
@@ -238,10 +247,10 @@ async function backgroundGuidance(fix: NavigationFix, current: Session, version:
     const refreshedCue = refreshedProgress && guidanceCue(refreshedProgress, language, routeVersion, legIndex);
     if (!refreshedCue || refreshedCue.key !== cue.key || spoken.has(refreshedCue.key)) return;
     pendingSpeech = { key: cue.key, at: Date.now() }; speaking = true;
-    Speech.speak(refreshedCue.text, { language: language === 'ky' ? 'ky-KG' : Platform.OS === 'android' ? 'ru' : 'ru-RU', voice, rate: .9, volume: 1, useApplicationAudioSession: false,
+    routeVoice.speak(refreshedCue.text, { language, systemVoice: voice,
       onStart: () => {
         if (version !== generation || routeVersion !== bgRouteVersion || !usableNavigationFix(lastReliableFix)
-          || Date.now() - lastReliableFix.timestamp > 15_000) { void Speech.stop(); return; }
+          || Date.now() - lastReliableFix.timestamp > 15_000) { void routeVoice.stop(); return; }
         spoken.add(cue.key);
         for (const key of refreshedCue.supersedes) spoken.add(key);
         pendingSpeech = null;
@@ -277,16 +286,21 @@ export async function reportDriverPosition(fix: NavigationFix) {
   const payload: DriverLocationUpdate | Record<string, unknown> = current.order.assignmentId ? {
     schemaVersion: 1, orderId: current.order.id, assignmentId: current.order.assignmentId,
     trackingSessionId: current.trackingSessionId, trackingStartedAtMs: current.trackingStartedAt, sequence,
-    latitude: fix.latitude, longitude: fix.longitude, accuracyM: fix.accuracy,
+    latitude: fix.snappedLatitude ?? fix.latitude, longitude: fix.snappedLongitude ?? fix.longitude, accuracyM: fix.accuracy,
     speedMps: fix.speed ?? null, courseDeg: fix.heading ?? null, measuredAtMs: fix.timestamp,
-  } : { ...fix, driverId: current.userId, tripId: current.order.id,
+    ...(fix.matched ? { routeIndex: fix.routeIndex, routeProgress: fix.routeProgress,
+      distanceToRoute: fix.distanceToRoute, matched: true, matchedPath: fix.matchedPath } : {}),
+  } : { latitude: fix.snappedLatitude ?? fix.latitude, longitude: fix.snappedLongitude ?? fix.longitude,
+    timestamp: fix.timestamp, accuracy: fix.accuracy, heading: fix.heading, speed: fix.speed,
+    ...(fix.matched ? { matched: true, matchedPath: fix.matchedPath, routeIndex: fix.routeIndex,
+      routeProgress: fix.routeProgress, distanceToRoute: fix.distanceToRoute } : {}),
+    driverId: current.userId, tripId: current.order.id,
     trackingSessionId: current.trackingSessionId, trackingStartedAt: current.trackingStartedAt, sequence, measuredAt: fix.timestamp,
     accuracyM: fix.accuracy,
     ...(fix.speed != null ? { speedMps: fix.speed } : {}),
     ...(fix.heading != null ? { bearingDeg: fix.heading } : {}) };
   storage = storage.catch(() => undefined).then(() => SecureStore.setItemAsync(KEY, JSON.stringify(current))).catch(() => undefined);
   try {
-    await storage;
     if (version !== generation || diagnosticMode !== 'off') return;
     const result = await api.patch<Reply>(`/orders/${current.order.id}/driver-location`, payload);
     if (version === generation) transportStatus = 'connected';
@@ -299,7 +313,7 @@ export async function reportDriverPosition(fix: NavigationFix) {
   } catch (error) {
     if (version === generation) transportStatus = 'delayed';
     if (version === generation && error instanceof ApiError && [401, 403, 404].includes(error.status)) {
-      await setDriverTrackingSession(null); await Speech.stop();
+      await setDriverTrackingSession(null); await routeVoice.stop();
     }
     // No replay queue: stale positions must not move the car backwards on reconnect.
   } finally {
@@ -374,6 +388,29 @@ export function ingestDriverLocation(raw: NavigationFix, report = true, diagnost
   pendingJump = null;
   stationaryCandidate = fix === raw ? null : raw;
   if (fix === raw) stationaryCount = 0;
+  if (lastReliableFix && fix.timestamp > lastReliableFix.timestamp && fix !== lastReliableFix) {
+    const movement = distanceBetween(lastReliableFix, fix);
+    const speed = fix.speed ?? (movement / Math.max(.5, (fix.timestamp - lastReliableFix.timestamp) / 1000));
+    const alpha = fix.accuracy > 30 ? .22 : speed > 3 ? .8 : speed > 1 ? .55 : .3;
+    if (movement < Math.max(70, fix.accuracy * 2)) fix = { ...fix,
+      latitude: lastReliableFix.latitude + (fix.latitude - lastReliableFix.latitude) * alpha,
+      longitude: lastReliableFix.longitude + (fix.longitude - lastReliableFix.longitude) * alpha };
+  }
+  const forwardWindow = lastReliableFix ? Math.max(180, Math.min(1000,
+    (fix.timestamp - lastReliableFix.timestamp) / 1000 * 55)) : 180;
+  const match = activeTrackingRoute?.geometry && snapCarToRoad(fix, activeTrackingRoute.geometry, activeRouteAlong, forwardWindow);
+  if (match) {
+    activeRouteAlong = match.along;
+    fix = { ...fix, snappedLatitude: match.latitude, snappedLongitude: match.longitude,
+      routeAlong: match.along, routeIndex: match.segmentIndex, routeProgress: match.progress,
+      distanceToRoute: match.distance, matched: true,
+      matchedPath: trackingRoadWindow(activeTrackingRoute!.geometry, match.along) };
+  } else if (activeTrackingRoute) fix = { ...fix, matched: false };
+  const speed = fix.speed ?? 0;
+  const course = match && speed >= 1 ? match.heading : speed >= 1.5 && fix.heading != null ? fix.heading : undefined;
+  if (course != null) stableHeading = stableHeading == null ? normalizeBearing(course)
+    : interpolateBearing(stableHeading, course, speed > 3 ? .45 : .2);
+  fix = { ...fix, heading: stableHeading ?? fix.heading };
   lastReliableFix = fix;
   lastDropReason = '';
   listeners.forEach(listener => listener(fix));
@@ -398,7 +435,7 @@ TaskManager.defineTask<{ locations: Location.LocationObject[] }>(TASK, async ({ 
       ...(c.heading != null && c.heading >= 0 ? { heading: c.heading } : {}), ...(c.speed != null && c.speed >= 0 ? { speed: c.speed } : {}) };
     fix = ingestDriverLocation(rawFix, false) || fix;
   }
-  if (!fix) { if (!inForeground()) await Speech.stop(); return; }
+  if (!fix) { if (!inForeground()) await routeVoice.stop(); return; }
   const current = session, version = generation;
   await Promise.allSettled([
     reportDriverPosition(fix),

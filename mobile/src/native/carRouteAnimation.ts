@@ -85,6 +85,31 @@ export function trustedCarDirectPath(previous: CarFix, current: CarFix, rendered
   return { points, cumulativeMeters: [0, totalMeters], totalMeters };
 }
 
+/** Interpolate confirmed driver positions only on the driver's own road section. */
+export function matchedCarRoutePath(previous: CarFix, current: CarFix, rendered: CarPoint,
+  route: CarPoint[], intervalMs: number): CarRoutePath | null {
+  if (!valid(previous) || !valid(current) || !valid(rendered) || route.length < 2 || route.length > 128
+    || !route.every(valid) || intervalMs < 200 || intervalMs > 15000
+    || previous.measuredAtMs != null && current.measuredAtMs != null && current.measuredAtMs <= previous.measuredAtMs) return null;
+  const cumulative = [0];
+  for (let i = 1; i < route.length; i++) cumulative.push(cumulative[i - 1] + carMetresBetween(route[i - 1], route[i]));
+  const before = uniqueProjection(previous, route, cumulative, 1);
+  const start = uniqueProjection(rendered, route, cumulative, 1);
+  const end = uniqueProjection(current, route, cumulative, 1);
+  if (!before || !start || !end || end.along <= before.along || end.along <= start.along
+    || start.along > before.along + 3 || before.along - start.along > 80) return null;
+  const points: CarPoint[] = [rendered];
+  for (let i = 1; i < route.length - 1; i++) {
+    if (cumulative[i] > start.along + .001 && cumulative[i] < end.along - .001) points.push(route[i]);
+  }
+  points.push(current);
+  const cumulativeMeters = [0];
+  for (let i = 1; i < points.length; i++) cumulativeMeters.push(cumulativeMeters[i - 1] + carMetresBetween(points[i - 1], points[i]));
+  const totalMeters = cumulativeMeters[cumulativeMeters.length - 1];
+  if (totalMeters < 1 || totalMeters > Math.min(350, intervalMs / 1000 * 55 + 20)) return null;
+  return { points, cumulativeMeters, totalMeters };
+}
+
 export function sampleCarRoutePath(path: CarRoutePath, fraction: number): CarPoint {
   const distance = Math.max(0, Math.min(1, fraction)) * path.totalMeters;
   let index = 1;

@@ -15,10 +15,12 @@ export function routeFrame(points: MapPoint[], width: number, height: number, to
   const west = Math.min(...longitude), east = Math.max(...longitude);
   const latMargin = north === south ? 0.0003 : 0;
   const lonMargin = east === west ? 0.0003 : 0;
+  const top = Math.min(Math.max(0, topInset) + 68, Math.max(0, height) * .44);
+  const bottom = Math.min(Math.max(0, bottomInset) + 48, Math.max(0, height - top - 100));
   return {
     ne: [Math.min(180, east + lonMargin), Math.max(-85, Math.min(85, north + latMargin))],
     sw: [Math.max(-180, west - lonMargin), Math.max(-85, Math.min(85, south - latMargin))],
-    padding: [Math.min(Math.max(0, topInset) + 68, Math.max(0, height) * .44), Math.min(36, Math.max(0, width) * .1), Math.min(Math.max(0, bottomInset) + 48, Math.max(0, height) * .44), Math.min(36, Math.max(0, width) * .1)],
+    padding: [top, Math.min(96, Math.max(0, width) * .24), bottom, Math.min(96, Math.max(0, width) * .24)],
   };
 }
 

@@ -121,7 +121,7 @@ export const api = {
       throw error;
     }
   },
-  post<T>(path: string, body: unknown = {}) { return api.request<T>(path, { method: 'POST', body: JSON.stringify(body) }); },
+  post<T>(path: string, body: unknown = {}, options: { signal?: AbortSignal } = {}) { return api.request<T>(path, { method: 'POST', body: JSON.stringify(body), signal: options.signal }); },
   upload<T>(path: string, body: FormData) { return api.request<T>(path, { method: 'POST', body }); },
   patch<T>(path: string, body: unknown) { return api.request<T>(path, { method: 'PATCH', body: JSON.stringify(body) }); },
 };
