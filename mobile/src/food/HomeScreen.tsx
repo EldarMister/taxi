@@ -6,6 +6,8 @@ import { SpringPressable } from '../design/motion';
 import { useTheme } from '../design/theme';
 import { fonts } from '../design/typography';
 import { Icon, tr } from '../ui';
+import { shortAddress } from '../address';
+import type { SavedPlaceKind, SavedPlaces } from '../savedPlaces';
 import type { Language } from '../types';
 import { BannerCarousel } from './BannerCarousel';
 import { useFoodStyles } from './foodTheme';
@@ -16,6 +18,9 @@ type Props = {
   onTaxi: () => void;
   onTruck: () => void;
   onSearch: () => void;
+  savedPlaces: SavedPlaces;
+  onSavedPlace: (kind: SavedPlaceKind) => void;
+  onEditSavedPlace: (kind: SavedPlaceKind) => void;
   onFood: () => void;
   onBanner: (banner: HomeBanner) => void;
   banners: HomeBanner[];
@@ -29,6 +34,9 @@ const NAVY = '#111B38';
 const MUTED = '#50678A';
 const BLUE = '#1B75E6';
 const SEARCH_PROMPT = 'Куда поедем?';
+const savedPlaceLabel = (address: string) => shortAddress(address)
+  .replace(/^(улица|ул\.?|проспект|пр-т)\s+/i, '')
+  .replace(/,\s*(Бишкек|Ош)$/i, '');
 const WRITE_STEP_MS = 135;
 const FULL_PROMPT_PAUSE_MS = 3400;
 
@@ -104,17 +112,17 @@ function ServiceCard({ title, description, source, colors, onPress, comingSoon, 
   return <SpringPressable accessibilityRole="button" accessibilityLabel={title} onPress={onPress} pressScale={.965} containerStyle={styles.serviceTouch} style={{ flex: 1 }}>{card}</SpringPressable>;
 }
 
-function SavedPlace({ icon, title, onPress, language = 'ru' }: { icon: React.ComponentProps<typeof Icon>['name']; title: string; onPress: () => void; language?: Language }) {
+function SavedPlace({ icon, title, point, onPress, onEdit, language = 'ru' }: { icon: React.ComponentProps<typeof Icon>['name']; title: string; point?: string; onPress: () => void; onEdit?: () => void; language?: Language }) {
   const theme = useTheme();
   const styles = useFoodStyles(baseStyles);
-  return <SpringPressable accessibilityRole="button" accessibilityLabel={`${title}: ${tr(language)('добавить адрес')}`} onPress={onPress} pressScale={.94} containerStyle={styles.placeTouch} style={styles.place}>
+  return <SpringPressable accessibilityRole="button" accessibilityLabel={`${title}: ${point || tr(language)('добавить адрес')}`} accessibilityHint={point ? tr(language)('Удерживайте, чтобы изменить адрес') : undefined} onPress={onPress} onLongPress={onEdit} pressScale={.94} containerStyle={styles.placeTouch} style={styles.place}>
     <View style={styles.placeIcon}><Icon name={icon} color={theme.isDark ? theme.palette.ink : '#2D5E99'} size={25}/></View>
     <Text style={styles.placeTitle}>{title}</Text>
-    <Text style={styles.placeAction}>{tr(language)('Добавить')}</Text>
+    <Text style={[styles.placeAction, !!point && styles.placeAddress]} numberOfLines={point ? 2 : 1}>{point || tr(language)('Добавить')}</Text>
   </SpringPressable>;
 }
 
-export function ServiceHomeScreen({ language = 'ru', onTaxi, onTruck, onSearch, onFood, onBanner, banners, onMenu, onOrders, hasOrder, active }: Props) {
+export function ServiceHomeScreen({ language = 'ru', onTaxi, onTruck, onSearch, savedPlaces, onSavedPlace, onEditSavedPlace, onFood, onBanner, banners, onMenu, onOrders, hasOrder, active }: Props) {
   const t = tr(language);
   const theme = useTheme();
   const styles = useFoodStyles(baseStyles);
@@ -148,8 +156,8 @@ export function ServiceHomeScreen({ language = 'ru', onTaxi, onTruck, onSearch, 
       </View>
 
       <View style={[styles.places, compact && styles.placesCompact]}>
-        <SavedPlace language={language} icon="home" title={t('Дом')} onPress={onSearch}/>
-        <SavedPlace language={language} icon="briefcase" title={t('Работа')} onPress={onSearch}/>
+        <SavedPlace language={language} icon="home" title={t('Дом')} point={savedPlaces.home ? savedPlaceLabel(savedPlaces.home.address) : undefined} onPress={() => onSavedPlace('home')} onEdit={() => onEditSavedPlace('home')}/>
+        <SavedPlace language={language} icon="briefcase" title={t('Работа')} point={savedPlaces.work ? savedPlaceLabel(savedPlaces.work.address) : undefined} onPress={() => onSavedPlace('work')} onEdit={() => onEditSavedPlace('work')}/>
         <SavedPlace language={language} icon="star" title={t('Избранное')} onPress={onSearch}/>
       </View>
 
@@ -202,10 +210,11 @@ const baseStyles = StyleSheet.create({
   places: { flexDirection: 'row', justifyContent: 'space-between', paddingHorizontal: 3 },
   placesCompact: { transform: [{ scale: .9 }] },
   placeTouch: { flex: 1 },
-  place: { alignItems: 'center', paddingVertical: 5 },
+  place: { alignItems: 'center', paddingVertical: 5, paddingHorizontal: 3 },
   placeIcon: { width: 57, height: 57, borderRadius: 29, backgroundColor: '#E1F0FF', alignItems: 'center', justifyContent: 'center' },
   placeTitle: { fontFamily: fonts.bold, color: NAVY, fontSize: 15, lineHeight: 20, marginTop: 9 },
-  placeAction: { fontFamily: fonts.regular, color: '#356496', fontSize: 14, lineHeight: 19 },
+  placeAction: { fontFamily: fonts.regular, color: '#356496', fontSize: 14, lineHeight: 19, maxWidth: '100%' },
+  placeAddress: { fontSize: 11, lineHeight: 14, textAlign: 'center' },
   activeOrder: { flexDirection: 'row', gap: 12, alignItems: 'center', borderRadius: 16, backgroundColor: '#FFFFFF', padding: 14 },
   activeOrderTitle: { color: NAVY, fontFamily: fonts.semibold, fontSize: 14 },
   activeOrderCaption: { color: MUTED, fontFamily: fonts.regular, fontSize: 12 },

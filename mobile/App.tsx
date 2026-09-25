@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
+  Alert,
   AppState,
   BackHandler,
   Modal,
@@ -46,6 +47,7 @@ import { PermissionOnboarding } from "./src/PermissionOnboarding";
 import { WrongAppScreen } from "./src/WrongAppScreen";
 import { appVariant, isRoleAllowed } from "./src/appVariant";
 import { FoodExperience, FoodEntry } from "./src/food/FoodExperience";
+import { readSavedPlaces, writeSavedPlaces, type SavedPlaceKind, type SavedPlaces } from "./src/savedPlaces";
 import {
   Avatar,
   Button,
@@ -173,6 +175,9 @@ function TaxiApp() {
   const pickupChosenManuallyRef = useRef(false);
   const markManualPickup = (value: boolean) => { pickupChosenManuallyRef.current = value; setPickupChosenManually(value); };
   const [dropoff, setDropoff] = useState<Point | null>(null);
+  const [savedPlaces, setSavedPlaces] = useState<SavedPlaces>({});
+  const [savedPlaceEditing, setSavedPlaceEditing] = useState<SavedPlaceKind | null>(null);
+  const savedPlaceMapTransition = useRef(false);
   const [addressField, setAddressField] = useState<"pickup" | "dropoff" | null>(
     null,
   );
@@ -205,6 +210,14 @@ function TaxiApp() {
   const driver = user?.role === "DRIVER";
   const showingServices = !driver && page === 'home' && service === 'hub' && !order;
   const locationEnabled = !!locationPermission?.granted && locationPermission.servicesEnabled;
+  useEffect(() => {
+    setSavedPlaces({});
+    setSavedPlaceEditing(null);
+    if (!user?.id || driver) return;
+    let live = true;
+    void readSavedPlaces(user.id).then(places => { if (live) setSavedPlaces(places); }).catch(() => undefined);
+    return () => { live = false; };
+  }, [user?.id, driver]);
   useEffect(() => { setSearchCenter(null); }, [user?.id]);
   useEffect(() => {
     if (!addressField || !locationEnabled || searchCenter) return;
@@ -684,6 +697,34 @@ function TaxiApp() {
     longitude: point.longitude,
     address: `GPS: ${point.latitude.toFixed(5)}, ${point.longitude.toFixed(5)}`,
   });
+  const persistSavedPlace = async (kind: SavedPlaceKind, point: Point) => {
+    if (!user || user.role !== 'CLIENT') return;
+    const places = { ...savedPlaces, [kind]: normalizePoint(point) };
+    await writeSavedPlaces(user.id, places);
+    if (userRef.current?.id !== user.id) return;
+    setSavedPlaces(places);
+    setSavedPlaceEditing(null);
+    setMapField(null);
+    setAddressField(null);
+    setMapFocus(null);
+    setService('hub');
+  };
+  const editSavedPlace = (kind: SavedPlaceKind) => {
+    setSavedPlaceEditing(kind);
+    setAddressField('dropoff');
+    setError('');
+  };
+  const openSavedPlace = (kind: SavedPlaceKind) => {
+    if (savedPlaces[kind]) {
+      setDropoff(savedPlaces[kind]);
+      setAddressField(null);
+      setMapField(null);
+      setService('taxi');
+    } else {
+      editSavedPlace(kind);
+    }
+    setError('');
+  };
   const rememberPermissionStep = async (next: PermissionIntroState) => {
     if (!userRef.current) return;
     await writePermissionIntro(userRef.current.id, next);
@@ -813,7 +854,9 @@ function TaxiApp() {
     if (mapSelection) {
       const field = mapSelection;
       void run(async () => {
-        selectAddress(field, await resolvePoint(point));
+        const selected = await resolvePoint(point);
+        if (savedPlaceEditing) await persistSavedPlace(savedPlaceEditing, selected);
+        else selectAddress(field, selected);
       });
     }
   };
@@ -986,7 +1029,7 @@ function TaxiApp() {
       // Expanded panels own their back action, including unsaved text edits.
       if (addressField || chat || drawer) return false;
       if (showingServices) return false;
-      if (mapField) { setMapField(null); setMapFocus(null); return true; }
+      if (mapField) { setMapField(null); setMapFocus(null); if (savedPlaceEditing) { setSavedPlaceEditing(null); setService('hub'); } return true; }
       if (!driver && page === 'history' && historyDetailId) { setHistoryDetailId(null); return true; }
       if (page !== "home") { setPage("home"); return true; }
       if (!driver && !order && dropoff) { setDropoff(null); return true; }
@@ -994,7 +1037,7 @@ function TaxiApp() {
       return false;
     });
     return () => back.remove();
-  }, [addressField, chat, drawer, mapField, page, driver, order, dropoff, showingServices, historyDetailId]);
+  }, [addressField, chat, drawer, mapField, savedPlaceEditing, page, driver, order, dropoff, showingServices, historyDetailId]);
   const offer = (!order || ['CANCELLED', 'NO_DRIVER'].includes(order.status))
     ? offers.find(
         (item) =>
@@ -1006,7 +1049,7 @@ function TaxiApp() {
   const displayed = visibleDriverOrder || offer;
   const approachScope = driver && offer ? `offer:${offer.id}` : '';
   const approach = useApproachRoute(driver ? navigation.position : null, driver ? offer?.pickup : null, approachScope);
-  const mapRoutes = tripMapRoutes({ driver, order: visibleDriverOrder, offer, quote: service === 'delivery' ? deliveryQuote : quote, navigationRoute: navigation.route, approachRoute: approach.route });
+  const mapRoutes = tripMapRoutes({ driver, order: visibleDriverOrder, offer, quote: savedPlaceEditing ? null : service === 'delivery' ? deliveryQuote : quote, navigationRoute: navigation.route, approachRoute: approach.route });
   useEffect(() => {
     if (!driver || !offer || !order || !['CANCELLED', 'NO_DRIVER'].includes(order.status)) return;
     dismissedOrderIds.current.add(order.id);
@@ -1197,7 +1240,7 @@ function TaxiApp() {
               theme={theme}
               language={user.language}
               pickup={displayed?.pickup || pickup}
-              dropoff={displayed?.dropoff || dropoff}
+              dropoff={savedPlaceEditing ? savedPlaces[savedPlaceEditing] || null : displayed?.dropoff || dropoff}
               dropoffRouteLabel={driver && offer ? `${km(offer.distanceMeters)} · ${tripTime(offer.durationSeconds, user.language)}` : undefined}
               geometry={mapRoutes.geometry}
               approachGeometry={mapRoutes.approachGeometry}
@@ -1209,6 +1252,7 @@ function TaxiApp() {
               followDriver={driver && !offer && navigation.followDriver}
               onFollowDriverChange={navigation.setFollowDriver}
               selectionMode={mapSelection}
+              selectionTitle={savedPlaceEditing === 'home' ? 'Адрес дома' : savedPlaceEditing === 'work' ? 'Адрес работы' : undefined}
               browsePickup={browsingPickup}
               showUserPosition={locationEnabled && !driver}
               onUserLocation={point => setSearchCenter(previous => previous && Math.hypot(
@@ -1222,8 +1266,8 @@ function TaxiApp() {
               }}
               onPanelHeight={setMapPanelHeight}
               focusPoint={driver ? null : mapFocus}
-              onSearchPoint={() => { if (mapSelection) { setAddressField(mapSelection); setMapField(null); } }}
-              onEditPoint={!driver && !order ? setMapField : undefined}
+              onSearchPoint={() => { if (mapSelection) { setAddressField(mapSelection); setMapField(null); if (savedPlaceEditing) setService('hub'); } }}
+              onEditPoint={!driver && !order && !savedPlaceEditing ? setMapField : undefined}
               selecting={busy}
               contentTopInset={insets.top + (driver && order?.status === 'COMPLETED' ? 8 : navigation.active ? navigationHeight + 72 : driver && offer ? 130 : 64)}
               contentBottomInset={driver
@@ -1240,7 +1284,7 @@ function TaxiApp() {
                 <Text style={{ fontSize: 14, lineHeight: 19, color: palette.ink, fontWeight: "700", width: "100%", textAlign: "center", textShadowColor: palette.surface, textShadowRadius: 6 }} numberOfLines={1}>{shortAddress(pickup?.address) || t("Выберите место подачи")}</Text>
               </Pressable>
             )}
-            {mapSelection && <View style={{ position: "absolute", left: 17, bottom: mapPanelHeight + 48 }}><IconButton name="arrow-back" label={t("Назад")} onPress={() => { setMapField(null); setMapFocus(null); }}/></View>}
+            {mapSelection && <View style={{ position: "absolute", left: 17, bottom: mapPanelHeight + 48 }}><IconButton name="arrow-back" label={t("Назад")} onPress={() => { setMapField(null); setMapFocus(null); if (savedPlaceEditing) { setSavedPlaceEditing(null); setService('hub'); } }}/></View>}
             {!driver && !order && dropoff && !mapSelection && <View style={{ position: "absolute", left: 17, bottom: 48 }}><IconButton name="arrow-back" label={t("Назад")} onPress={() => setDropoff(null)}/></View>}
           </View>
           {driver && order?.status !== 'COMPLETED' && <View pointerEvents="none" style={{ flex: 1 }}/> }
@@ -1335,7 +1379,7 @@ function TaxiApp() {
         <View style={{ height: insets.bottom, backgroundColor: palette.surface }} />
       )}
       {!driver && <View pointerEvents={showingServices ? 'auto' : 'none'} style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, zIndex: 20, display: showingServices ? 'flex' : 'none' }}>
-        <FoodExperience key={user.id} userId={user.id} language={user.language} contentRevision={contentRevision} orderRevision={foodOrderRevision} active={showingServices} entry={foodEntry} defaultAddress={pickup?.address || ''} onTaxi={() => { setService('taxi'); setError(''); }} onTruck={() => { setDeliveryKind('DELIVERY_TRUCK'); setService('delivery'); setError(''); }} onTaxiSearch={() => { setService('taxi'); setAddressField('dropoff'); setError(''); }} onMenu={() => setDrawer(true)} />
+        <FoodExperience key={user.id} userId={user.id} language={user.language} contentRevision={contentRevision} orderRevision={foodOrderRevision} active={showingServices} entry={foodEntry} defaultAddress={pickup?.address || ''} savedPlaces={savedPlaces} onSavedPlace={openSavedPlace} onEditSavedPlace={editSavedPlace} onTaxi={() => { setService('taxi'); setError(''); }} onTruck={() => { setDeliveryKind('DELIVERY_TRUCK'); setService('delivery'); setError(''); }} onTaxiSearch={() => { setService('taxi'); setAddressField('dropoff'); setError(''); }} onMenu={() => setDrawer(true)} />
       </View>}
       </View>
       <Modal
@@ -1416,19 +1460,33 @@ function TaxiApp() {
       </Modal>
       {addressField && (
         <AddressPicker
+          key={savedPlaceEditing || 'ride'}
           field={addressField}
           center={searchCenter || pickup}
           pickup={pickup}
           dropoff={dropoff}
+          savedPlace={savedPlaceEditing ? { title: savedPlaceEditing === 'home' ? 'Адрес дома' : 'Адрес работы', point: savedPlaces[savedPlaceEditing] } : undefined}
           onFieldChange={setAddressField}
           language={user.language}
-          onSelect={(point) => selectAddress(addressField, point)}
-          onClose={() => setAddressField(null)}
+          onSelect={(point) => { if (savedPlaceEditing) void run(() => persistSavedPlace(savedPlaceEditing, point)); else selectAddress(addressField, point); }}
+          onClose={() => { setAddressField(null); if (savedPlaceMapTransition.current) savedPlaceMapTransition.current = false; else setSavedPlaceEditing(null); }}
           onMap={() => {
+            if (savedPlaceEditing) { savedPlaceMapTransition.current = true; setService('taxi'); }
             setMapField(addressField);
             setAddressField(null);
           }}
-          onLocation={locate}
+          onLocation={() => {
+            if (!savedPlaceEditing) { locate(); return; }
+            const kind = savedPlaceEditing;
+            void run(async () => {
+              try {
+                const coordinate = await getCurrentPosition();
+                const point = await resolvePoint(coordinate).catch(() => gpsPoint(coordinate));
+                await persistSavedPlace(kind, point);
+              } catch (e) { Alert.alert(t('Не удалось сохранить адрес'), messageOf(e)); }
+              finally { await refreshLocationPermission().catch(() => undefined); }
+            });
+          }}
         />
       )}
       {chat && order && (

@@ -181,3 +181,20 @@ test('failed searches retry only when requested and an old request error cannot 
  test('two-letter city names such as Ош search automatically', async t => {
  const h=await setup(t);await h.type('Ош');await h.pause();assert.equal(h.searches.length,1);assert.equal(h.searches[0].query,'Ош');
  });
+
+test('saved home address uses the taxi search with one field, map and GPS choices', async t => {
+  let mapOpens = 0;
+  const h = await setup(t, { savedPlace: { title: 'Адрес дома' }, onMap: () => { mapOpens++; } });
+  assert.equal(h.renderer.root.findAllByType('TextInput').length, 1);
+  assert.equal(h.input().props.autoFocus, true);
+  assert.equal(h.button('Изменить место подачи'), undefined);
+  assert.ok(h.renderer.root.findAllByType('Text').some(node => node.props.children === 'Ваше местоположение'));
+  await h.type('Манас 10');
+  await h.keyboardSubmit();
+  await h.resolve(0, [point('Манас 10')]);
+  await h.tap('Манас 10');
+  assert.equal(h.selected[0].address, 'Манас 10');
+  const second = await setup(t, { savedPlace: { title: 'Адрес работы' }, onMap: () => { mapOpens++; } });
+  await second.tap('Выбрать на карте');
+  assert.equal(mapOpens, 1);
+});

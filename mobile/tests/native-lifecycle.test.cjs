@@ -128,7 +128,7 @@ test('foreground GPS uses a fast cached fix, precise fallback and keeps coordina
   assert.match(map, /client-user-position/);
   assert.doesNotMatch(map, /<UserLocation renderMode="native"/, 'the native puck must not paint a blue accuracy radius');
   assert.match(map, /snapCarToRoad\(driverPosition!?, activeRoad, previousAlong, forwardWindow\)/);
-  assert.match(map, /const marker = useAnimatedCarPosition\(point, session, road\)/);
+  assert.match(map, /const animatedPassenger = useAnimatedCarPosition\(passengerView \? point : null, session, road\)/);
   assert.match(map, /<AnimatedDriverMarker point=\{markerPoint\}/, 'the animated marker owns its own renders');
   assert.match(map, /trustedCarRoutePath\(previousRaw, point, from, roadRef\.current, fixInterval\)/);
   assert.match(map, /trustedCarDirectPath\(previousRaw, point, from, fixInterval\)/);

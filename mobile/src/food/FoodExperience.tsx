@@ -13,6 +13,7 @@ import { readFoodState, writeFoodState, type FoodState } from './storage';
 import { ScreenTransition, type ScreenDirection } from './ScreenTransition';
 import type { CartLine, FoodCatalog, FoodDish, FoodOrder, FoodRestaurant, HomeBanner } from './types';
 import type { Language } from '../types';
+import type { SavedPlaceKind, SavedPlaces } from '../savedPlaces';
 import { FoodLanguageProvider } from './i18n';
 import { tr } from '../ui';
 
@@ -24,8 +25,8 @@ const toggle = (values: string[], id: string) => values.includes(id) ? values.fi
 const foodError = (error: unknown) => error instanceof ApiError && error.status === 404
   ? 'Доставка временно недоступна. Попробуйте обновить раздел немного позже.' : messageOf(error);
 
-export function FoodExperience({ userId, language = 'ru', active, entry, defaultAddress, onTaxi, onTruck, onTaxiSearch, onMenu, contentRevision = 0, orderRevision = 0 }: {
-  userId: string; language?: Language; active: boolean; entry: FoodEntry; defaultAddress: string; onTaxi: () => void; onTruck: () => void; onTaxiSearch: () => void; onMenu: () => void; contentRevision?: number; orderRevision?: number;
+export function FoodExperience({ userId, language = 'ru', active, entry, defaultAddress, savedPlaces, onSavedPlace, onEditSavedPlace, onTaxi, onTruck, onTaxiSearch, onMenu, contentRevision = 0, orderRevision = 0 }: {
+  userId: string; language?: Language; active: boolean; entry: FoodEntry; defaultAddress: string; savedPlaces: SavedPlaces; onSavedPlace: (kind: SavedPlaceKind) => void; onEditSavedPlace: (kind: SavedPlaceKind) => void; onTaxi: () => void; onTruck: () => void; onTaxiSearch: () => void; onMenu: () => void; contentRevision?: number; orderRevision?: number;
 }) {
   const theme = useTheme();
   const t = tr(language);
@@ -310,7 +311,7 @@ export function FoodExperience({ userId, language = 'ru', active, entry, default
 
   let content: React.ReactNode;
   let routeKey: string;
-  if (screen === 'home') { routeKey = 'home'; content = <ServiceHomeScreen language={language} active={active} onTaxi={onTaxi} onTruck={onTruck} onSearch={onTaxiSearch} onFood={() => navigate('restaurants')} onMenu={onMenu} onOrders={() => {
+  if (screen === 'home') { routeKey = 'home'; content = <ServiceHomeScreen language={language} active={active} onTaxi={onTaxi} onTruck={onTruck} onSearch={onTaxiSearch} savedPlaces={savedPlaces} onSavedPlace={onSavedPlace} onEditSavedPlace={onEditSavedPlace} onFood={() => navigate('restaurants')} onMenu={onMenu} onOrders={() => {
     if (activeOrder) { setSelectedOrder(activeOrder); orderOrigin.current = 'home'; navigate('order'); } else navigate('history');
   }} hasOrder={!!activeOrder} banners={banners} onBanner={banner => {
     if (banner.actionType === 'TAXI') onTaxi();

@@ -33,7 +33,7 @@
     "test:ui": "node --test scripts/test-ui-contracts.cjs",
     "test:food": "node --test tests/food-cart.test.cjs tests/food-flow.test.cjs tests/food-banners.test.cjs tests/screen-transition.test.cjs",
     "test:auth": "node --test tests/auth-flow.test.cjs",
-    "test:booking": "node --test tests/address-format.test.cjs tests/address-search.test.cjs tests/booking-flow.test.cjs tests/booking-panels.test.cjs tests/bottom-panel.test.cjs tests/sheet-stage-transition.test.cjs",
+    "test:booking": "node --test tests/address-format.test.cjs tests/address-search.test.cjs tests/saved-places.test.cjs tests/booking-flow.test.cjs tests/booking-panels.test.cjs tests/bottom-panel.test.cjs tests/sheet-stage-transition.test.cjs",
     "test:navigation": "node --test tests/navigation.test.cjs tests/navigation-lifecycle.test.cjs tests/driver-background.test.cjs tests/route-voice.test.cjs tests/road-features.test.cjs",
     "test:registration": "node --test tests/registration-flow.test.cjs"
   },

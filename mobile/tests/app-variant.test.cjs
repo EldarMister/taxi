@@ -211,7 +211,7 @@ test('local Android debug builds support the emulator without widening phone rel
     'an explicit Gradle architecture override must win',
   );
 
-  assert.match(read('android/gradle.properties'), /^reactNativeArchitectures=arm64-v8a$/m);
+  assert.match(read('android/gradle.properties'), /^reactNativeArchitectures=arm64-v8a,x86_64$/m);
   assert.match(read('scripts/run-app-variant.cjs'), /ORG_GRADLE_PROJECT_reactNativeArchitectures/);
   assert.match(read('scripts/run-app-variant.cjs'), /'--app-id', APP_VARIANTS\[variant\]\.androidPackage/);
 });

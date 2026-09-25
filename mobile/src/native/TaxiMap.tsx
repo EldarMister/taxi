@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, Linking, Pressable, StyleSheet, Text, View } from 'react-native';
 import * as Device from 'expo-device';
 import { Camera, MapView, PointAnnotation, MarkerView, ShapeSource, LineLayer, FillLayer, SymbolLayer, UserLocation, addCustomHeader, type CameraRef, type MapViewRef } from '@maplibre/maplibre-react-native';
-import { Button, Icon, PickupIcon, colors, shortAddress } from '../ui';
+import { Button, Icon, PickupIcon, colors, shortAddress, tr } from '../ui';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { api } from '../api';
 import { BISHKEK, MapPoint, reverseGeocode } from './mapkit';
@@ -35,6 +35,7 @@ export interface TaxiMapProps {
   browsePickup?: boolean;
   onPickupChange?: (point: MapPoint & { address: string }) => void;
   selectionMode?: boolean | string | null;
+  selectionTitle?: string;
   recenterKey?: number;
   showUserPosition?: boolean;
   onUserLocation?: (point: MapPoint) => void;
@@ -269,10 +270,11 @@ export default function TaxiMap({
   theme = 'light',
   language = 'ru',
   pickup, dropoff, dropoffRouteLabel, geometry, approachGeometry, routeOverview = false, onSelectPoint, onEditPoint, onSearchPoint, onPanelHeight,
-  focusPoint, browsePickup = false, onPickupChange, selectionMode, recenterKey,
+  focusPoint, browsePickup = false, onPickupChange, selectionMode, selectionTitle, recenterKey,
   showUserPosition = false, onUserLocation, contentTopInset = 0, contentBottomInset = 0, selecting = false, driverPosition, passengerView = false, cameraSession = '',
   navigationActive = false, followDriver = false, onFollowDriverChange,
 }: TaxiMapProps) {
+  const t = tr(language);
   const dark = theme === 'dark';
   const insets = useSafeAreaInsets();
   const camera = useRef<CameraRef>(null);
@@ -738,12 +740,12 @@ export default function TaxiMap({
     </View>
     {!!locationError && <Pressable accessibilityRole="alert" onPress={() => setLocationError('')} style={[styles.locationNotice, { top: Math.max(insets.top + 54, controlsTop - 72), right: 16 }]}><Text style={styles.locationNoticeText}>{locationError}</Text></Pressable>}
     {selectionMode && <View onLayout={event => { setPanelHeight(event.nativeEvent.layout.height); onPanelHeight?.(event.nativeEvent.layout.height); }} style={[styles.confirm, dark && styles.darkConfirm, { paddingBottom: Math.max(insets.bottom, 12) }]}>
-      <Text style={{ fontSize: 22, fontWeight: '700', color: dark ? '#FFFFFF' : colors.ink }}>{selectionMode === 'pickup' ? 'Точка посадки' : 'Точка назначения'}</Text>
-      <Pressable accessibilityRole="button" accessibilityLabel="Найти адрес" onPress={onSearchPoint} style={styles.addressSearch}>
+      <Text style={{ fontSize: 22, fontWeight: '700', color: dark ? '#FFFFFF' : colors.ink }}>{t(selectionTitle || (selectionMode === 'pickup' ? 'Точка посадки' : 'Точка назначения'))}</Text>
+      <Pressable accessibilityRole="button" accessibilityLabel={t('Найти адрес')} onPress={onSearchPoint} style={styles.addressSearch}>
         {selectionMode === 'pickup' ? <PickupIcon size={22} color={dark ? '#FFFFFF' : colors.blue}/> : <Icon name="flag" size={22} color={dark ? '#FFFFFF' : colors.blue}/>}
         <Text numberOfLines={2} style={[styles.hintText, dark && styles.darkHintText, { flex: 1 }]}>{moving ? 'Выбираем точку…' : candidateAddress || 'Определяем адрес…'}</Text><Icon name="chevron-forward" color={dark ? '#FFFFFF' : undefined} size={18}/>
       </Pressable>
-      <Button label="Готово" disabled={!attached || moving} busy={selecting} onPress={() => onSelectPoint?.(candidate)}/>
+      <Button label={t('Готово')} disabled={!attached || moving} busy={selecting} onPress={() => onSelectPoint?.(candidate)}/>
     </View>}
     {(!attached || loadTimeout) && <View style={[styles.loading, dark && styles.darkLoading, { top: contentTopInset + 55 }]}>{loadTimeout ? <><Text style={[styles.noticeText, dark && styles.darkNoticeText]}>Не удалось открыть карту. Повторите попытку.</Text><Pressable accessibilityRole="button" onPress={retry} style={[styles.retry, dark && styles.darkRetry]}><Text style={{ color: dark ? '#FFFFFF' : colors.blue }}>Повторить загрузку</Text></Pressable></> : <ActivityIndicator color={dark ? '#FFFFFF' : colors.blue}/>}</View>}
     {routeError && !navigationActive && <View pointerEvents="none" style={[styles.notice, dark && styles.darkNotice, { top: contentTopInset + 58 }]}><Text style={[styles.noticeText, dark && styles.darkNoticeText]}>Маршрут временно недоступен</Text></View>}
