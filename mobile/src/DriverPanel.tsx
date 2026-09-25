@@ -206,20 +206,20 @@ export function DriverPanel({ user, order, offer, busy, coming, onAccept, onRate
         {offer && <View testID="driver-offer-approach" style={d.approach}>
           <Text numberOfLines={1} adjustsFontSizeToFit style={[d.approachTitle, !approach?.route && d.approachPlaceholder]}>{approach?.route ? approach.route.distanceMeters >= 1000 ? km(approach.route.distanceMeters) : `${Math.round(approach.route.distanceMeters)} м` : approach?.loading ? t('Строим маршрут до клиента…') : approach?.error || t('Ожидаем GPS водителя')}</Text>
           <View style={d.approachTags}>
-            {!!approach?.route && <Text style={d.approachTag}>прибытие ≈ {arrivalClock(approach.route.durationSeconds)}</Text>}
+            {!!approach?.route && <Text style={d.approachTag}>{t('прибытие ≈')} {arrivalClock(approach.route.durationSeconds)}</Text>}
             <Text style={d.approachTag}>{approach?.route ? t(pickupCategory(approach.route.distanceMeters)) : t('Подача рассчитывается')}</Text>
             {detailsExpanded && !!offer.tariff?.name && <Text style={d.approachTag}>{t(offer.tariff.name)}</Text>}
           </View>
         </View>}
-        {order && !terminal && !compactPassengerPickup && !backgroundReady && onBackground && <Pressable accessibilityRole="button" onPress={onBackground} style={d.background}><Icon name="volume-high-outline" color={palette.accent} size={20}/><Text style={d.backgroundText}>Включить навигацию и положение в фоне</Text><Icon name="chevron-forward" color={palette.accent} size={16}/></Pressable>}
+        {order && !terminal && !compactPassengerPickup && !backgroundReady && onBackground && <Pressable accessibilityRole="button" onPress={onBackground} style={d.background}><Icon name="volume-high-outline" color={palette.accent} size={20}/><Text style={d.backgroundText}>{t('Включить навигацию и положение в фоне')}</Text><Icon name="chevron-forward" color={palette.accent} size={16}/></Pressable>}
         {order && !terminal && <View style={d.row}>
           <View style={d.activePassengerIcon}><Icon name={delivery ? 'cube' : 'person'} size={27} color="white"/></View><View style={{ flex: 1, gap: 3 }}><Text style={d.person} numberOfLines={1}>{delivery ? order.client?.name || t('Отправитель') : order.passenger?.name || t('Пассажир')}</Text><Text style={d.caption}>{coming && order.status === 'ARRIVED' ? `${t(delivery ? 'Отправитель выходит' : 'Пассажир выходит')} · ` : ''}{delivery ? order.client?.phone : order.passenger ? order.passenger.phone : order.clientRating != null ? `★ ${Number(order.clientRating).toFixed(2).replace('.', ',')}` : t('Пока нет оценок')}</Text></View>
           <Pressable accessibilityRole="button" accessibilityLabel={t(delivery ? 'Позвонить отправителю' : 'Позвонить пассажиру')} disabled={!(order.passenger?.phone || order.client?.phone)} onPress={() => { const phone = order.passenger?.phone || order.client?.phone; if (phone) void Linking.openURL(`tel:${phone}`); }} style={d.contact}><Icon name="call-outline" color={palette.accent} size={24}/></Pressable>
           <Pressable accessibilityRole="button" accessibilityLabel={t(delivery || order.passenger ? 'Чат с заказчиком' : 'Чат с пассажиром')} onPress={onChat} style={d.contact}><Icon name="chatbubble-outline" color={palette.accent} size={24}/></Pressable>
         </View>}
         {waiting && <View style={d.waiting}>
-          <View style={{ flex: 1, gap: 3 }}><Text style={d.waitingTitle}>{t(waiting.phase === 'BEFORE_FREE' ? 'Ожидание начнётся через' : waiting.phase === 'FREE' ? 'Бесплатное ожидание' : 'Платное ожидание')} {waiting.phase === 'PAID' ? `· ${waiting.billedMinutes} мин` : `· ${waitingClock(waiting.remainingSeconds)}`}</Text>
-          <Text style={d.caption}>{waiting.phase === 'BEFORE_FREE' ? `${order?.waiting?.freeMinutes ?? 5} мин бесплатно после начала` : waiting.phase === 'PAID' ? `+${money(waiting.charge)} · ${money(order?.waiting?.pricePerMinute ?? 0)}/мин` : `Затем ${money(order?.waiting?.pricePerMinute ?? 0)}/мин`}</Text></View>
+          <View style={{ flex: 1, gap: 3 }}><Text style={d.waitingTitle}>{t(waiting.phase === 'BEFORE_FREE' ? 'Ожидание начнётся через' : waiting.phase === 'FREE' ? 'Бесплатное ожидание' : 'Платное ожидание')} {waiting.phase === 'PAID' ? `· ${waiting.billedMinutes} ${t('мин')}` : `· ${waitingClock(waiting.remainingSeconds)}`}</Text>
+          <Text style={d.caption}>{waiting.phase === 'BEFORE_FREE' ? `${order?.waiting?.freeMinutes ?? 5} ${t('мин бесплатно после начала')}` : waiting.phase === 'PAID' ? `+${money(waiting.charge)} · ${money(order?.waiting?.pricePerMinute ?? 0)}/${t('мин')}` : `${t('Затем')} ${money(order?.waiting?.pricePerMinute ?? 0)}/${t('мин')}`}</Text></View>
           <Text style={d.waitingPrice}>{money(waiting.totalPrice)}</Text>
         </View>}
         {showNavigationMetrics && currentDestination && !detailsExpanded && !passengerPickup && <View testID="driver-current-destination" style={[d.row, { gap: 8 }]}>
@@ -227,9 +227,9 @@ export function DriverPanel({ user, order, offer, busy, coming, onAccept, onRate
           <Text numberOfLines={1} style={[d.address, { flex: 1, fontSize: 14 }]}>{shortAddress(currentDestination.address)}</Text>
         </View>}
         {showNavigationMetrics && <View testID="driver-trip-metrics" style={[d.liveStats, compactPassengerPickup && d.compactLiveStats]}>
-          <View style={d.liveStat}><Text numberOfLines={1} adjustsFontSizeToFit style={d.liveValue}>{progress ? displayDistance(progress.remainingMeters) : approximateDistance != null ? `≈${displayDistance(approximateDistance)}` : '—'}</Text><Text style={d.liveLabel}>{order?.status === 'ASSIGNED' ? 'до клиента' : progress ? 'до цели' : 'по прямой'}</Text></View>
+          <View style={d.liveStat}><Text numberOfLines={1} adjustsFontSizeToFit style={d.liveValue}>{progress ? displayDistance(progress.remainingMeters) : approximateDistance != null ? `≈${displayDistance(approximateDistance)}` : '—'}</Text><Text style={d.liveLabel}>{t(order?.status === 'ASSIGNED' ? 'до клиента' : progress ? 'до цели' : 'по прямой')}</Text></View>
           <View style={d.liveDivider}/>
-          <View style={d.liveStat}><Text numberOfLines={1} adjustsFontSizeToFit style={d.liveValue}>{arrival}</Text><Text style={d.liveLabel}>прибытие ≈</Text></View>
+          <View style={d.liveStat}><Text numberOfLines={1} adjustsFontSizeToFit style={d.liveValue}>{arrival}</Text><Text style={d.liveLabel}>{t('прибытие ≈')}</Text></View>
         </View>}
         {!terminal && !detailsExpanded && !passengerPickup && <View testID="driver-compact-summary" style={d.compactSummary}>
           <View style={{ flex: 1, gap: 3 }}>

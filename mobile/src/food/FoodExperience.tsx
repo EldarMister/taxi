@@ -12,6 +12,9 @@ import { addCartLine, cartLineKey, cartSummary, changeCartQuantity, MAX_FOOD_QUA
 import { readFoodState, writeFoodState, type FoodState } from './storage';
 import { ScreenTransition, type ScreenDirection } from './ScreenTransition';
 import type { CartLine, FoodCatalog, FoodDish, FoodOrder, FoodRestaurant, HomeBanner } from './types';
+import type { Language } from '../types';
+import { FoodLanguageProvider } from './i18n';
+import { tr } from '../ui';
 
 type Screen = 'home' | 'restaurants' | 'favorites' | 'restaurant' | 'dish' | 'cart' | 'checkout' | 'order' | 'history';
 export type FoodEntry = { screen: 'home' | 'restaurants' | 'history'; key: number };
@@ -21,10 +24,11 @@ const toggle = (values: string[], id: string) => values.includes(id) ? values.fi
 const foodError = (error: unknown) => error instanceof ApiError && error.status === 404
   ? 'Доставка временно недоступна. Попробуйте обновить раздел немного позже.' : messageOf(error);
 
-export function FoodExperience({ userId, active, entry, defaultAddress, onTaxi, onTruck, onTaxiSearch, onMenu, contentRevision = 0, orderRevision = 0 }: {
-  userId: string; active: boolean; entry: FoodEntry; defaultAddress: string; onTaxi: () => void; onTruck: () => void; onTaxiSearch: () => void; onMenu: () => void; contentRevision?: number; orderRevision?: number;
+export function FoodExperience({ userId, language = 'ru', active, entry, defaultAddress, onTaxi, onTruck, onTaxiSearch, onMenu, contentRevision = 0, orderRevision = 0 }: {
+  userId: string; language?: Language; active: boolean; entry: FoodEntry; defaultAddress: string; onTaxi: () => void; onTruck: () => void; onTaxiSearch: () => void; onMenu: () => void; contentRevision?: number; orderRevision?: number;
 }) {
   const theme = useTheme();
+  const t = tr(language);
   const [screen, setScreen] = useState<Screen>('home');
   const [screenDirection, setScreenDirection] = useState<ScreenDirection>('forward');
   const [catalog, setCatalog] = useState<FoodCatalog>(emptyCatalog);
@@ -163,9 +167,9 @@ export function FoodExperience({ userId, active, entry, defaultAddress, onTaxi, 
         if (promo) { setSelectedRestaurantId(promo.id); navigate('restaurant'); }
       }
     } catch (error) {
-      if (mounted.current && version === catalogVersion.current) setCatalogError(foodError(error));
+      if (mounted.current && version === catalogVersion.current) setCatalogError(t(foodError(error)));
     } finally { if (mounted.current && version === catalogVersion.current) setLoading(false); }
-  }, []);
+  }, [language]);
   const loadBanners = useCallback(async () => {
     const version = ++bannerVersion.current;
     try {
@@ -180,9 +184,9 @@ export function FoodExperience({ userId, active, entry, defaultAddress, onTaxi, 
     const version = ++historyVersion.current;
     setHistoryLoading(true); setHistoryError('');
     try { const data = await api.request<FoodOrder[]>('/food/orders/history'); if (mounted.current && version === historyVersion.current) setOrders(data); }
-    catch (error) { if (mounted.current && version === historyVersion.current) setHistoryError(foodError(error)); }
+    catch (error) { if (mounted.current && version === historyVersion.current) setHistoryError(t(foodError(error))); }
     finally { if (mounted.current && version === historyVersion.current) setHistoryLoading(false); }
-  }, []);
+  }, [language]);
   useEffect(() => { if (active && screen === 'history') void loadHistory(); }, [active, screen, orderRevision, loadHistory]);
 
   const refreshOrder = useCallback(async () => {
@@ -197,7 +201,7 @@ export function FoodExperience({ userId, active, entry, defaultAddress, onTaxi, 
         if (mounted.current) setSelectedOrder(previous => previous?.id !== next.id || previous.updatedAt > next.updatedAt ? previous : next);
       }
       if (mounted.current) setOrderError('');
-    } catch (error) { if (mounted.current && screen === 'order') setOrderError(foodError(error)); }
+    } catch (error) { if (mounted.current && screen === 'order') setOrderError(t(foodError(error))); }
     finally {
       refreshingOrder.current = false;
       if (mounted.current && queuedOrderRefresh.current) {
@@ -205,7 +209,7 @@ export function FoodExperience({ userId, active, entry, defaultAddress, onTaxi, 
         void latestOrderRefresh.current();
       }
     }
-  }, [screen, selectedOrder?.id]);
+  }, [screen, selectedOrder?.id, language]);
   latestOrderRefresh.current = refreshOrder;
   useEffect(() => { if (active) void refreshOrder(); }, [active, orderRevision, refreshOrder]);
   useEffect(() => {
@@ -241,14 +245,14 @@ export function FoodExperience({ userId, active, entry, defaultAddress, onTaxi, 
   const add = (dish: FoodDish, quantity = 1, optionIds: string[] = [], showCart = false) => {
     if (!restaurant || !restored) return;
     const existing = cartRestaurantId === restaurant.id ? lines.find(line => cartLineKey(line) === cartLineKey({ dishId: dish.id, quantity, optionIds }))?.quantity || 0 : 0;
-    if (existing + quantity > MAX_FOOD_QUANTITY) { Alert.alert('Количество порций', `Можно добавить не больше ${MAX_FOOD_QUANTITY} порций одного блюда с одинаковыми добавками.`); return; }
+    if (existing + quantity > MAX_FOOD_QUANTITY) { Alert.alert(t('Количество порций'), `${t('Можно добавить не больше')} ${MAX_FOOD_QUANTITY} ${t('порций одного блюда с одинаковыми добавками.')}`); return; }
     const apply = (replace = false) => {
       setCartRestaurantId(restaurant.id);
       setLines(current => addCartLine(replace ? [] : current, dish, quantity, optionIds));
       if (showCart) openCart('restaurant');
     };
     if (lines.length && cartRestaurantId !== restaurant.id) {
-      Alert.alert('Заказ из другого ресторана', 'В одном заказе могут быть блюда только из одного ресторана. Заменить содержимое корзины?', [{ text: 'Оставить', style: 'cancel' }, { text: 'Заменить', onPress: () => apply(true) }]);
+      Alert.alert(t('Заказ из другого ресторана'), t('В одном заказе могут быть блюда только из одного ресторана. Заменить содержимое корзины?'), [{ text: t('Оставить'), style: 'cancel' }, { text: t('Заменить'), onPress: () => apply(true) }]);
     } else apply();
   };
   const decreaseDish = (dish: FoodDish) => {
@@ -259,13 +263,13 @@ export function FoodExperience({ userId, active, entry, defaultAddress, onTaxi, 
       return target ? changeCartQuantity(current, cartLineKey(target), target.quantity - 1) : current;
     });
   };
-  const clearCart = () => Alert.alert('Очистить корзину?', 'Все блюда и добавки будут удалены из корзины.', [{ text: 'Оставить', style: 'cancel' }, { text: 'Очистить', style: 'destructive', onPress: () => { setLines([]); setCartRestaurantId(null); } }]);
+  const clearCart = () => Alert.alert(t('Очистить корзину?'), t('Все блюда и добавки будут удалены из корзины.'), [{ text: t('Оставить'), style: 'cancel' }, { text: t('Очистить'), style: 'destructive', onPress: () => { setLines([]); setCartRestaurantId(null); } }]);
   const removeOption = (id: string) => {
     const updated = lines.map(line => ({ ...line, optionIds: line.optionIds.filter(optionId => optionId !== id) }));
     const quantities = new Map<string, number>();
     for (const line of updated) quantities.set(cartLineKey(line), (quantities.get(cartLineKey(line)) || 0) + line.quantity);
     if ([...quantities.values()].some(quantity => quantity > MAX_FOOD_QUANTITY)) {
-      Alert.alert('Количество порций', `Без этой добавки получится больше ${MAX_FOOD_QUANTITY} одинаковых порций. Сначала уменьшите количество блюда.`);
+      Alert.alert(t('Количество порций'), `${t('Без этой добавки получится больше')} ${MAX_FOOD_QUANTITY} ${t('одинаковых порций. Сначала уменьшите количество блюда.')}`);
       return;
     }
     setLines(updated.reduce<CartLine[]>((result, line) => {
@@ -300,13 +304,13 @@ export function FoodExperience({ userId, active, entry, defaultAddress, onTaxi, 
       const completedState = { ...savedState(), lines: [], restaurantId: null, pending: undefined };
       persistenceContext.current = { userId: submittingUserId, state: completedState };
       void writeFoodState(submittingUserId, completedState).catch(() => undefined);
-    } catch (error) { if (mounted.current && currentUserId.current === submittingUserId) setSubmitError(foodError(error)); }
+    } catch (error) { if (mounted.current && currentUserId.current === submittingUserId) setSubmitError(t(foodError(error))); }
     finally { busy.current = false; if (mounted.current) setSubmitting(false); }
   };
 
   let content: React.ReactNode;
   let routeKey: string;
-  if (screen === 'home') { routeKey = 'home'; content = <ServiceHomeScreen active={active} onTaxi={onTaxi} onTruck={onTruck} onSearch={onTaxiSearch} onFood={() => navigate('restaurants')} onMenu={onMenu} onOrders={() => {
+  if (screen === 'home') { routeKey = 'home'; content = <ServiceHomeScreen language={language} active={active} onTaxi={onTaxi} onTruck={onTruck} onSearch={onTaxiSearch} onFood={() => navigate('restaurants')} onMenu={onMenu} onOrders={() => {
     if (activeOrder) { setSelectedOrder(activeOrder); orderOrigin.current = 'home'; navigate('order'); } else navigate('history');
   }} hasOrder={!!activeOrder} banners={banners} onBanner={banner => {
     if (banner.actionType === 'TAXI') onTaxi();
@@ -324,8 +328,8 @@ export function FoodExperience({ userId, active, entry, defaultAddress, onTaxi, 
   else if (screen === 'order' && selectedOrder) { routeKey = `order:${selectedOrder.id}`; content = <FoodOrderScreen order={selectedOrder} onBack={back} error={orderError} onRetry={() => void refreshOrder()} />; }
   else if (screen === 'history') { routeKey = 'history'; content = <FoodHistoryScreen orders={orders} loading={historyLoading} error={historyError} onBack={back} onRetry={() => void loadHistory()} onOrder={order => { setSelectedOrder(order); orderOrigin.current = 'history'; navigate('order'); }} />; }
   else { routeKey = 'restaurants'; content = <RestaurantsScreen restaurants={catalog.restaurants} onBack={back} onRestaurant={openRestaurant} onFavorites={() => navigate('favorites')} favoriteCount={favoriteRestaurants.length + favoriteDishItems.length} onCart={() => openCart('restaurants')} cartCount={summary.count} cartTotal={summary.total} cartRestaurantName={cartRestaurant?.name} loading={loading} error={catalogError} onRetry={() => void loadCatalog()} />; }
-  return <View style={{ flex: 1, backgroundColor: theme.isDark ? theme.palette.background : '#F7F7F5' }}>
+  return <FoodLanguageProvider language={language}><View style={{ flex: 1, backgroundColor: theme.isDark ? theme.palette.background : '#F7F7F5' }}>
     {active && <StatusBar style={theme.isDark || screen === 'restaurant' || screen === 'dish' ? 'light' : 'dark'} />}
     <ScreenTransition routeKey={routeKey} direction={screenDirection}>{content}</ScreenTransition>
-  </View>;
+  </View></FoodLanguageProvider>;
 }

@@ -4,8 +4,11 @@ import { foodImage } from './assets';
 import { foodColors as c } from './components';
 import { useFoodStyles } from './foodTheme';
 import type { HomeBanner } from './types';
+import type { Language } from '../types';
+import { tr } from '../ui';
 
-export function BannerCarousel({ banners, width, height, onBanner }: { banners: HomeBanner[]; width: number; height?: number; onBanner: (banner: HomeBanner) => void }) {
+export function BannerCarousel({ banners, width, height, onBanner, language = 'ru' }: { banners: HomeBanner[]; width: number; height?: number; onBanner: (banner: HomeBanner) => void; language?: Language }) {
+  const t = tr(language);
   const styles = useFoodStyles(baseStyles);
   const [page, setPage] = useState(0);
   const scroll = useRef<ScrollView>(null);
@@ -20,7 +23,7 @@ export function BannerCarousel({ banners, width, height, onBanner }: { banners: 
       onMomentumScrollEnd={event => setPage(Math.min(banners.length - 1, Math.max(0, Math.round(event.nativeEvent.contentOffset.x / width))))}>
       {banners.map((banner, index) => <Pressable key={banner.id}
         accessibilityRole={banner.actionType === 'NONE' ? 'image' : 'button'}
-        accessibilityLabel={`${banner.title}${banner.subtitle ? `. ${banner.subtitle}` : ''}. ${index + 1} из ${banners.length}`}
+        accessibilityLabel={`${banner.title}${banner.subtitle ? `. ${banner.subtitle}` : ''}. ${index + 1} ${t('из')} ${banners.length}`}
         disabled={banner.actionType === 'NONE'} onPress={() => onBanner(banner)}
         style={({ pressed }) => [styles.banner, { width, height: height ?? width * 446 / 685, opacity: pressed ? .85 : 1 }]}>
         {banner.imageUrl || banner.imageKey
@@ -29,7 +32,7 @@ export function BannerCarousel({ banners, width, height, onBanner }: { banners: 
       </Pressable>)}
     </ScrollView>
     {banners.length > 1 && <View style={styles.dots}>
-      {banners.map((banner, index) => <Pressable key={banner.id} accessibilityRole="button" accessibilityLabel={`Баннер ${index + 1} из ${banners.length}`}
+      {banners.map((banner, index) => <Pressable key={banner.id} accessibilityRole="button" accessibilityLabel={`${t('Баннер')} ${index + 1} ${t('из')} ${banners.length}`}
         accessibilityState={{ selected: page === index }} onPress={() => { setPage(index); scroll.current?.scrollTo({ x: index * width, animated: true }); }} style={styles.dotTarget}>
         <View style={[styles.dot, page === index && styles.activeDot]} />
       </Pressable>)}

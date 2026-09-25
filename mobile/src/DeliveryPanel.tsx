@@ -3,8 +3,8 @@ import { ActivityIndicator, Image, PanResponder, Pressable, ScrollView, StyleShe
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { BottomPanel, panelStyle } from './BottomPanel';
 import { useTheme } from './design/theme';
-import type { Point, Quote, Tariff } from './types';
-import { colors, Icon, PickupIcon, money, shortAddress, ToggleSwitch } from './ui';
+import type { Language, Point, Quote, Tariff } from './types';
+import { colors, Icon, PickupIcon, money, shortAddress, ToggleSwitch, tr } from './ui';
 
 export type DeliveryDetails = {
   comment: string;
@@ -14,13 +14,15 @@ export type DeliveryDetails = {
 export const emptyDeliveryDetails: DeliveryDetails = { comment: '', doorToDoor: false, scheduled: false };
 
 type Props = {
+  language?: Language;
   pickup: Point | null; dropoff: Point | null; tariffs: Tariff[]; selectedKind: 'DELIVERY_CAR' | 'DELIVERY_TRUCK';
   quote: Quote | null; previewQuote?: Quote | null; quotes: Record<string, Quote>; calculating: boolean; error?: string; busy: boolean;
   details: DeliveryDetails; onDetails: (value: DeliveryDetails) => void; onKind: (kind: 'DELIVERY_CAR' | 'DELIVERY_TRUCK') => void;
   onAddress: (field: 'pickup' | 'dropoff') => void; onSwap: () => void; onBook: () => void; onHeight: (height: number) => void; hidden?: boolean;
 };
 
-export function DeliveryPanel({ pickup, dropoff, tariffs, selectedKind, quote, previewQuote, quotes, calculating, error, busy, details, onDetails, onKind, onAddress, onSwap, onBook, onHeight, hidden }: Props) {
+export function DeliveryPanel({ language = 'ru', pickup, dropoff, tariffs, selectedKind, quote, previewQuote, quotes, calculating, error, busy, details, onDetails, onKind, onAddress, onSwap, onBook, onHeight, hidden }: Props) {
+  const t = tr(language);
   const { isDark, palette } = useTheme();
   const insets = useSafeAreaInsets();
   const [surface, setSurface] = useState<'details' | 'payment' | null>(null);
@@ -36,45 +38,46 @@ export function DeliveryPanel({ pickup, dropoff, tariffs, selectedKind, quote, p
     onPanResponderRelease: (_event, gesture) => { if (gesture.dy < -24 || gesture.vy < -.3) open(); },
   }), []);
   const footer = (inside = false) => <View style={d.footer}>
-    <Pressable accessibilityRole="button" accessibilityLabel="Способы оплаты" disabled={busy} onPress={openPayment} style={d.cash}><Icon name="cash-outline" color={colors.blue} size={29}/></Pressable>
-    <Pressable accessibilityRole="button" disabled={busy || (ready && !quote)} onPress={!ready ? () => onAddress(dropoff ? 'pickup' : 'dropoff') : onBook} style={({ pressed }) => [d.primary, (pressed || busy || (ready && !quote)) && { opacity: .6 }]}>{(busy || (ready && !quote && calculating)) && <ActivityIndicator size="small" color="#FFFFFF"/>}<Text style={d.primaryText}>{!ready ? 'Указать адреса' : quote ? 'Заказать доставку' : error ? 'Повторим автоматически' : shownQuote ? 'Обновляем цену…' : 'Считаем…'}</Text></Pressable>
-    <Pressable accessibilityRole="button" accessibilityLabel={inside ? 'Свернуть параметры' : 'Параметры доставки'} onPress={inside ? () => setSurface(null) : open} style={d.parameters}><Icon name={inside ? 'chevron-down' : 'options-outline'} color={palette.ink} size={26}/></Pressable>
+    <Pressable accessibilityRole="button" accessibilityLabel={t('Способы оплаты')} disabled={busy} onPress={openPayment} style={d.cash}><Icon name="cash-outline" color={colors.blue} size={29}/></Pressable>
+    <Pressable accessibilityRole="button" disabled={busy || (ready && !quote)} onPress={!ready ? () => onAddress(dropoff ? 'pickup' : 'dropoff') : onBook} style={({ pressed }) => [d.primary, (pressed || busy || (ready && !quote)) && { opacity: .6 }]}>{(busy || (ready && !quote && calculating)) && <ActivityIndicator size="small" color="#FFFFFF"/>}<Text style={d.primaryText}>{t(!ready ? 'Указать адреса' : quote ? 'Заказать доставку' : error ? 'Повторим автоматически' : shownQuote ? 'Обновляем цену…' : 'Считаем…')}</Text></Pressable>
+    <Pressable accessibilityRole="button" accessibilityLabel={t(inside ? 'Свернуть параметры' : 'Параметры доставки')} onPress={inside ? () => setSurface(null) : open} style={d.parameters}><Icon name={inside ? 'chevron-down' : 'options-outline'} color={palette.ink} size={26}/></Pressable>
   </View>;
   if (hidden) return null;
   return <View pointerEvents="box-none" style={[StyleSheet.absoluteFill, { zIndex: 20 }]}>
     <View accessibilityElementsHidden={surface !== null} importantForAccessibility={surface !== null ? 'no-hide-descendants' : 'auto'} onLayout={event => onHeight(event.nativeEvent.layout.height)} {...pull.panHandlers} style={[panelStyle.surface, d.panel, isDark && { backgroundColor: palette.surface, shadowColor: palette.background }, { paddingBottom: Math.max(insets.bottom, 11) }]}>
-      <View style={d.titleRow}><View style={d.deliveryMark}><Icon name="cube" color="#FFFFFF" size={22}/></View><Text style={[d.title, { color: palette.ink }]}>Доставка</Text></View>
-      <AddressRow label="Адрес отправки" value={pickup?.address || 'Определяем местоположение'} pickup onPress={() => onAddress('pickup')} color={palette.ink}/>
-      <AddressRow label="Куда доставить" value={dropoff?.address || 'Куда доставить'} onPress={() => onAddress('dropoff')} onSwap={onSwap} swapDisabled={busy || !ready} color={palette.ink}/>
+      <View style={d.titleRow}><View style={d.deliveryMark}><Icon name="cube" color="#FFFFFF" size={22}/></View><Text style={[d.title, { color: palette.ink }]}>{t('Доставка')}</Text></View>
+      <AddressRow language={language} label={t('Адрес отправки')} value={pickup?.address || t('Определяем местоположение')} pickup onPress={() => onAddress('pickup')} color={palette.ink}/>
+      <AddressRow language={language} label={t('Куда доставить')} value={dropoff?.address || t('Куда доставить')} onPress={() => onAddress('dropoff')} onSwap={onSwap} swapDisabled={busy || !ready} color={palette.ink}/>
       <View style={d.services}>
-        <DeliveryService title="Доставка" source={require('../assets/car-economy.png')} selected={selectedKind === 'DELIVERY_CAR'} price={tariffs.find(item => item.kind === 'DELIVERY_CAR') ? quotes[tariffs.find(item => item.kind === 'DELIVERY_CAR')!.id]?.price : undefined} minimumPrice={tariffs.find(item => item.kind === 'DELIVERY_CAR')?.minimumPrice} onPress={() => onKind('DELIVERY_CAR')} palette={palette}/>
-        <DeliveryService truck title="Грузовой" source={require('../assets/home/truck-white.png')} selected={selectedKind === 'DELIVERY_TRUCK'} price={tariffs.find(item => item.kind === 'DELIVERY_TRUCK') ? quotes[tariffs.find(item => item.kind === 'DELIVERY_TRUCK')!.id]?.price : undefined} minimumPrice={tariffs.find(item => item.kind === 'DELIVERY_TRUCK')?.minimumPrice} onPress={() => onKind('DELIVERY_TRUCK')} palette={palette}/>
+        <DeliveryService language={language} title={t('Доставка')} source={require('../assets/car-economy.png')} selected={selectedKind === 'DELIVERY_CAR'} price={tariffs.find(item => item.kind === 'DELIVERY_CAR') ? quotes[tariffs.find(item => item.kind === 'DELIVERY_CAR')!.id]?.price : undefined} minimumPrice={tariffs.find(item => item.kind === 'DELIVERY_CAR')?.minimumPrice} onPress={() => onKind('DELIVERY_CAR')} palette={palette}/>
+        <DeliveryService language={language} truck title={t('Грузовой')} source={require('../assets/home/truck-white.png')} selected={selectedKind === 'DELIVERY_TRUCK'} price={tariffs.find(item => item.kind === 'DELIVERY_TRUCK') ? quotes[tariffs.find(item => item.kind === 'DELIVERY_TRUCK')!.id]?.price : undefined} minimumPrice={tariffs.find(item => item.kind === 'DELIVERY_TRUCK')?.minimumPrice} onPress={() => onKind('DELIVERY_TRUCK')} palette={palette}/>
       </View>
       {!!error && <Text accessibilityRole="alert" style={d.error}>{error}</Text>}
       {footer()}
     </View>
-    {surface === 'details' && <BottomPanel onClose={() => setSurface(null)} label="Закрыть параметры доставки">
+    {surface === 'details' && <BottomPanel onClose={() => setSurface(null)} label={t('Закрыть параметры доставки')}>
       <ScrollView keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false} contentContainerStyle={[d.details, { paddingBottom: Math.max(insets.bottom, 12) }]}>
-        <View style={d.detailsHeading}><View><Text style={[d.detailsTitle, { color: palette.ink }]}>{selectedKind === 'DELIVERY_TRUCK' ? 'Грузовой' : 'Доставка'}</Text><Text style={[d.detailsPrice, { color: palette.ink }]}>{shownQuote ? money(shownQuote.price) : selected ? `от ${money(selected.minimumPrice)}` : 'Стоимость после маршрута'}</Text></View><Pressable accessibilityRole="button" accessibilityLabel="Закрыть" onPress={() => setSurface(null)} style={d.close}><Icon name="close" color={palette.ink}/></Pressable></View>
+        <View style={d.detailsHeading}><View><Text style={[d.detailsTitle, { color: palette.ink }]}>{t(selectedKind === 'DELIVERY_TRUCK' ? 'Грузовой' : 'Доставка')}</Text><Text style={[d.detailsPrice, { color: palette.ink }]}>{shownQuote ? money(shownQuote.price) : selected ? `${t('от')} ${money(selected.minimumPrice)}` : t('Стоимость после маршрута')}</Text></View><Pressable accessibilityRole="button" accessibilityLabel={t('Закрыть')} onPress={() => setSurface(null)} style={d.close}><Icon name="close" color={palette.ink}/></Pressable></View>
         <View style={[d.deliveryHero, { backgroundColor: isDark ? palette.elevated : '#F4F6F8' }]}><Image source={selectedKind === 'DELIVERY_TRUCK' ? require('../assets/home/truck-white.png') : require('../assets/car-economy.png')} resizeMode="contain" style={d.heroImage}/></View>
         <View style={[d.simpleOptions, { backgroundColor: isDark ? palette.elevated : '#F7F8FA' }]}>
-          <OptionSwitch icon="time-outline" title="Запланировать поездку" caption="Подача через 30 минут" value={details.scheduled} onValueChange={scheduled => onDetails({ ...details, scheduled })}/>
-          <OptionSwitch icon="walk-outline" title="От двери до двери" caption="Водитель заберёт и передаст груз у двери" value={details.doorToDoor} onValueChange={doorToDoor => onDetails({ ...details, doorToDoor })}/>
-          <View style={[d.commentBlock, { borderColor: palette.line }]}><View style={d.commentHeading}><Icon name="chatbubble-outline" color={palette.ink} size={21}/><Text style={[d.optionTitle, { color: palette.ink }]}>Комментарий водителю</Text></View><TextInput value={details.comment} onChangeText={comment => onDetails({ ...details, comment })} maxLength={500} multiline placeholder="Укажите важные детали" placeholderTextColor={palette.muted} style={[d.commentInput, { color: palette.ink, backgroundColor: isDark ? palette.surface : '#FFFFFF' }]}/></View>
+          <OptionSwitch icon="time-outline" title={t('Запланировать поездку')} caption={t('Подача через 30 минут')} value={details.scheduled} onValueChange={scheduled => onDetails({ ...details, scheduled })}/>
+          <OptionSwitch icon="walk-outline" title={t('От двери до двери')} caption={t('Водитель заберёт и передаст груз у двери')} value={details.doorToDoor} onValueChange={doorToDoor => onDetails({ ...details, doorToDoor })}/>
+          <View style={[d.commentBlock, { borderColor: palette.line }]}><View style={d.commentHeading}><Icon name="chatbubble-outline" color={palette.ink} size={21}/><Text style={[d.optionTitle, { color: palette.ink }]}>{t('Комментарий водителю')}</Text></View><TextInput value={details.comment} onChangeText={comment => onDetails({ ...details, comment })} maxLength={500} multiline placeholder={t('Укажите важные детали')} placeholderTextColor={palette.muted} style={[d.commentInput, { color: palette.ink, backgroundColor: isDark ? palette.surface : '#FFFFFF' }]}/></View>
         </View>
         {!!error && <Text accessibilityRole="alert" style={d.error}>{error}</Text>}
         {footer(true)}
       </ScrollView>
     </BottomPanel>}
-    {surface === 'payment' && <BottomPanel onClose={closePayment} label="Закрыть способы оплаты"><View style={[d.payment, { paddingBottom: Math.max(insets.bottom, 12) }]}><View style={d.detailsHeading}><Text style={[d.detailsTitle, { color: palette.ink }]}>Способы оплаты</Text><Pressable accessibilityRole="button" accessibilityLabel="Закрыть" onPress={closePayment} style={d.close}><Icon name="close" color={palette.ink}/></Pressable></View><View style={[d.paymentOption, { borderColor: palette.line }]}><Icon name="cash-outline" color={colors.blue} size={29}/><View style={{ flex: 1, gap: 3 }}><Text style={[d.paymentTitle, { color: palette.ink }]}>Наличные</Text><Text style={[d.hint, { color: palette.muted }]}>Оплата водителю после поездки</Text></View><Icon name="checkmark-circle" color={colors.blue} size={25}/></View><Pressable accessibilityRole="button" onPress={closePayment} style={[d.paymentDone, { backgroundColor: palette.accent }]}><Text style={[d.paymentDoneText, { color: palette.accentText }]}>Готово</Text></Pressable></View></BottomPanel>}
+    {surface === 'payment' && <BottomPanel onClose={closePayment} label={t('Закрыть способы оплаты')}><View style={[d.payment, { paddingBottom: Math.max(insets.bottom, 12) }]}><View style={d.detailsHeading}><Text style={[d.detailsTitle, { color: palette.ink }]}>{t('Способы оплаты')}</Text><Pressable accessibilityRole="button" accessibilityLabel={t('Закрыть')} onPress={closePayment} style={d.close}><Icon name="close" color={palette.ink}/></Pressable></View><View style={[d.paymentOption, { borderColor: palette.line }]}><Icon name="cash-outline" color={colors.blue} size={29}/><View style={{ flex: 1, gap: 3 }}><Text style={[d.paymentTitle, { color: palette.ink }]}>{t('Наличные')}</Text><Text style={[d.hint, { color: palette.muted }]}>{t('Оплата водителю после поездки')}</Text></View><Icon name="checkmark-circle" color={colors.blue} size={25}/></View><Pressable accessibilityRole="button" onPress={closePayment} style={[d.paymentDone, { backgroundColor: palette.accent }]}><Text style={[d.paymentDoneText, { color: palette.accentText }]}>{t('Готово')}</Text></Pressable></View></BottomPanel>}
   </View>;
 }
 
-function AddressRow({ value, label, pickup, onPress, onSwap, swapDisabled, color }: { value: string; label: string; pickup?: boolean; onPress: () => void; onSwap?: () => void; swapDisabled?: boolean; color: string }) {
-  return <View style={d.address}><Pressable accessibilityRole="button" accessibilityLabel={label} onPress={onPress} style={d.addressMain}>{pickup ? <PickupIcon size={21}/> : <Icon name="flag" size={21}/>}<View style={{ flex: 1 }}><Text style={d.addressLabel}>{label}</Text><Text numberOfLines={1} style={[d.addressValue, { color }]}>{shortAddress(value)}</Text></View></Pressable>{onSwap ? <Pressable accessibilityRole="button" accessibilityLabel="Поменять адреса местами" accessibilityState={{ disabled: !!swapDisabled }} onPress={onSwap} disabled={swapDisabled} style={[d.swap, swapDisabled && { opacity: .35 }]}><Icon name="swap-vertical" color={colors.muted} size={21}/></Pressable> : <Icon name="chevron-forward" color={colors.muted} size={18}/>}</View>;
+function AddressRow({ value, label, pickup, onPress, onSwap, swapDisabled, color, language = 'ru' }: { value: string; label: string; pickup?: boolean; onPress: () => void; onSwap?: () => void; swapDisabled?: boolean; color: string; language?: Language }) {
+  return <View style={d.address}><Pressable accessibilityRole="button" accessibilityLabel={label} onPress={onPress} style={d.addressMain}>{pickup ? <PickupIcon size={21}/> : <Icon name="flag" size={21}/>}<View style={{ flex: 1 }}><Text style={d.addressLabel}>{label}</Text><Text numberOfLines={1} style={[d.addressValue, { color }]}>{shortAddress(value)}</Text></View></Pressable>{onSwap ? <Pressable accessibilityRole="button" accessibilityLabel={tr(language)('Поменять адреса местами')} accessibilityState={{ disabled: !!swapDisabled }} onPress={onSwap} disabled={swapDisabled} style={[d.swap, swapDisabled && { opacity: .35 }]}><Icon name="swap-vertical" color={colors.muted} size={21}/></Pressable> : <Icon name="chevron-forward" color={colors.muted} size={18}/>}</View>;
 }
-function DeliveryService({ title, source, truck = false, selected, price, minimumPrice, onPress, palette }: { title: string; source: number; truck?: boolean; selected: boolean; price?: number; minimumPrice?: number; onPress: () => void; palette: ReturnType<typeof useTheme>['palette'] }) {
-  const displayPrice = price ? money(price) : minimumPrice ? `от ${money(minimumPrice)}` : 'Расчёт цены';
+function DeliveryService({ title, source, truck = false, selected, price, minimumPrice, onPress, palette, language = 'ru' }: { title: string; source: number; truck?: boolean; selected: boolean; price?: number; minimumPrice?: number; onPress: () => void; palette: ReturnType<typeof useTheme>['palette']; language?: Language }) {
+  const t = tr(language);
+  const displayPrice = price ? money(price) : minimumPrice ? `${t('от')} ${money(minimumPrice)}` : t('Расчёт цены');
   return <Pressable accessibilityRole="radio" accessibilityLabel={`${title}, ${displayPrice}`} accessibilityState={{ checked: selected }} onPress={onPress} style={[d.service, { backgroundColor: selected ? palette.elevated : 'transparent' }]}><View style={d.serviceImageFrame}><Image source={source} resizeMode="contain" style={[d.serviceImage, truck && d.truckImage]}/></View><Text style={[d.serviceName, { color: palette.ink }]}>{title}</Text><Text style={[d.servicePrice, { color: palette.ink }]}>{displayPrice}</Text></Pressable>;
 }
 function OptionSwitch({ icon, title, caption, value, onValueChange }: { icon: React.ComponentProps<typeof Icon>['name']; title: string; caption: string; value: boolean; onValueChange: (value: boolean) => void }) { const { palette } = useTheme(); return <View style={d.option}><Icon name={icon} color={palette.ink} size={22}/><View style={{ flex: 1 }}><Text style={[d.optionTitle, { color: palette.ink }]}>{title}</Text><Text style={[d.hint, { color: palette.muted }]}>{caption}</Text></View><ToggleSwitch label={title} value={value} onValueChange={onValueChange}/></View>; }

@@ -5,12 +5,14 @@ import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context'
 import { SpringPressable } from '../design/motion';
 import { useTheme } from '../design/theme';
 import { fonts } from '../design/typography';
-import { Icon } from '../ui';
+import { Icon, tr } from '../ui';
+import type { Language } from '../types';
 import { BannerCarousel } from './BannerCarousel';
 import { useFoodStyles } from './foodTheme';
 import type { HomeBanner } from './types';
 
 type Props = {
+  language?: Language;
   onTaxi: () => void;
   onTruck: () => void;
   onSearch: () => void;
@@ -30,7 +32,7 @@ const SEARCH_PROMPT = 'Куда поедем?';
 const WRITE_STEP_MS = 135;
 const FULL_PROMPT_PAUSE_MS = 3400;
 
-function AnimatedSearchPrompt({ active }: { active: boolean }) {
+function AnimatedSearchPrompt({ active, prompt }: { active: boolean; prompt: string }) {
   const styles = useFoodStyles(baseStyles);
   const [visibleCount, setVisibleCount] = useState(0);
   const [foreground, setForeground] = useState(AppState.currentState === 'active');
@@ -47,7 +49,7 @@ function AnimatedSearchPrompt({ active }: { active: boolean }) {
 
   useEffect(() => {
     if (!active || !foreground || reduceMotion) {
-      setVisibleCount(SEARCH_PROMPT.length);
+      setVisibleCount(prompt.length);
       pulse.setValue(1);
       return;
     }
@@ -60,7 +62,7 @@ function AnimatedSearchPrompt({ active }: { active: boolean }) {
     const write = () => {
       count += 1;
       setVisibleCount(count);
-      if (count < SEARCH_PROMPT.length) {
+      if (count < prompt.length) {
         timer = setTimeout(write, WRITE_STEP_MS);
       } else {
         pulseAnimation = Animated.loop(Animated.sequence([
@@ -81,14 +83,14 @@ function AnimatedSearchPrompt({ active }: { active: boolean }) {
 
     timer = setTimeout(write, 180);
     return () => { clearTimeout(timer); pulseAnimation?.stop(); pulse.setValue(1); };
-  }, [active, foreground, reduceMotion, pulse]);
+  }, [active, foreground, reduceMotion, pulse, prompt]);
 
-  return <Animated.Text accessible={false} style={[styles.searchText, { transform: [{ scale: pulse }] }]}>{SEARCH_PROMPT.slice(0, visibleCount)}</Animated.Text>;
+  return <Animated.Text accessible={false} style={[styles.searchText, { transform: [{ scale: pulse }] }]}>{prompt.slice(0, visibleCount)}</Animated.Text>;
 }
 
-function ServiceCard({ title, description, source, colors, onPress, comingSoon, imageScale = 1 }: {
+function ServiceCard({ title, description, source, colors, onPress, comingSoon, imageScale = 1, language = 'ru' }: {
   title: string; description: string; source: number; colors: readonly [string, string];
-  onPress?: () => void; comingSoon?: boolean; imageScale?: number;
+  onPress?: () => void; comingSoon?: boolean; imageScale?: number; language?: Language;
 }) {
   const theme = useTheme();
   const styles = useFoodStyles(baseStyles);
@@ -96,23 +98,24 @@ function ServiceCard({ title, description, source, colors, onPress, comingSoon, 
     <View style={styles.serviceArt}><Image source={source} resizeMode="contain" style={[styles.serviceImage, { transform: [{ scale: imageScale }] }]} /></View>
     <Text style={styles.serviceName} numberOfLines={1} adjustsFontSizeToFit>{title}</Text>
     <Text style={styles.serviceDescription} numberOfLines={2} adjustsFontSizeToFit>{description}</Text>
-    {comingSoon && <View style={styles.soon}><Text style={styles.soonText}>Скоро появится</Text></View>}
+    {comingSoon && <View style={styles.soon}><Text style={styles.soonText}>{tr(language)('Скоро появится')}</Text></View>}
   </View>;
-  if (comingSoon) return <View accessible accessibilityRole="text" accessibilityLabel={`${title}. Скоро появится`} style={styles.serviceTouch}>{card}</View>;
+  if (comingSoon) return <View accessible accessibilityRole="text" accessibilityLabel={`${title}. ${tr(language)('Скоро появится')}`} style={styles.serviceTouch}>{card}</View>;
   return <SpringPressable accessibilityRole="button" accessibilityLabel={title} onPress={onPress} pressScale={.965} containerStyle={styles.serviceTouch} style={{ flex: 1 }}>{card}</SpringPressable>;
 }
 
-function SavedPlace({ icon, title, onPress }: { icon: React.ComponentProps<typeof Icon>['name']; title: string; onPress: () => void }) {
+function SavedPlace({ icon, title, onPress, language = 'ru' }: { icon: React.ComponentProps<typeof Icon>['name']; title: string; onPress: () => void; language?: Language }) {
   const theme = useTheme();
   const styles = useFoodStyles(baseStyles);
-  return <SpringPressable accessibilityRole="button" accessibilityLabel={`${title}: добавить адрес`} onPress={onPress} pressScale={.94} containerStyle={styles.placeTouch} style={styles.place}>
+  return <SpringPressable accessibilityRole="button" accessibilityLabel={`${title}: ${tr(language)('добавить адрес')}`} onPress={onPress} pressScale={.94} containerStyle={styles.placeTouch} style={styles.place}>
     <View style={styles.placeIcon}><Icon name={icon} color={theme.isDark ? theme.palette.ink : '#2D5E99'} size={25}/></View>
     <Text style={styles.placeTitle}>{title}</Text>
-    <Text style={styles.placeAction}>Добавить</Text>
+    <Text style={styles.placeAction}>{tr(language)('Добавить')}</Text>
   </SpringPressable>;
 }
 
-export function ServiceHomeScreen({ onTaxi, onTruck, onSearch, onFood, onBanner, banners, onMenu, onOrders, hasOrder, active }: Props) {
+export function ServiceHomeScreen({ language = 'ru', onTaxi, onTruck, onSearch, onFood, onBanner, banners, onMenu, onOrders, hasOrder, active }: Props) {
+  const t = tr(language);
   const theme = useTheme();
   const styles = useFoodStyles(baseStyles);
   const { width, height } = useWindowDimensions();
@@ -126,46 +129,46 @@ export function ServiceHomeScreen({ onTaxi, onTruck, onSearch, onFood, onBanner,
   return <SafeAreaView edges={['top', 'left', 'right']} style={styles.screen}>
     <View style={[styles.content, { paddingBottom: Math.max(insets.bottom, 10) }]}>
       <View style={[styles.header, compact && styles.headerCompact]}>
-        <View style={styles.heading}><Text style={styles.greeting}>Доброе утро!</Text><Text style={styles.subtitle}>Куда отправимся сегодня?</Text></View>
-        <SpringPressable accessibilityRole="button" accessibilityLabel="Меню" onPress={onMenu} pressScale={.9} style={styles.menu}><Icon name="menu" color={theme.isDark ? theme.palette.ink : NAVY} size={29}/></SpringPressable>
+        <View style={styles.heading}><Text style={styles.greeting}>{t('Доброе утро!')}</Text><Text style={styles.subtitle}>{t('Куда отправимся сегодня?')}</Text></View>
+        <SpringPressable accessibilityRole="button" accessibilityLabel={t('Меню')} onPress={onMenu} pressScale={.9} style={styles.menu}><Icon name="menu" color={theme.isDark ? theme.palette.ink : NAVY} size={29}/></SpringPressable>
       </View>
 
       <View style={styles.services}>
-        <View style={[styles.serviceColumn, { height: cardHeight }]}><ServiceCard title="Такси" description="Быстро и комфортно" source={require('../../assets/home/taxi-yellow.png')} colors={['#FFF3D3', '#E2F3FF']} onPress={onTaxi} imageScale={1.13}/></View>
-        <View style={[styles.serviceColumn, { height: cardHeight }]}><ServiceCard title="Грузовой" description="Доставка больших грузов" source={require('../../assets/home/truck-white.png')} colors={['#DBEFFF', '#E8F4FF']} onPress={onTruck} imageScale={1.17}/></View>
-        <View style={[styles.serviceColumn, { height: cardHeight }]}><ServiceCard title="Доставка еды" description="Любимые рестораны рядом" source={require('../../assets/home/food-bag-burger.png')} colors={['#DEF6EC', '#E2FAF5']} onPress={onFood} imageScale={1.05}/></View>
+        <View style={[styles.serviceColumn, { height: cardHeight }]}><ServiceCard language={language} title={t('Такси')} description={t('Быстро и комфортно')} source={require('../../assets/home/taxi-yellow.png')} colors={['#FFF3D3', '#E2F3FF']} onPress={onTaxi} imageScale={1.13}/></View>
+        <View style={[styles.serviceColumn, { height: cardHeight }]}><ServiceCard language={language} title={t('Грузовой')} description={t('Доставка больших грузов')} source={require('../../assets/home/truck-white.png')} colors={['#DBEFFF', '#E8F4FF']} onPress={onTruck} imageScale={1.17}/></View>
+        <View style={[styles.serviceColumn, { height: cardHeight }]}><ServiceCard language={language} title={t('Доставка еды')} description={t('Любимые рестораны рядом')} source={require('../../assets/home/food-bag-burger.png')} colors={['#DEF6EC', '#E2FAF5']} onPress={onFood} imageScale={1.05}/></View>
       </View>
 
       <View>
-        <SpringPressable accessibilityRole="button" accessibilityLabel="Куда поедем? Выбрать адрес" onPress={onSearch} pressScale={.98} style={[styles.search, compact && styles.searchCompact]}>
+        <SpringPressable accessibilityRole="button" accessibilityLabel={`${t('Куда поедем?')} ${t('Выбрать адрес')}`} onPress={onSearch} pressScale={.98} style={[styles.search, compact && styles.searchCompact]}>
           <Icon name="location" color={theme.isDark ? theme.palette.ink : '#315F97'} size={26}/>
-          <AnimatedSearchPrompt active={active}/>
+          <AnimatedSearchPrompt active={active} prompt={t(SEARCH_PROMPT)}/>
           <Icon name="chevron-forward" color={theme.isDark ? theme.palette.muted : '#53739F'} size={24}/>
         </SpringPressable>
       </View>
 
       <View style={[styles.places, compact && styles.placesCompact]}>
-        <SavedPlace icon="home" title="Дом" onPress={onSearch}/>
-        <SavedPlace icon="briefcase" title="Работа" onPress={onSearch}/>
-        <SavedPlace icon="star" title="Избранное" onPress={onSearch}/>
+        <SavedPlace language={language} icon="home" title={t('Дом')} onPress={onSearch}/>
+        <SavedPlace language={language} icon="briefcase" title={t('Работа')} onPress={onSearch}/>
+        <SavedPlace language={language} icon="star" title={t('Избранное')} onPress={onSearch}/>
       </View>
 
       {hasOrder && <View>
-        <SpringPressable accessibilityRole="button" accessibilityLabel="Открыть активный заказ еды" onPress={onOrders} style={styles.activeOrder}>
+        <SpringPressable accessibilityRole="button" accessibilityLabel={t('Открыть активный заказ еды')} onPress={onOrders} style={styles.activeOrder}>
           <Icon name="bag-handle" color={theme.isDark ? theme.palette.ink : BLUE} size={21}/>
-          <View style={{ flex: 1 }}><Text style={styles.activeOrderTitle}>Заказ уже в работе</Text><Text style={styles.activeOrderCaption}>Посмотреть статус доставки</Text></View>
+          <View style={{ flex: 1 }}><Text style={styles.activeOrderTitle}>{t('Заказ уже в работе')}</Text><Text style={styles.activeOrderCaption}>{t('Посмотреть статус доставки')}</Text></View>
           <Icon name="chevron-forward" color={theme.isDark ? theme.palette.ink : BLUE} size={19}/>
         </SpringPressable>
       </View>}
 
       <View style={styles.promoArea}>
-        {banners.length > 0 ? <BannerCarousel banners={banners} width={contentWidth} height={bannerHeight} onBanner={onBanner}/> : <LinearGradient colors={theme.isDark ? ['#171717', '#292929'] : ['#194D70', '#073049']} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={[styles.promo, { height: bannerHeight }]}>
+        {language !== 'ky' && banners.length > 0 ? <BannerCarousel language={language} banners={banners} width={contentWidth} height={bannerHeight} onBanner={onBanner}/> : <LinearGradient colors={theme.isDark ? ['#171717', '#292929'] : ['#194D70', '#073049']} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={[styles.promo, { height: bannerHeight }]}>
           <Image source={require('../../assets/home/promo-salad.png')} resizeMode="contain" style={styles.promoImage}/>
           <View style={styles.promoCopy}>
-            <Text style={styles.promoTitle}>Вкуснее{'\n'}каждый день</Text>
-            <Text style={styles.promoSubtitle}>Скидки до 30%{'\n'}на доставку еды</Text>
-            <SpringPressable accessibilityRole="button" accessibilityLabel="Заказать еду" onPress={onFood} pressScale={.96} style={[styles.promoButton, theme.isDark && { backgroundColor: theme.palette.accent }]}>
-              <Text style={styles.promoButtonText}>Заказать еду</Text>
+            <Text style={styles.promoTitle}>{t('Вкуснее\nкаждый день')}</Text>
+            <Text style={styles.promoSubtitle}>{t('Скидки до 30%\nна доставку еды')}</Text>
+            <SpringPressable accessibilityRole="button" accessibilityLabel={t('Заказать еду')} onPress={onFood} pressScale={.96} style={[styles.promoButton, theme.isDark && { backgroundColor: theme.palette.accent }]}>
+              <Text style={styles.promoButtonText}>{t('Заказать еду')}</Text>
             </SpringPressable>
           </View>
         </LinearGradient>}

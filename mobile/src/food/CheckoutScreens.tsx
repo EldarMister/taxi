@@ -12,11 +12,13 @@ import { useTheme } from '../design/theme';
 import { foodImage } from './assets';
 import { cartLineKey, cartSummary, MAX_FOOD_QUANTITY } from './cart';
 import type { CartLine, FoodCatalog, FoodPaymentMethod, FoodRestaurant } from './types';
+import { useFoodT } from './i18n';
 
 export function CartScreen({ restaurant, lines, onBack, onClear, onQuantity, onRemoveOption, onCheckout }: {
   restaurant?: FoodRestaurant; lines: CartLine[]; onBack: () => void; onClear: () => void;
   onQuantity: (key: string, quantity: number) => void; onRemoveOption: (id: string) => void; onCheckout: () => void;
 }) {
+  const t = useFoodT();
   const s = useFoodStyles(baseStyles);
   const c = useFoodColors();
   const insets = useSafeAreaInsets();
@@ -27,12 +29,12 @@ export function CartScreen({ restaurant, lines, onBack, onClear, onQuantity, onR
   }) || [];
   return <SafeAreaView style={s.screen} edges={['top', 'left', 'right']}>
     <Reveal style={{ flex: 1 }}>
-    <FoodHeader title="Корзина" onBack={onBack} right={lines.length ? <FoodIconButton name="trash-outline" label="Очистить корзину" onPress={onClear} /> : undefined} />
+    <FoodHeader title={t('Корзина')} onBack={onBack} right={lines.length ? <FoodIconButton name="trash-outline" label={t('Очистить корзину')} onPress={onClear} /> : undefined} />
     {summary.count ? <>
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 18, paddingTop: 6, paddingBottom: 24 }}>
         <View style={s.cartRestaurant}>
           <View style={s.cartRestaurantIcon}><Icon name="restaurant-outline" size={23} color={c.blue} /></View>
-          <View style={{ flex: 1 }}><Text style={s.cartRestaurantLabel}>Заказ из ресторана</Text><Text numberOfLines={1} style={s.cartRestaurantName}>{restaurant?.name}</Text></View>
+          <View style={{ flex: 1 }}><Text style={s.cartRestaurantLabel}>{t('Заказ из ресторана')}</Text><Text numberOfLines={1} style={s.cartRestaurantName}>{restaurant?.name}</Text></View>
         </View>
         {summary.items.map(item => <View key={cartLineKey(item)} style={s.cartRow}>
           <View style={s.cartItemTop}>
@@ -40,8 +42,8 @@ export function CartScreen({ restaurant, lines, onBack, onClear, onQuantity, onR
             <View style={{ flex: 1, gap: 4 }}>
               <Text style={s.itemName}>{item.dish.name}</Text>
               <Text style={s.muted}>{item.dish.portion}</Text>
-              <Text style={s.itemPrice}>{money(item.dish.price)} за шт.</Text>
-              {!item.dish.available && <Text style={s.errorText}>Нет в наличии</Text>}
+              <Text style={s.itemPrice}>{money(item.dish.price)} {t('за шт.')}</Text>
+              {!item.dish.available && <Text style={s.errorText}>{t('Нет в наличии')}</Text>}
             </View>
           </View>
           <View style={s.cartItemBottom}>
@@ -55,20 +57,20 @@ export function CartScreen({ restaurant, lines, onBack, onClear, onQuantity, onR
         </View>)}
         {extras.map(option => <View key={option.id} style={[s.cartRow, s.extraRow]}>
           {option.id === 'wasabi' && !option.imageUrl ? <View style={[s.cartImage, { justifyContent: 'center', alignItems: 'center', backgroundColor: '#EEF4E8' }]}><Icon name="leaf" color="#7C9B35" size={40} /></View> : <Image source={foodImage(option.imageKey, option.imageUrl)} style={s.cartImage} />}
-          <View style={{ flex: 1, gap: 3 }}><Text style={s.itemName}>{option.name}</Text><Text style={s.muted}>1 порция</Text><Text style={s.itemPrice}>{money(option.price * option.quantity)}</Text></View>
-          <Pressable accessibilityRole="button" accessibilityLabel={`${option.name}: ${option.quantity} порций. Изменить`} onPress={() => Alert.alert(option.name, `${option.quantity} порций — по одной к каждой порции блюда.`, [{ text: 'Оставить', style: 'cancel' }, { text: 'Убрать', onPress: () => onRemoveOption(option.id) }])} style={s.optionCount}>
-            <Text style={s.muted}>{option.quantity} шт.</Text><Icon name="chevron-down" size={13} color={c.muted} />
+          <View style={{ flex: 1, gap: 3 }}><Text style={s.itemName}>{option.name}</Text><Text style={s.muted}>1 {t('порция')}</Text><Text style={s.itemPrice}>{money(option.price * option.quantity)}</Text></View>
+          <Pressable accessibilityRole="button" accessibilityLabel={`${option.name}: ${option.quantity} ${t('порций')}. ${t('Изменить')}`} onPress={() => Alert.alert(option.name, `${option.quantity} ${t('порций')} — ${t('по одной к каждой порции блюда')}.`, [{ text: t('Оставить'), style: 'cancel' }, { text: t('Убрать'), onPress: () => onRemoveOption(option.id) }])} style={s.optionCount}>
+            <Text style={s.muted}>{option.quantity} {t('шт.')}</Text><Icon name="chevron-down" size={13} color={c.muted} />
           </Pressable>
         </View>)}
       </ScrollView>
       <View style={[s.footer, { paddingBottom: Math.max(18, insets.bottom + 10) }]}>
-        {!!summary.deliveryFee && <View style={[s.totalRow, { marginBottom: 12 }]}><Text style={s.muted}>Доставка</Text><Text style={s.muted}>{money(summary.deliveryFee)}</Text></View>}
-        <View style={s.totalRow}><Text style={s.total}>Итого</Text><Text style={s.total}>{money(summary.total)}</Text></View>
-        {summary.invalid && <Text style={[s.errorText, { marginBottom: 12 }]}>Состав меню изменился. Уберите недоступные блюда.</Text>}
-        <FoodButton label="Оформить заказ" onPress={onCheckout} disabled={summary.invalid} />
+        {!!summary.deliveryFee && <View style={[s.totalRow, { marginBottom: 12 }]}><Text style={s.muted}>{t('Доставка')}</Text><Text style={s.muted}>{money(summary.deliveryFee)}</Text></View>}
+        <View style={s.totalRow}><Text style={s.total}>{t('Итого')}</Text><Text style={s.total}>{money(summary.total)}</Text></View>
+        {summary.invalid && <Text style={[s.errorText, { marginBottom: 12 }]}>{t('Состав меню изменился. Уберите недоступные блюда.')}</Text>}
+        <FoodButton label={t('Оформить заказ')} onPress={onCheckout} disabled={summary.invalid} />
       </View>
     </> : <View style={s.empty}>
-      <Icon name="bag-handle-outline" size={66} color={c.blue} /><Text style={s.emptyTitle}>{lines.length ? 'Меню изменилось' : 'В корзине пока пусто'}</Text><Text style={[s.muted, { textAlign: 'center' }]}>{lines.length ? 'Сохранённые блюда больше недоступны. Очистите корзину и выберите другие.' : 'Добавьте любимые блюда из меню ресторана.'}</Text><FoodButton label={lines.length ? 'Очистить корзину' : 'Выбрать блюда'} onPress={lines.length ? onClear : onBack} style={{ alignSelf: 'stretch', marginTop: 15 }} />
+      <Icon name="bag-handle-outline" size={66} color={c.blue} /><Text style={s.emptyTitle}>{t(lines.length ? 'Меню изменилось' : 'В корзине пока пусто')}</Text><Text style={[s.muted, { textAlign: 'center' }]}>{t(lines.length ? 'Сохранённые блюда больше недоступны. Очистите корзину и выберите другие.' : 'Добавьте любимые блюда из меню ресторана.')}</Text><FoodButton label={t(lines.length ? 'Очистить корзину' : 'Выбрать блюда')} onPress={lines.length ? onClear : onBack} style={{ alignSelf: 'stretch', marginTop: 15 }} />
     </View>}
     </Reveal>
   </SafeAreaView>;
@@ -79,6 +81,7 @@ export function CheckoutScreen({ restaurant, lines, paymentMethods, details, onD
   restaurant: FoodRestaurant; lines: CartLine[]; paymentMethods: FoodCatalog['paymentMethods']; details: CheckoutDetails;
   onDetails: (value: CheckoutDetails) => void; onBack: () => void; onSubmit: () => void; busy: boolean; error: string;
 }) {
+  const t = useFoodT();
   const s = useFoodStyles(baseStyles);
   const c = useFoodColors();
   const theme = useTheme();
@@ -99,39 +102,39 @@ export function CheckoutScreen({ restaurant, lines, paymentMethods, details, onD
   return <SafeAreaView style={s.screen} edges={['top', 'left', 'right']}>
     <View accessibilityElementsHidden={editingAddress} importantForAccessibility={editingAddress ? 'no-hide-descendants' : 'auto'} style={{ flex: 1 }}>
     <Reveal style={{ flex: 1 }}><KeyboardAvoidingView behavior="padding" enabled={Platform.OS === 'ios'} style={{ flex: 1 }}>
-      <FoodHeader title="Оформление заказа" onBack={onBack} backDisabled={busy} backBusy={busy} />
+      <FoodHeader title={t('Оформление заказа')} onBack={onBack} backDisabled={busy} backBusy={busy} />
       <ScrollView showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled" contentContainerStyle={{ paddingHorizontal: 20, paddingTop: 10, paddingBottom: 20 }}>
-        <Text style={[s.sectionTitle, { marginTop: 8 }]}>Адрес доставки</Text>
+        <Text style={[s.sectionTitle, { marginTop: 8 }]}>{t('Адрес доставки')}</Text>
         <View style={s.addressCard}>
           <Icon name="location" size={29} color={c.blue} />
-          <View style={{ flex: 1 }}><Text style={{ color: c.ink, fontFamily: fonts.semibold, fontSize: 16, lineHeight: 22 }}>{details.address || 'Укажите адрес'}</Text><Text style={s.muted}>Кочкор-Ата</Text></View>
-          <Pressable accessibilityRole="button" accessibilityLabel="Изменить адрес доставки" disabled={busy} onPress={() => { setAddressDraft(details.address); setEditingAddress(true); }} style={s.changeAddress}><Text style={{ color: c.blue, fontFamily: fonts.semibold, fontSize: 14 }}>Изменить</Text></Pressable>
+          <View style={{ flex: 1 }}><Text style={{ color: c.ink, fontFamily: fonts.semibold, fontSize: 16, lineHeight: 22 }}>{details.address || t('Укажите адрес')}</Text><Text style={s.muted}>Кочкор-Ата</Text></View>
+          <Pressable accessibilityRole="button" accessibilityLabel={t('Изменить адрес доставки')} disabled={busy} onPress={() => { setAddressDraft(details.address); setEditingAddress(true); }} style={s.changeAddress}><Text style={{ color: c.blue, fontFamily: fonts.semibold, fontSize: 14 }}>{t('Изменить')}</Text></Pressable>
         </View>
-        <Text style={s.sectionTitle}>Комментарий</Text>
-        <TextInput accessibilityLabel="Комментарий к заказу" editable={!busy} value={details.comment} onChangeText={comment => onDetails({ ...details, comment })} maxLength={500} multiline placeholder="Например: домофон, подъезд, этаж" placeholderTextColor={theme.isDark ? theme.palette.muted : '#7C879F'} style={s.comment} textAlignVertical="top" />
-        <Text style={s.sectionTitle}>Способ оплаты</Text>
+        <Text style={s.sectionTitle}>{t('Комментарий')}</Text>
+        <TextInput accessibilityLabel={t('Комментарий к заказу')} editable={!busy} value={details.comment} onChangeText={comment => onDetails({ ...details, comment })} maxLength={500} multiline placeholder={t('Например: домофон, подъезд, этаж')} placeholderTextColor={theme.isDark ? theme.palette.muted : '#7C879F'} style={s.comment} textAlignVertical="top" />
+        <Text style={s.sectionTitle}>{t('Способ оплаты')}</Text>
         {methods.map(method => {
           const available = paymentMethods.some(item => item.id === method.id && item.available);
           const selected = method.id === details.paymentMethod;
           return <Pressable key={method.id} accessibilityRole="radio" accessibilityLabel={`${method.name}${available ? '' : ', пока недоступно'}`} accessibilityState={{ checked: selected, disabled: busy || !available }} disabled={busy || !available} onPress={() => onDetails({ ...details, paymentMethod: method.id })} style={[s.payment, selected && { backgroundColor: theme.isDark ? theme.palette.elevated : '#F5F8FD', borderRadius: 14 }]}>
-            <Icon name={method.icon} size={26} color={c.ink} /><View style={{ flex: 1 }}><Text style={s.paymentLabel}>{method.name}</Text>{!available && <Text style={{ color: c.muted, fontFamily: fonts.regular, fontSize: 11, marginTop: 2 }}>Пока недоступно</Text>}</View><Icon name={selected ? 'checkmark-circle' : 'ellipse-outline'} size={28} color={selected ? c.blue : '#B7BFD0'} />
+            <Icon name={method.icon} size={26} color={c.ink} /><View style={{ flex: 1 }}><Text style={s.paymentLabel}>{t(method.name)}</Text>{!available && <Text style={{ color: c.muted, fontFamily: fonts.regular, fontSize: 11, marginTop: 2 }}>{t('Пока недоступно')}</Text>}</View><Icon name={selected ? 'checkmark-circle' : 'ellipse-outline'} size={28} color={selected ? c.blue : '#B7BFD0'} />
           </Pressable>;
         })}
-        {!minimumReached && <Text style={[s.errorText, { marginTop: 12 }]}>Минимальный заказ — {money(restaurant.minimumOrder)}</Text>}
+        {!minimumReached && <Text style={[s.errorText, { marginTop: 12 }]}>{t('Минимальный заказ')} — {money(restaurant.minimumOrder)}</Text>}
         {!!error && <Text accessibilityRole="alert" style={[s.errorText, { marginTop: 14 }]}>{error}</Text>}
       </ScrollView>
       <View style={[s.footer, { paddingBottom: Math.max(18, insets.bottom + 10) }]}>
-        {!!summary.deliveryFee && <Text style={{ color: c.muted, fontFamily: fonts.regular, fontSize: 13, textAlign: 'center', marginBottom: 10 }}>Включая доставку {money(summary.deliveryFee)}</Text>}
-        <FoodButton label={`Заказать · ${money(summary.total)}`} onPress={onSubmit} busy={busy} disabled={!summary.count || summary.invalid || !addressValid || !paymentAvailable || !minimumReached} />
+        {!!summary.deliveryFee && <Text style={{ color: c.muted, fontFamily: fonts.regular, fontSize: 13, textAlign: 'center', marginBottom: 10 }}>{t('Включая доставку')} {money(summary.deliveryFee)}</Text>}
+        <FoodButton label={`${t('Заказать')} · ${money(summary.total)}`} onPress={onSubmit} busy={busy} disabled={!summary.count || summary.invalid || !addressValid || !paymentAvailable || !minimumReached} />
       </View>
     </KeyboardAvoidingView></Reveal>
     </View>
-    {editingAddress && <BottomPanel closeRequested={closingAddress} onClose={() => { Keyboard.dismiss(); setEditingAddress(false); setClosingAddress(false); }} label="Закрыть адрес">
+    {editingAddress && <BottomPanel closeRequested={closingAddress} onClose={() => { Keyboard.dismiss(); setEditingAddress(false); setClosingAddress(false); }} label={t('Закрыть адрес')}>
         <View style={[s.addressSheet, { paddingBottom: Math.max(22, insets.bottom) }]}>
-          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}><Text style={s.sectionTitle}>Адрес доставки</Text><FoodIconButton name="close" label="Закрыть" onPress={closeAddress} /></View>
+          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}><Text style={s.sectionTitle}>{t('Адрес доставки')}</Text><FoodIconButton name="close" label={t('Закрыть')} onPress={closeAddress} /></View>
           <Text style={[s.muted, { marginBottom: 12 }]}>Кочкор-Ата</Text>
-          <TextInput autoFocus accessibilityLabel="Улица и номер дома" placeholder="Улица и номер дома" placeholderTextColor={c.muted} value={addressDraft} onChangeText={setAddressDraft} maxLength={300} style={s.addressInput} returnKeyType="done" onSubmitEditing={() => { if (addressDraft.trim().length >= 5) { onDetails({ ...details, address: addressDraft.trim() }); closeAddress(); } }} />
-          <FoodButton label="Сохранить адрес" disabled={addressDraft.trim().length < 5} onPress={() => { onDetails({ ...details, address: addressDraft.trim() }); closeAddress(); }} />
+          <TextInput autoFocus accessibilityLabel={t('Улица и номер дома')} placeholder={t('Улица и номер дома')} placeholderTextColor={c.muted} value={addressDraft} onChangeText={setAddressDraft} maxLength={300} style={s.addressInput} returnKeyType="done" onSubmitEditing={() => { if (addressDraft.trim().length >= 5) { onDetails({ ...details, address: addressDraft.trim() }); closeAddress(); } }} />
+          <FoodButton label={t('Сохранить адрес')} disabled={addressDraft.trim().length < 5} onPress={() => { onDetails({ ...details, address: addressDraft.trim() }); closeAddress(); }} />
         </View>
     </BottomPanel>}
   </SafeAreaView>;

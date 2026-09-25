@@ -2,6 +2,8 @@ import React from 'react';
 import { Image, StyleSheet, Text, View } from 'react-native';
 import { roadFeatureDistanceLabel, type RoadFeature, type RoadFeatureKind } from './roadFeatures';
 import { useTheme } from './design/theme';
+import type { Language } from './types';
+import { tr } from './ui';
 
 const images: Partial<Record<RoadFeatureKind, number>> = {
   stop: require('../assets/road-signs/stop.png'),
@@ -16,16 +18,17 @@ const names: Record<RoadFeatureKind, string> = {
   pedestrian_crossing: 'Пешеходный переход', speed_camera: 'Камера скорости', traffic_light: 'Светофор',
 };
 
-export function RoadFeatureAlerts({ features, along, top }: { features: RoadFeature[]; along: number; top: number }) {
+export function RoadFeatureAlerts({ features, along, top, language = 'ru' }: { features: RoadFeature[]; along: number; top: number; language?: Language }) {
   const theme = useTheme();
+  const t = tr(language);
   if (!features.length) return null;
   return <View testID="road-feature-alerts" pointerEvents="none" style={[styles.position, { top }]}>
     {features.map(feature => {
       const distance = Math.round(feature.along - along);
-      return <View key={feature.id} testID={`road-feature-${feature.kind}`} accessibilityLabel={`${names[feature.kind]}, ${distance > 0 ? `через ${distance} метров` : distance < -10 ? 'уже позади' : 'рядом'}`}
+      return <View key={feature.id} testID={`road-feature-${feature.kind}`} accessibilityLabel={`${t(names[feature.kind])}, ${distance > 0 ? language === 'ky' ? `${distance} метрден кийин` : `через ${distance} метров` : distance < -10 ? t('уже позади') : t('рядом')}`}
         style={[styles.card, theme.isDark && styles.cardDark]}>
         <Image source={images[feature.kind]} resizeMode="contain" style={styles.image}/>
-        <Text style={[styles.distance, theme.isDark && styles.distanceDark]}>{roadFeatureDistanceLabel(feature, along)}</Text>
+        <Text style={[styles.distance, theme.isDark && styles.distanceDark]}>{roadFeatureDistanceLabel(feature, along, language)}</Text>
       </View>;
     })}
   </View>;

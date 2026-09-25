@@ -6,6 +6,7 @@ import { palette, radii } from '../design/tokens';
 import { fonts } from '../design/typography';
 import { useTheme } from '../design/theme';
 import { useFoodColors, useFoodStyles } from './foodTheme';
+import { useFoodT } from './i18n';
 
 export const foodColors = {
   ink: palette.ink,
@@ -55,29 +56,32 @@ export function FoodIconButton({ name, onPress, label, color, backgroundColor = 
   disabled?: boolean;
   busy?: boolean;
 }) {
+  const t = useFoodT();
   const s = useFoodStyles(baseStyles);
   const foodColors = useFoodColors();
   const theme = useTheme();
   const unavailable = !!disabled || !!busy;
   const iconBackground = theme.isDark && backgroundColor === 'white' ? theme.palette.surface : backgroundColor;
-  return <SpringPressable accessibilityRole="button" accessibilityLabel={label} accessibilityHint={busy ? 'Дождитесь завершения оформления заказа' : undefined} accessibilityState={{ disabled: unavailable, busy: !!busy }} disabled={unavailable} onPress={onPress} hitSlop={6} pressScale={.9} containerStyle={containerStyle}
+  return <SpringPressable accessibilityRole="button" accessibilityLabel={t(label)} accessibilityHint={busy ? t('Дождитесь завершения оформления заказа') : undefined} accessibilityState={{ disabled: unavailable, busy: !!busy }} disabled={unavailable} onPress={onPress} hitSlop={6} pressScale={.9} containerStyle={containerStyle}
     style={[s.iconButton, { backgroundColor: iconBackground }, style]}>
     <Ionicons name={name} color={color === palette.ink ? foodColors.ink : color || foodColors.ink} size={size} />
   </SpringPressable>;
 }
 
 export function FoodFavoriteButton({ favorite, onPress, item }: { favorite: boolean; onPress: () => void; item: 'ресторан' | 'блюдо' }) {
+  const t = useFoodT();
   const s = useFoodStyles(baseStyles);
-  return <SpringPressable accessibilityRole="button" accessibilityLabel={favorite ? `Убрать ${item} из избранного` : `Добавить ${item} в избранное`}
+  return <SpringPressable accessibilityRole="button" accessibilityLabel={favorite ? `${t('Убрать из избранного')}: ${t(item)}` : `${t('Добавить в избранное')}: ${t(item)}`}
     accessibilityState={{ selected: favorite }} onPress={onPress} hitSlop={8} pressScale={.9} style={s.favoriteButton}>
     <Ionicons name={favorite ? 'heart' : 'heart-outline'} color="#FFFFFF" size={28} />
   </SpringPressable>;
 }
 
 export function FoodHeader({ title, onBack, right, backDisabled, backBusy }: { title: string; onBack: () => void; right?: React.ReactNode; backDisabled?: boolean; backBusy?: boolean }) {
+  const t = useFoodT();
   const s = useFoodStyles(baseStyles);
   return <View style={s.header}>
-    <FoodIconButton name="chevron-back" label={backBusy ? 'Назад недоступно: заказ оформляется' : 'Назад'} onPress={onBack} disabled={backDisabled} busy={backBusy} size={30} />
+    <FoodIconButton name="chevron-back" label={backBusy ? t('Назад недоступно: заказ оформляется') : t('Назад')} onPress={onBack} disabled={backDisabled} busy={backBusy} size={30} />
     <Text style={s.headerTitle} numberOfLines={1}>{title}</Text>
     <View style={s.headerRight}>{right}</View>
   </View>;

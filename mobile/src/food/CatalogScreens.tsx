@@ -12,6 +12,7 @@ import { useFoodColors, useFoodStyles } from './foodTheme';
 import { foodImage } from './assets';
 import { MAX_FOOD_QUANTITY } from './cart';
 import type { FoodDish, FoodRestaurant } from './types';
+import { useFoodT } from './i18n';
 
 function SearchField({ value, onChange, placeholder, inputRef }: {
   value: string;
@@ -19,13 +20,14 @@ function SearchField({ value, onChange, placeholder, inputRef }: {
   placeholder: string;
   inputRef?: React.RefObject<TextInput | null>;
 }) {
+  const t = useFoodT();
   const s = useFoodStyles(baseStyles);
   const c = useFoodColors();
   const theme = useTheme();
   return <View style={s.search}>
     <Ionicons name="search-outline" size={23} color={theme.isDark ? theme.palette.muted : '#94A0B7'} />
     <TextInput ref={inputRef} accessibilityLabel={placeholder} placeholder={placeholder} placeholderTextColor={theme.isDark ? theme.palette.muted : '#7183A4'} value={value} onChangeText={onChange} style={s.searchInput} returnKeyType="search" autoCorrect={false} />
-    {!!value && <FoodIconButton name="close-circle" label="Очистить поиск" color={c.muted} size={19} onPress={() => onChange('')} style={s.searchClear} />}
+    {!!value && <FoodIconButton name="close-circle" label={t('Очистить поиск')} color={c.muted} size={19} onPress={() => onChange('')} style={s.searchClear} />}
   </View>;
 }
 
@@ -40,22 +42,24 @@ function EmptyState({ title, subtitle, dishes = false }: { title: string; subtit
 }
 
 function CartHeaderButton({ count, onPress }: { count: number; onPress: () => void }) {
+  const t = useFoodT();
   const s = useFoodStyles(baseStyles);
   const c = useFoodColors();
   return <View style={s.cartHeaderWrap}>
-    <FoodIconButton name={count ? 'bag-handle' : 'bag-handle-outline'} color={count ? c.blue : c.ink} label={count ? `Открыть корзину, ${count} товаров` : 'Открыть корзину'} onPress={onPress} size={26} />
+    <FoodIconButton name={count ? 'bag-handle' : 'bag-handle-outline'} color={count ? c.blue : c.ink} label={count ? `${t('Открыть корзину')}, ${count} ${t('товаров')}` : t('Открыть корзину')} onPress={onPress} size={26} />
     {count > 0 && <View style={s.cartBadge}><Text style={s.cartBadgeText}>{count > 99 ? '99+' : count}</Text></View>}
   </View>;
 }
 
 function CartDock({ count, total, restaurantName, onPress, bottom = 14 }: { count: number; total: number; restaurantName?: string; onPress: () => void; bottom?: number }) {
+  const t = useFoodT();
   const s = useFoodStyles(baseStyles);
   const c = useFoodColors();
   if (!count) return null;
   return <Reveal distance={8} style={[s.cartDock, { paddingBottom: bottom }]}>
-    <SpringPressable accessibilityRole="button" accessibilityLabel={`Открыть общую корзину, ${count} товаров на сумму ${money(total)}`} onPress={onPress} pressScale={.985} style={s.cartDockButton}>
+    <SpringPressable accessibilityRole="button" accessibilityLabel={`${t('Открыть корзину')}, ${count} ${t('товаров')} · ${money(total)}`} onPress={onPress} pressScale={.985} style={s.cartDockButton}>
       <View style={s.cartDockIcon}><Ionicons name="bag-handle" color={c.blue} size={23} /><View style={s.cartDockCount}><Text style={s.cartDockCountText}>{count > 99 ? '99+' : count}</Text></View></View>
-      <View style={s.cartDockCopy}><Text style={s.cartDockTitle}>Корзина</Text><Text numberOfLines={1} style={s.cartDockRestaurant}>{restaurantName || 'Ваш заказ'}</Text></View>
+      <View style={s.cartDockCopy}><Text style={s.cartDockTitle}>{t('Корзина')}</Text><Text numberOfLines={1} style={s.cartDockRestaurant}>{restaurantName || t('Ваш заказ')}</Text></View>
       <Text style={s.cartDockTotal}>{money(total)}</Text><Ionicons name="chevron-forward" color={c.blue} size={20} />
     </SpringPressable>
   </Reveal>;
@@ -79,6 +83,7 @@ export function RestaurantsScreen({ restaurants, onBack, onRestaurant, onFavorit
   error?: string | null;
   onRetry?: () => void;
 }) {
+  const t = useFoodT();
   const s = useFoodStyles(baseStyles);
   const c = useFoodColors();
   const insets = useSafeAreaInsets();
@@ -99,21 +104,21 @@ export function RestaurantsScreen({ restaurants, onBack, onRestaurant, onFavorit
   const restaurantImageHeight = restaurantTwoColumns ? restaurantCardWidth * .82 : Math.min(210, restaurantCardWidth * .58);
 
   return <SafeAreaView style={s.screen} edges={['top', 'left', 'right']}>
-    <Reveal><FoodHeader title="Рестораны" onBack={onBack} right={<CartHeaderButton count={cartCount} onPress={onCart} />} /></Reveal>
-    <Reveal delay={35} style={s.catalogSearch}><SearchField value={search} onChange={setSearch} placeholder="Ресторан, кухня или блюдо" /></Reveal>
-    <Reveal delay={50} style={s.favoritesEntryWrap}><SpringPressable accessibilityRole="button" accessibilityLabel={`Избранное: ${favoriteCount} сохранённых ресторанов и блюд`} onPress={onFavorites} pressScale={.98} style={s.favoritesEntry}>
+    <Reveal><FoodHeader title={t('Рестораны')} onBack={onBack} right={<CartHeaderButton count={cartCount} onPress={onCart} />} /></Reveal>
+    <Reveal delay={35} style={s.catalogSearch}><SearchField value={search} onChange={setSearch} placeholder={t('Ресторан, кухня или блюдо')} /></Reveal>
+    <Reveal delay={50} style={s.favoritesEntryWrap}><SpringPressable accessibilityRole="button" accessibilityLabel={`${t('Избранное')}: ${favoriteCount}`} onPress={onFavorites} pressScale={.98} style={s.favoritesEntry}>
       <View style={s.favoritesEntryIcon}><Ionicons name="heart" size={20} color={c.blue} /></View>
-      <Text style={s.favoritesEntryTitle}>Избранное</Text>
+      <Text style={s.favoritesEntryTitle}>{t('Избранное')}</Text>
       {favoriteCount > 0 && <View style={s.favoritesEntryCount}><Text style={s.favoritesEntryCountText}>{favoriteCount}</Text></View>}
       <Ionicons name="chevron-forward" size={20} color={c.muted} />
     </SpringPressable></Reveal>
     <Reveal delay={65} style={s.filtersWrap}><ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.filters}>
       {categories.map(item => <Pressable key={item} accessibilityRole="button" accessibilityState={{ selected: item === category }} onPress={() => setCategory(item)} style={[s.filter, item === category && s.filterActive]}>
-        <Text style={[s.filterText, item === category && s.filterTextActive]}>{item}</Text>
+        <Text style={[s.filterText, item === category && s.filterTextActive]}>{t(item)}</Text>
       </Pressable>)}
     </ScrollView></Reveal>
-    {loading && !restaurants.length ? <View style={s.empty}><ActivityIndicator color={c.blue} size="large" /><Text style={s.emptySubtitle}>Ищем рестораны…</Text></View> : error && !restaurants.length ? <View style={s.empty}>
-      <Text style={s.emptyTitle}>Не удалось загрузить рестораны</Text><Text style={s.emptySubtitle}>{error}</Text>{onRetry && <FoodButton label="Повторить" onPress={onRetry} />}
+    {loading && !restaurants.length ? <View style={s.empty}><ActivityIndicator color={c.blue} size="large" /><Text style={s.emptySubtitle}>{t('Ищем рестораны…')}</Text></View> : error && !restaurants.length ? <View style={s.empty}>
+      <Text style={s.emptyTitle}>{t('Не удалось загрузить рестораны')}</Text><Text style={s.emptySubtitle}>{error}</Text>{onRetry && <FoodButton label={t('Повторить')} onPress={onRetry} />}
     </View> : <ScrollView style={s.flex} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled" contentContainerStyle={[s.restaurantList, { paddingBottom: cartCount ? 106 + insets.bottom : Math.max(insets.bottom, 20) }]}>
       <Reveal delay={95} style={s.restaurantGrid}>
         {filtered.map(restaurant => <View key={restaurant.id} style={[s.restaurantCard, { width: restaurantCardWidth }]}>
@@ -124,18 +129,18 @@ export function RestaurantsScreen({ restaurants, onBack, onRestaurant, onFavorit
             </View>
             <View style={s.restaurantCopy}>
               <Text style={s.restaurantName} numberOfLines={1}>{restaurant.name}</Text>
-              <Text style={s.restaurantMuted} numberOfLines={1}>{restaurant.cuisine}</Text>
+              <Text style={s.restaurantMuted} numberOfLines={1}>{t(restaurant.cuisine)}</Text>
               <View style={s.restaurantMeta}>
                 <View style={s.rating}><Ionicons name="star" size={15} color="#F5A400" /><Text style={s.ratingText}>{restaurant.rating.toFixed(1)}</Text></View>
                 <View style={s.metaDot} />
-                <Text style={s.restaurantEta}>{restaurant.etaMin}–{restaurant.etaMax} мин</Text>
+                <Text style={s.restaurantEta}>{restaurant.etaMin}–{restaurant.etaMax} {t('мин')}</Text>
               </View>
-              <Text style={[s.restaurantDelivery, restaurant.deliveryFee === 0 && { color: c.green }]} numberOfLines={1}>{restaurant.deliveryFee === 0 ? 'Бесплатная доставка' : `Доставка ${money(restaurant.deliveryFee)}`}</Text>
+              <Text style={[s.restaurantDelivery, restaurant.deliveryFee === 0 && { color: c.green }]} numberOfLines={1}>{restaurant.deliveryFee === 0 ? t('Бесплатная доставка') : `${t('Доставка')} ${money(restaurant.deliveryFee)}`}</Text>
             </View>
           </SpringPressable>
         </View>)}
       </Reveal>
-      {!filtered.length && <EmptyState title={!restaurants.length ? 'Рестораны скоро появятся' : 'Ничего не найдено'} subtitle={!restaurants.length ? 'Мы готовим каталог. Загляните немного позже.' : 'Попробуйте другую кухню или измените запрос.'} />}
+      {!filtered.length && <EmptyState title={t(!restaurants.length ? 'Рестораны скоро появятся' : 'Ничего не найдено')} subtitle={t(!restaurants.length ? 'Мы готовим каталог. Загляните немного позже.' : 'Попробуйте другую кухню или измените запрос.')} />}
     </ScrollView>}
     <CartDock count={cartCount} total={cartTotal} restaurantName={cartRestaurantName} onPress={onCart} bottom={Math.max(insets.bottom, 14)} />
   </SafeAreaView>;
@@ -155,6 +160,7 @@ export function RestaurantScreen({ restaurant, onBack, onDish, onAdd, onDecrease
   favorite: boolean;
   onFavorite: () => void;
 }) {
+  const t = useFoodT();
   const s = useFoodStyles(baseStyles);
   const c = useFoodColors();
   const insets = useSafeAreaInsets();
@@ -188,10 +194,10 @@ export function RestaurantScreen({ restaurant, onBack, onDish, onAdd, onDecrease
         {!restaurant.heroImageUrl && !restaurant.imageUrl && restaurant.heroImageKey === 'sushi-hero' && <Image source={foodImage('sushi-hero')} blurRadius={25} style={[s.heroImage, { position: 'absolute', opacity: .2 }]} resizeMode="cover" />}
         <Image fadeDuration={160} source={foodImage(restaurant.heroImageKey || restaurant.imageKey, restaurant.heroImageUrl || restaurant.imageUrl)} style={[s.heroImage, !restaurant.heroImageUrl && !restaurant.imageUrl && restaurant.heroImageKey === 'sushi-hero' && { height: width * 222 / 764 + 20, position: 'absolute', bottom: 0 }]} resizeMode="cover" />
         <View style={[s.heroNav, { top: insets.top + 12, left: Math.max(insets.left, 14), right: Math.max(insets.right, 14) }]}>
-          <FoodIconButton name="chevron-back" label="Назад" color="white" backgroundColor="rgba(80,80,80,.55)" onPress={onBack} size={30} />
+          <FoodIconButton name="chevron-back" label={t('Назад')} color="white" backgroundColor="rgba(80,80,80,.55)" onPress={onBack} size={30} />
           <View style={s.heroNavRight}>
             <FoodFavoriteButton favorite={favorite} item="ресторан" onPress={onFavorite} />
-            <FoodIconButton name="search-outline" label="Поиск по меню" color="white" backgroundColor="rgba(255,255,255,.45)" onPress={() => { setShowSearch(value => !value); setSearch(''); scroll.current?.scrollTo({ y: width * .4, animated: true }); }} size={29} />
+            <FoodIconButton name="search-outline" label={t('Поиск по меню')} color="white" backgroundColor="rgba(255,255,255,.45)" onPress={() => { setShowSearch(value => !value); setSearch(''); scroll.current?.scrollTo({ y: width * .4, animated: true }); }} size={29} />
           </View>
         </View>
       </View>
@@ -199,16 +205,16 @@ export function RestaurantScreen({ restaurant, onBack, onDish, onAdd, onDecrease
         <Text style={s.restaurantTitle}>{restaurant.name}</Text>
         <View style={s.detailMetaRow}>
           <View style={s.detailRating}><Ionicons name="star" size={18} color={c.ink} /><Text style={s.detailRatingText}>{restaurant.rating.toFixed(1)} <Text style={s.detailReview}>({reviewLabel(restaurant.reviewCount)})</Text></Text></View>
-          <View style={s.metaDivider} /><Text style={s.detailEta}>{restaurant.etaMin}–{restaurant.etaMax} мин</Text>
-          <FoodIconButton name="information-circle-outline" label="Информация о ресторане" onPress={() => setShowInfo(true)} size={29} style={{ marginLeft: 'auto', marginRight: -5 }} />
+          <View style={s.metaDivider} /><Text style={s.detailEta}>{restaurant.etaMin}–{restaurant.etaMax} {t('мин')}</Text>
+          <FoodIconButton name="information-circle-outline" label={t('Информация о ресторане')} onPress={() => setShowInfo(true)} size={29} style={{ marginLeft: 'auto', marginRight: -5 }} />
         </View>
-        <Text style={[s.deliveryLabel, restaurant.deliveryFee === 0 && { color: c.green }]}>{restaurant.deliveryFee === 0 ? 'Бесплатная доставка' : `Доставка ${money(restaurant.deliveryFee)}`}</Text>
-        {!!restaurant.deliveryFee && !!restaurant.freeDeliveryThreshold && <Text style={s.freeDeliveryLabel}>Бесплатная доставка от {money(restaurant.freeDeliveryThreshold)}</Text>}
-        <View style={s.restaurantAddressRow}><Ionicons name="location-outline" size={17} color={c.muted} /><Text style={s.restaurantAddress} numberOfLines={2}>Адрес: {restaurant.address}</Text></View>
-        {showSearch && <View style={{ marginTop: 14 }}><SearchField inputRef={searchInput} value={search} onChange={setSearch} placeholder="Поиск по меню" /></View>}
+        <Text style={[s.deliveryLabel, restaurant.deliveryFee === 0 && { color: c.green }]}>{restaurant.deliveryFee === 0 ? t('Бесплатная доставка') : `${t('Доставка')} ${money(restaurant.deliveryFee)}`}</Text>
+        {!!restaurant.deliveryFee && !!restaurant.freeDeliveryThreshold && <Text style={s.freeDeliveryLabel}>{t('Бесплатная доставка от')} {money(restaurant.freeDeliveryThreshold)}</Text>}
+        <View style={s.restaurantAddressRow}><Ionicons name="location-outline" size={17} color={c.muted} /><Text style={s.restaurantAddress} numberOfLines={2}>{t('Адрес')}: {restaurant.address}</Text></View>
+        {showSearch && <View style={{ marginTop: 14 }}><SearchField inputRef={searchInput} value={search} onChange={setSearch} placeholder={t('Поиск по меню')} /></View>}
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.menuTabs} style={s.menuTabsFrame}>
           {restaurant.menuCategories.map(item => <Pressable key={item} accessibilityRole="tab" accessibilityState={{ selected: category === item }} onPress={() => { setCategory(item); setSearch(''); }} style={[s.menuTab, category === item && s.menuTabSelected]}>
-            <Text style={[s.menuTabText, category === item && s.menuTabActive]}>{item}</Text>
+            <Text style={[s.menuTabText, category === item && s.menuTabActive]}>{t(item)}</Text>
           </Pressable>)}
         </ScrollView>
         <Reveal delay={55} style={s.dishList}>
@@ -219,7 +225,7 @@ export function RestaurantScreen({ restaurant, onBack, onDish, onAdd, onDecrease
               <Image fadeDuration={140} source={foodImage(dish.id, dish.imageUrl, dish.imageKey)} style={[s.dishImage, { height: dishImageHeight }]} resizeMode="cover" />
               <View style={[s.dishCopy, quantity > 0 && s.dishCopyWithStepper]}>
                 <Text style={s.dishName} numberOfLines={2}>{dish.name}</Text>
-                <Text style={s.dishPortion} numberOfLines={1}>{dish.portion}</Text>
+              <Text style={s.dishPortion} numberOfLines={1}>{t(dish.portion)}</Text>
                 <Text style={[s.dishPrice, quantity > 0 && { paddingRight: 0 }]}>{money(dish.price)}</Text>
               </View>
             </SpringPressable>
@@ -230,20 +236,20 @@ export function RestaurantScreen({ restaurant, onBack, onDish, onAdd, onDecrease
             </View> : <SpringPressable accessibilityRole="button" accessibilityLabel={`Добавить ${dish.name} в корзину`} disabled={!dish.available} accessibilityState={{ disabled: !dish.available }} onPress={() => onAdd(dish)} pressScale={.88} containerStyle={s.dishAddTarget} style={[s.dishAdd, !dish.available && { backgroundColor: palette.line }]}><Ionicons name="add" color={dish.available ? c.blue : c.muted} size={24} /></SpringPressable>}
           </View>;
           })}
-          {!dishes.length && <EmptyState dishes title="Блюда не найдены" subtitle={query ? 'Измените запрос.' : 'Выберите другую категорию.'} />}
+          {!dishes.length && <EmptyState dishes title={t('Блюда не найдены')} subtitle={t(query ? 'Измените запрос.' : 'Выберите другую категорию.')} />}
         </Reveal>
       </Reveal>
     </ScrollView>
     <CartDock count={cartCount} total={cartTotal} restaurantName={cartRestaurantName} onPress={onCart} bottom={Math.max(insets.bottom, 14)} />
     </View>
-    {showInfo && <BottomPanel closeRequested={closingInfo} onClose={() => { setShowInfo(false); setClosingInfo(false); }} label="Закрыть информацию о ресторане">
+    {showInfo && <BottomPanel closeRequested={closingInfo} onClose={() => { setShowInfo(false); setClosingInfo(false); }} label={t('Закрыть информацию о ресторане')}>
       <View style={s.infoCard}>
-        <View style={s.infoHeading}><Text style={s.infoTitle}>{restaurant.name}</Text><FoodIconButton name="close" label="Закрыть" onPress={() => setClosingInfo(true)} /></View>
-        <Text style={s.infoText}>{restaurant.cuisine}</Text><Text style={s.infoText}>{restaurant.address}</Text>
+        <View style={s.infoHeading}><Text style={s.infoTitle}>{restaurant.name}</Text><FoodIconButton name="close" label={t('Закрыть')} onPress={() => setClosingInfo(true)} /></View>
+        <Text style={s.infoText}>{t(restaurant.cuisine)}</Text><Text style={s.infoText}>{restaurant.address}</Text>
         {!!restaurant.phone && <Text selectable style={s.infoText}>{restaurant.phone}</Text>}
-        <Text style={s.infoText}>Доставка: {restaurant.etaMin}–{restaurant.etaMax} мин{restaurant.deliveryFee === 0 ? ', бесплатно' : `, ${money(restaurant.deliveryFee)}`}</Text>
-        <Text style={s.infoText}>{restaurant.minimumOrder ? `Минимальный заказ — ${money(restaurant.minimumOrder)}` : 'Без минимальной суммы заказа'}</Text>
-        {restaurant.isDemo && <Text style={s.demoNote}>Демонстрационный ресторан. Заказы не передаются в реальное заведение.</Text>}
+        <Text style={s.infoText}>{t('Доставка')}: {restaurant.etaMin}–{restaurant.etaMax} {t('мин')}{restaurant.deliveryFee === 0 ? `, ${t('бесплатно')}` : `, ${money(restaurant.deliveryFee)}`}</Text>
+        <Text style={s.infoText}>{restaurant.minimumOrder ? `${t('Минимальный заказ')} — ${money(restaurant.minimumOrder)}` : t('Без минимальной суммы заказа')}</Text>
+        {restaurant.isDemo && <Text style={s.demoNote}>{t('Демонстрационный ресторан. Заказы не передаются в реальное заведение.')}</Text>}
       </View>
     </BottomPanel>}
   </View>;
@@ -257,6 +263,7 @@ export function DishScreen({ dish, restaurant, onBack, onAdd, favorite, onFavori
   favorite: boolean;
   onFavorite: () => void;
 }) {
+  const t = useFoodT();
   const s = useFoodStyles(baseStyles);
   const c = useFoodColors();
   const theme = useTheme();
@@ -272,24 +279,24 @@ export function DishScreen({ dish, restaurant, onBack, onAdd, favorite, onFavori
         {!dish.heroImageUrl && !dish.imageUrl && dish.heroImageKey === 'philadelphia-hero' && <Image source={foodImage('philadelphia-hero')} blurRadius={25} style={[s.heroImage, { position: 'absolute', opacity: .22 }]} resizeMode="cover" />}
         <Image fadeDuration={160} source={foodImage(dish.heroImageKey || dish.imageKey, dish.heroImageUrl || dish.imageUrl)} style={s.heroImage} resizeMode="cover" />
         <View style={[s.heroNav, { top: insets.top + 15, left: Math.max(insets.left, 18), right: Math.max(insets.right, 18) }]}>
-          <FoodIconButton name="chevron-back" label="Назад" color="white" backgroundColor="rgba(210,210,214,.65)" onPress={onBack} size={30} />
+          <FoodIconButton name="chevron-back" label={t('Назад')} color="white" backgroundColor="rgba(210,210,214,.65)" onPress={onBack} size={30} />
           <FoodFavoriteButton favorite={favorite} item="блюдо" onPress={onFavorite} />
         </View>
       </View>
       <Reveal delay={35} style={[s.dishSheet, { paddingLeft: Math.max(insets.left, 21), paddingRight: Math.max(insets.right, 21) }]}>
         <Text style={s.dishTitle}>{dish.name}</Text>
-        <Text style={s.dishDetailPortion}>{dish.portion}{dish.weightGrams ? ` · ${dish.weightGrams} г` : ''}</Text>
+        <Text style={s.dishDetailPortion}>{t(dish.portion)}{dish.weightGrams ? ` · ${dish.weightGrams} г` : ''}</Text>
         <Text style={s.dishDescription}>{dish.description}</Text>
         <Text style={s.dishDetailPrice}>{money(dish.price)}</Text>
         <View style={s.divider} />
-        <Text style={s.quantityTitle}>Выберите количество</Text>
+        <Text style={s.quantityTitle}>{t('Выберите количество')}</Text>
         <View style={s.quantityBar}>
           <SpringPressable accessibilityRole="button" accessibilityLabel="Уменьшить количество" accessibilityState={{ disabled: quantity <= 1 }} disabled={quantity <= 1} onPress={() => setQuantity(value => Math.max(1, value - 1))} pressScale={.88} style={s.quantityMinus}><Ionicons name="remove" color={theme.isDark ? c.ink : '#3B4861'} size={25} /></SpringPressable>
           <Text accessibilityLiveRegion="polite" style={s.quantityValue}>{quantity}</Text>
           <SpringPressable accessibilityRole="button" accessibilityLabel="Увеличить количество" accessibilityState={{ disabled: quantity >= MAX_FOOD_QUANTITY }} disabled={quantity >= MAX_FOOD_QUANTITY} onPress={() => setQuantity(value => Math.min(MAX_FOOD_QUANTITY, value + 1))} pressScale={.88} style={s.quantityPlus}><Ionicons name="add" color={c.white} size={28} /></SpringPressable>
         </View>
         {options.length > 0 && <View style={s.modifierSection}>
-          <View style={s.modifierHeader}><Text style={s.modifierTitle}>Комплектация и добавки</Text><Text style={s.modifierHint}>По желанию</Text></View>
+          <View style={s.modifierHeader}><Text style={s.modifierTitle}>{t('Комплектация и добавки')}</Text><Text style={s.modifierHint}>{t('По желанию')}</Text></View>
           <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.modifierCards} style={s.modifierFrame}>
             {options.map(option => {
               const selected = selectedOptions.includes(option.id);
@@ -297,7 +304,7 @@ export function DishScreen({ dish, restaurant, onBack, onAdd, favorite, onFavori
                 <Image source={foodImage(option.imageKey, option.imageUrl)} style={s.modifierImage} resizeMode="cover" />
                 {selected && <View style={s.modifierCheck}><Ionicons name="checkmark" color={c.white} size={16} /></View>}
                 <Text numberOfLines={2} style={s.modifierName}>{option.name}</Text>
-                <Text style={[s.modifierPrice, selected && { color: c.blue }]}>{option.price ? `+ ${money(option.price)}` : 'Бесплатно'}</Text>
+                <Text style={[s.modifierPrice, selected && { color: c.blue }]}>{option.price ? `+ ${money(option.price)}` : t('Бесплатно')}</Text>
               </SpringPressable>;
             })}
           </ScrollView>
@@ -305,7 +312,7 @@ export function DishScreen({ dish, restaurant, onBack, onAdd, favorite, onFavori
       </Reveal>
     </ScrollView>
     <Reveal distance={8} style={[s.footer, { paddingBottom: Math.max(insets.bottom, 16), paddingLeft: Math.max(insets.left, 21), paddingRight: Math.max(insets.right, 21) }]}>
-      <FoodButton label={dish.available ? `Добавить в корзину ${money(price)}` : 'Блюдо временно недоступно'} disabled={!dish.available} onPress={() => onAdd(dish, quantity, selectedOptions)} />
+      <FoodButton label={dish.available ? `${t('Добавить в корзину')} ${money(price)}` : t('Блюдо временно недоступно')} disabled={!dish.available} onPress={() => onAdd(dish, quantity, selectedOptions)} />
     </Reveal>
   </View>;
 }

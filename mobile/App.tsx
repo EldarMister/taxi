@@ -1232,7 +1232,7 @@ function TaxiApp() {
               onSelectPoint={mapSelect}
               recenterKey={recenter}
             />
-            {navigation.active && <DriverNavigation navigation={navigation} top={insets.top + 62} onHeight={setNavigationHeight} onLocation={() => void openLocationSettings().catch(() => undefined)}/>}
+            {navigation.active && <DriverNavigation language={user.language} navigation={navigation} top={insets.top + 62} onHeight={setNavigationHeight} onLocation={() => void openLocationSettings().catch(() => undefined)}/>}
             {driver && offer && <View style={{ position: 'absolute', top: insets.top + 65, left: 0, right: 0, alignItems: 'center' }}><DriverOfferSkip offer={offer} busy={busy} language={user.language} onSkip={skip}/></View>}
             {!driver && !mapSelection && !order && !dropoff && (
               <Pressable accessibilityRole="button" accessibilityLabel={t("Место подачи")} onPress={() => openAddress("pickup")} style={{ position: "absolute", top: insets.top + 10, left: 76, right: 76, paddingHorizontal: 12, paddingVertical: 8, alignItems: "center" }}>
@@ -1257,7 +1257,7 @@ function TaxiApp() {
             />
           </>}
           {!driver && !order && service === 'delivery' && <>
-            <DeliveryPanel pickup={pickup} dropoff={dropoff} tariffs={deliveryTariffs} selectedKind={deliveryKind}
+            <DeliveryPanel language={user.language} pickup={pickup} dropoff={dropoff} tariffs={deliveryTariffs} selectedKind={deliveryKind}
               quote={deliveryQuote} previewQuote={deliveryPreviewQuote} quotes={deliveryQuotes} calculating={deliveryCalculating} error={error || deliveryQuoteError} busy={busy}
               details={deliveryDetails} onDetails={setDeliveryDetails} onKind={kind => { setDeliveryKind(kind); setError(''); }}
               onAddress={setAddressField} hidden={!!mapSelection || !!addressField} onHeight={setBookingHeight}
@@ -1335,7 +1335,7 @@ function TaxiApp() {
         <View style={{ height: insets.bottom, backgroundColor: palette.surface }} />
       )}
       {!driver && <View pointerEvents={showingServices ? 'auto' : 'none'} style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, zIndex: 20, display: showingServices ? 'flex' : 'none' }}>
-        <FoodExperience key={user.id} userId={user.id} contentRevision={contentRevision} orderRevision={foodOrderRevision} active={showingServices} entry={foodEntry} defaultAddress={pickup?.address || ''} onTaxi={() => { setService('taxi'); setError(''); }} onTruck={() => { setDeliveryKind('DELIVERY_TRUCK'); setService('delivery'); setError(''); }} onTaxiSearch={() => { setService('taxi'); setAddressField('dropoff'); setError(''); }} onMenu={() => setDrawer(true)} />
+        <FoodExperience key={user.id} userId={user.id} language={user.language} contentRevision={contentRevision} orderRevision={foodOrderRevision} active={showingServices} entry={foodEntry} defaultAddress={pickup?.address || ''} onTaxi={() => { setService('taxi'); setError(''); }} onTruck={() => { setDeliveryKind('DELIVERY_TRUCK'); setService('delivery'); setError(''); }} onTaxiSearch={() => { setService('taxi'); setAddressField('dropoff'); setError(''); }} onMenu={() => setDrawer(true)} />
       </View>}
       </View>
       <Modal

@@ -9,6 +9,7 @@ import { useFoodStyles } from './foodTheme';
 import { FoodHeader, money } from './components';
 import { foodImage } from './assets';
 import type { FoodDish, FoodRestaurant } from './types';
+import { useFoodT } from './i18n';
 
 export type FavoriteDish = { restaurant: FoodRestaurant; dish: FoodDish };
 
@@ -19,26 +20,27 @@ export function FavoritesScreen({ restaurants, dishes, onBack, onRestaurant, onD
   onRestaurant: (restaurant: FoodRestaurant) => void;
   onDish: (restaurant: FoodRestaurant, dish: FoodDish) => void;
 }) {
+  const t = useFoodT();
   const s = useFoodStyles(styles);
   const insets = useSafeAreaInsets();
   return <SafeAreaView style={s.screen} edges={['top', 'left', 'right']}>
-    <FoodHeader title="Избранное" onBack={onBack} />
+    <FoodHeader title={t('Избранное')} onBack={onBack} />
     <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={[s.content, { paddingBottom: Math.max(insets.bottom, 24) }]}>
       {!restaurants.length && !dishes.length ? <View style={s.empty}>
         <View style={s.emptyIcon}><Ionicons name="heart-outline" size={46} color={palette.blue} /></View>
-        <Text style={s.emptyTitle}>Пока ничего не сохранено</Text>
-        <Text style={s.emptyText}>Нажмите на сердечко у ресторана или блюда, чтобы найти его здесь.</Text>
+        <Text style={s.emptyTitle}>{t('Пока ничего не сохранено')}</Text>
+        <Text style={s.emptyText}>{t('Нажмите на сердечко у ресторана или блюда, чтобы найти его здесь.')}</Text>
       </View> : <>
         {restaurants.length > 0 && <View style={s.section}>
-          <Text style={s.sectionTitle}>Рестораны</Text>
+          <Text style={s.sectionTitle}>{t('Рестораны')}</Text>
           {restaurants.map(restaurant => <SpringPressable key={restaurant.id} accessibilityRole="button" accessibilityLabel={`Открыть ресторан ${restaurant.name}`} onPress={() => onRestaurant(restaurant)} pressScale={.98} style={s.row}>
             <Image source={foodImage(restaurant.imageKey, restaurant.imageUrl)} style={s.image} resizeMode="cover" />
-            <View style={s.copy}><Text style={s.name} numberOfLines={1}>{restaurant.name}</Text><Text style={s.meta} numberOfLines={1}>{restaurant.cuisine} · {restaurant.etaMin}–{restaurant.etaMax} мин</Text><Text style={s.delivery} numberOfLines={1}>{restaurant.deliveryFee ? `Доставка ${money(restaurant.deliveryFee)}` : 'Бесплатная доставка'}</Text></View>
+            <View style={s.copy}><Text style={s.name} numberOfLines={1}>{restaurant.name}</Text><Text style={s.meta} numberOfLines={1}>{t(restaurant.cuisine)} · {restaurant.etaMin}–{restaurant.etaMax} {t('мин')}</Text><Text style={s.delivery} numberOfLines={1}>{restaurant.deliveryFee ? `${t('Доставка')} ${money(restaurant.deliveryFee)}` : t('Бесплатная доставка')}</Text></View>
             <Ionicons name="chevron-forward" size={20} color={palette.muted} />
           </SpringPressable>)}
         </View>}
         {dishes.length > 0 && <View style={s.section}>
-          <Text style={s.sectionTitle}>Блюда</Text>
+          <Text style={s.sectionTitle}>{t('Блюда')}</Text>
           {dishes.map(({ restaurant, dish }) => <SpringPressable key={`${restaurant.id}:${dish.id}`} accessibilityRole="button" accessibilityLabel={`Открыть блюдо ${dish.name} из ${restaurant.name}`} onPress={() => onDish(restaurant, dish)} pressScale={.98} style={s.row}>
             <Image source={foodImage(dish.id, dish.imageUrl, dish.imageKey)} style={s.image} resizeMode="cover" />
             <View style={s.copy}><Text style={s.name} numberOfLines={1}>{dish.name}</Text><Text style={s.meta} numberOfLines={1}>{restaurant.name} · {dish.portion}</Text><Text style={s.delivery}>{money(dish.price)}</Text></View>

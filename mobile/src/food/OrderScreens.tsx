@@ -10,6 +10,7 @@ import { useFoodColors, useFoodStyles } from './foodTheme';
 import { useTheme } from '../design/theme';
 import { foodImage } from './assets';
 import type { FoodOrder } from './types';
+import { useFoodLanguage, useFoodT } from './i18n';
 
 const stages = ['PLACED', 'CONFIRMED', 'PREPARING', 'DELIVERING', 'COMPLETED'];
 export function foodOrderTitle(order: FoodOrder) {
@@ -23,9 +24,11 @@ export function foodOrderTitle(order: FoodOrder) {
     case 'CANCELLED': return 'Заказ отменён';
   }
 }
-const time = (value: string) => new Date(value).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
+const time = (value: string, language: 'ru' | 'ky') => new Date(value).toLocaleTimeString(language === 'ky' ? 'ky-KG' : 'ru-RU', { hour: '2-digit', minute: '2-digit' });
 
 export function FoodOrderScreen({ order, onBack, error, onRetry }: { order: FoodOrder; onBack: () => void; error: string; onRetry: () => void }) {
+  const t = useFoodT();
+  const language = useFoodLanguage();
   const s = useFoodStyles(baseStyles);
   const c = useFoodColors();
   const theme = useTheme();
@@ -36,27 +39,27 @@ export function FoodOrderScreen({ order, onBack, error, onRetry }: { order: Food
   const labels = ['Принят', 'Подтверждён', 'Готовится', 'В пути', 'Доставлен'];
   const subtitle = order.status === 'PLACED' ? 'Ресторан принимает ваш заказ' : order.status === 'READY' ? 'Передаём заказ курьеру' : order.status === 'DELIVERING' ? 'Курьер скоро будет у вас' : order.status === 'COMPLETED' ? 'Спасибо за заказ!' : cancelled ? 'Ресторан отменил заказ' : 'Ресторан уже готовит блюда';
   return <SafeAreaView style={s.screen} edges={['top', 'left', 'right']}>
-    <FoodHeader title={`Заказ #${order.id.slice(-4).toUpperCase()}`} onBack={onBack} />
+    <FoodHeader title={`${t('Заказ')} #${order.id.slice(-4).toUpperCase()}`} onBack={onBack} />
     <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 18, paddingTop: 10, paddingBottom: Math.max(20, insets.bottom + 12), flexGrow: 1 }}>
       <Reveal delay={20} style={[s.statusCard, cancelled && s.statusCardCancelled]}>
         <View style={s.statusTop}>
           <View style={[s.statusIcon, cancelled && { backgroundColor: '#E95757' }]}><Icon name={cancelled ? 'close' : order.status === 'DELIVERING' ? 'bicycle' : order.status === 'COMPLETED' ? 'checkmark' : 'restaurant-outline'} color={theme.isDark && !cancelled ? theme.palette.accentText : 'white'} size={23} /></View>
-          <View style={{ flex: 1 }}><Text style={s.title}>{foodOrderTitle(order)}</Text><Text style={s.subtitle}>{subtitle}</Text></View>
-          <View style={s.timePill}><Text style={s.timePillText}>{time(order.createdAt)}</Text></View>
+          <View style={{ flex: 1 }}><Text style={s.title}>{t(foodOrderTitle(order))}</Text><Text style={s.subtitle}>{t(subtitle)}</Text></View>
+          <View style={s.timePill}><Text style={s.timePillText}>{time(order.createdAt, language)}</Text></View>
         </View>
         {!cancelled && <View style={s.progress}>
           {labels.map((label, index) => {
             const reached = index <= activeStep;
             return <View key={label} style={s.progressStage}>
               <View style={s.progressTrack}>{index > 0 && <View style={[s.progressLine, reached && s.progressLineActive]} />}<View style={[s.progressDot, reached && s.progressDotActive, index === activeStep && s.progressDotCurrent]} /></View>
-              <Text numberOfLines={1} adjustsFontSizeToFit style={[s.progressLabel, reached && s.progressLabelActive]}>{label}</Text>
+              <Text numberOfLines={1} adjustsFontSizeToFit style={[s.progressLabel, reached && s.progressLabelActive]}>{t(label)}</Text>
             </View>;
           })}
         </View>}
       </Reveal>
 
       <Reveal delay={65} style={s.sectionCard}>
-        <View style={s.sectionHeading}><Text style={s.sectionTitle}>Ваш заказ</Text><Text style={s.itemCount}>{order.items.reduce((sum, item) => sum + item.quantity, 0)} поз.</Text></View>
+        <View style={s.sectionHeading}><Text style={s.sectionTitle}>{t('Ваш заказ')}</Text><Text style={s.itemCount}>{order.items.reduce((sum, item) => sum + item.quantity, 0)} {t('поз.')}</Text></View>
         {order.items.map((item, index) => <View key={`${item.dishId}:${index}`} style={[s.orderItem, index > 0 && s.orderItemBorder]}>
           <Image source={foodImage(item.dishId, item.imageUrl, item.imageKey)} style={s.itemImage} />
           <View style={{ flex: 1, gap: 3 }}><Text style={s.itemName}>{item.name}</Text><Text style={s.muted}>{item.quantity} × {money(item.unitPrice)}</Text>{item.options.length > 0 && <Text numberOfLines={1} style={s.itemOptions}>{item.options.map(option => option.name).join(', ')}</Text>}</View>
@@ -65,42 +68,44 @@ export function FoodOrderScreen({ order, onBack, error, onRetry }: { order: Food
       </Reveal>
 
       <Reveal delay={95} style={s.sectionCard}>
-        <View style={s.addressRow}><View style={s.addressIcon}><Icon name="location" color={c.blue} size={22} /></View><View style={{ flex: 1 }}><Text style={s.cardEyebrow}>АДРЕС ДОСТАВКИ</Text><Text style={s.addressText}>{order.address || 'Адрес не указан'}</Text></View></View>
+        <View style={s.addressRow}><View style={s.addressIcon}><Icon name="location" color={c.blue} size={22} /></View><View style={{ flex: 1 }}><Text style={s.cardEyebrow}>{t('АДРЕС ДОСТАВКИ')}</Text><Text style={s.addressText}>{order.address || t('Адрес не указан')}</Text></View></View>
         {!!order.comment && <View style={s.commentRow}><Icon name="chatbubble-ellipses-outline" color={c.muted} size={19} /><Text style={[s.muted, { flex: 1 }]}>{order.comment}</Text></View>}
       </Reveal>
 
       <Reveal delay={120} style={s.sectionCard}>
-        <View style={s.totalRow}><Text style={s.muted}>Блюда</Text><Text style={s.totalMeta}>{money(order.subtotal)}</Text></View>
-        <View style={s.totalRow}><Text style={s.muted}>Доставка</Text><Text style={s.totalMeta}>{order.deliveryFee ? money(order.deliveryFee) : 'Бесплатно'}</Text></View>
-        <View style={[s.totalRow, s.grandTotalRow]}><Text style={s.grandTotalLabel}>Итого</Text><Text style={s.grandTotal}>{money(order.total)}</Text></View>
+        <View style={s.totalRow}><Text style={s.muted}>{t('Блюда')}</Text><Text style={s.totalMeta}>{money(order.subtotal)}</Text></View>
+        <View style={s.totalRow}><Text style={s.muted}>{t('Доставка')}</Text><Text style={s.totalMeta}>{order.deliveryFee ? money(order.deliveryFee) : t('Бесплатно')}</Text></View>
+        <View style={[s.totalRow, s.grandTotalRow]}><Text style={s.grandTotalLabel}>{t('Итого')}</Text><Text style={s.grandTotal}>{money(order.total)}</Text></View>
       </Reveal>
 
       <Reveal delay={145} style={s.restaurant}>
         <Image source={foodImage(order.restaurant.id === 'sushi-roll' ? 'restaurant-order' : order.restaurant.imageKey, order.restaurant.imageUrl)} style={s.restaurantImage} />
-        <View style={{ flex: 1, gap: 3 }}><Text style={s.restaurantName}>{order.restaurant.name}</Text><Text style={s.muted}>Доставка {order.restaurant.etaMin}–{order.restaurant.etaMax} мин</Text></View><Icon name="chevron-forward" color={c.muted} size={18} />
+        <View style={{ flex: 1, gap: 3 }}><Text style={s.restaurantName}>{order.restaurant.name}</Text><Text style={s.muted}>{t('Доставка')} {order.restaurant.etaMin}–{order.restaurant.etaMax} {t('мин')}</Text></View><Icon name="chevron-forward" color={c.muted} size={18} />
       </Reveal>
-      <FoodButton secondary label="Связаться с рестораном" onPress={() => {
+      <FoodButton secondary label={t('Связаться с рестораном')} onPress={() => {
         const phone = order.restaurant.phone;
-        if (!phone) { Alert.alert('Контакт ресторана', 'Ресторан пока не указал номер телефона.'); return; }
-        void Linking.openURL(`tel:${phone}`).catch(() => Alert.alert('Не удалось позвонить', phone));
+        if (!phone) { Alert.alert(t('Контакт ресторана'), t('Ресторан пока не указал номер телефона.')); return; }
+        void Linking.openURL(`tel:${phone}`).catch(() => Alert.alert(t('Не удалось позвонить'), phone));
       }} />
-      {!!error && <Pressable accessibilityRole="button" onPress={onRetry} style={s.notice}><Text style={{ color: theme.isDark ? '#FF8A8A' : '#B74747', fontFamily: fonts.regular, fontSize: 13, textAlign: 'center' }}>{error}{'\n'}Нажмите, чтобы обновить статус</Text></Pressable>}
-      {order.isDemo && <Text style={s.demo}>Тестовый заказ · ресторан из макетов</Text>}
+      {!!error && <Pressable accessibilityRole="button" onPress={onRetry} style={s.notice}><Text style={{ color: theme.isDark ? '#FF8A8A' : '#B74747', fontFamily: fonts.regular, fontSize: 13, textAlign: 'center' }}>{error}{'\n'}{t('Нажмите, чтобы обновить статус')}</Text></Pressable>}
+      {order.isDemo && <Text style={s.demo}>{t('Тестовый заказ · ресторан из макетов')}</Text>}
     </ScrollView>
   </SafeAreaView>;
 }
 
 export function FoodHistoryScreen({ orders, loading, error, onBack, onOrder, onRetry }: { orders: FoodOrder[]; loading: boolean; error: string; onBack: () => void; onOrder: (order: FoodOrder) => void; onRetry: () => void }) {
+  const t = useFoodT();
+  const language = useFoodLanguage();
   const s = useFoodStyles(baseStyles);
   const c = useFoodColors();
   const insets = useSafeAreaInsets();
   return <SafeAreaView style={s.screen} edges={['top', 'left', 'right']}>
-    <FoodHeader title="Мои заказы еды" onBack={onBack} />
+    <FoodHeader title={t('Мои заказы еды')} onBack={onBack} />
     <ScrollView contentContainerStyle={{ padding: 20, paddingBottom: Math.max(insets.bottom, 20), flexGrow: 1 }}>
       {loading && !orders.length && <ActivityIndicator size="large" color={c.blue} style={{ marginTop: 40 }} />}
-      {!!error && <View style={s.notice}><Text style={[s.muted, { textAlign: 'center', marginBottom: 12 }]}>{error}</Text><FoodButton label="Повторить" onPress={onRetry} secondary /></View>}
-      {!loading && !error && !orders.length && <View style={s.empty}><Icon name="receipt-outline" color={c.blue} size={64} /><Text style={{ color: c.ink, fontFamily: fonts.bold, fontSize: 23 }}>Заказов пока нет</Text><Text style={[s.muted, { textAlign: 'center' }]}>Здесь появятся ваши заказы из ресторанов.</Text></View>}
-      <Reveal delay={45}>{orders.map(order => <Pressable accessibilityRole="button" key={order.id} onPress={() => onOrder(order)} style={s.historyRow}><Image source={foodImage(order.restaurant.imageKey, order.restaurant.imageUrl)} style={s.restaurantImage} /><View style={{ flex: 1, gap: 5 }}><Text style={s.historyName}>{order.restaurant.name}</Text><Text style={s.historyStatus}>{foodOrderTitle(order)}</Text><Text style={s.muted}>{new Date(order.createdAt).toLocaleDateString('ru-RU')} · {money(order.total)}</Text></View><Icon name="chevron-forward" color={c.muted} /></Pressable>)}</Reveal>
+      {!!error && <View style={s.notice}><Text style={[s.muted, { textAlign: 'center', marginBottom: 12 }]}>{error}</Text><FoodButton label={t('Повторить')} onPress={onRetry} secondary /></View>}
+      {!loading && !error && !orders.length && <View style={s.empty}><Icon name="receipt-outline" color={c.blue} size={64} /><Text style={{ color: c.ink, fontFamily: fonts.bold, fontSize: 23 }}>{t('Заказов пока нет')}</Text><Text style={[s.muted, { textAlign: 'center' }]}>{t('Здесь появятся ваши заказы из ресторанов.')}</Text></View>}
+      <Reveal delay={45}>{orders.map(order => <Pressable accessibilityRole="button" key={order.id} onPress={() => onOrder(order)} style={s.historyRow}><Image source={foodImage(order.restaurant.imageKey, order.restaurant.imageUrl)} style={s.restaurantImage} /><View style={{ flex: 1, gap: 5 }}><Text style={s.historyName}>{order.restaurant.name}</Text><Text style={s.historyStatus}>{t(foodOrderTitle(order))}</Text><Text style={s.muted}>{new Date(order.createdAt).toLocaleDateString(language === 'ky' ? 'ky-KG' : 'ru-RU')} · {money(order.total)}</Text></View><Icon name="chevron-forward" color={c.muted} /></Pressable>)}</Reveal>
     </ScrollView>
   </SafeAreaView>;
 }

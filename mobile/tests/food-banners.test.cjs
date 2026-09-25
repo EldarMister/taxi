@@ -64,6 +64,7 @@ test('banner swipe, page dots, and tap navigate real configured items and adapt 
     if (id === './assets') return loadAssets();
     if (id === './components') return { foodColors: { ink: '#111', blue: '#007aff' } };
     if (id === './foodTheme') return { useFoodStyles: styles => styles };
+    if (id === '../ui') return { tr: () => text => text };
     throw new Error(`Unexpected dependency ${id}`);
   } });
   let props = { banners: [

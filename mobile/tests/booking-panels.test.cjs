@@ -694,11 +694,11 @@ test('dark driver navigation keeps the turn cue and GPS notice readable', async 
 
 test('delivery redesign has two price choices, a payment selector and only three details', () => {
   const source = fs.readFileSync(path.join(__dirname, '../src/DeliveryPanel.tsx'), 'utf8');
-  assert.match(source, /title="Доставка"/);
-  assert.match(source, /title="Грузовой"/);
+  assert.match(source, /title=\{t\('Доставка'\)\}/);
+  assert.match(source, /title=\{t\('Грузовой'\)\}/);
   assert.doesNotMatch(source, />Курьер</);
   assert.doesNotMatch(source, /d\.handle|Тип кузова|Грузчики|Что нужно доставить/);
-  assert.match(source, /accessibilityLabel="Способы оплаты"/);
+  assert.match(source, /accessibilityLabel=\{t\('Способы оплаты'\)\}/);
   assert.match(source, /cash-outline" color=\{colors\.blue\}/);
   assert.match(source, /surface === 'payment'/);
   assert.match(source, /Запланировать поездку/);
@@ -709,7 +709,7 @@ test('delivery redesign has two price choices, a payment selector and only three
   assert.doesNotMatch(source, /delivery-van-blue\.png/);
   assert.doesNotMatch(source, /taxi-yellow\.png/);
   assert.match(source, /backgroundColor: colors\.blue/);
-  assert.match(source, /accessibilityLabel="Поменять адреса местами"/);
+  assert.match(source, /accessibilityLabel=\{tr\(language\)\('Поменять адреса местами'\)\}/);
   assert.doesNotMatch(source, /surface === 'details' && <BottomPanel expanded/);
 });
 

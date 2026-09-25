@@ -67,7 +67,7 @@ export function roadFeatureAnnouncement(features: RoadFeature[], along: number, 
   }).join(' ');
 }
 
-export function roadFeatureDistanceLabel(feature: RoadFeature, along: number): string {
+export function roadFeatureDistanceLabel(feature: RoadFeature, along: number, language: Language = 'ru'): string {
   const distance = Math.round(feature.along - along);
-  return distance > 0 ? `${Math.max(0, Math.round(distance / 10) * 10)} м` : distance < -10 ? 'позади' : '0 м';
+  return distance > 0 ? `${Math.max(0, Math.round(distance / 10) * 10)} м` : distance < -10 ? language === 'ky' ? 'артта' : 'позади' : '0 м';
 }

@@ -4,7 +4,8 @@ import Svg, { Path, Circle } from 'react-native-svg';
 import { displayDistance, normalizeManeuver, NormalizedManeuver, NavigationFix, offRouteThreshold } from './navigation';
 import { useDriverNavigation } from './useDriverNavigation';
 import { freezeDriverGps, getDriverTrackingDiagnostics, replayDriverGps, startDriverGpsRecording, stopDriverGpsDiagnostic, stopDriverGpsRecording } from './native/driverTracking';
-import { colors, Icon } from './ui';
+import { colors, Icon, tr } from './ui';
+import type { Language } from './types';
 import { useTheme } from './design/theme';
 import { RoadFeatureAlerts } from './RoadFeatureAlerts';
 
@@ -22,9 +23,10 @@ function TurnArrow({ maneuver, arrived, color = 'white' }: { maneuver?: Normaliz
   </Svg>;
 }
 
-export function DriverNavigation({ navigation, top, onLocation, onHeight }: {
-  navigation: ReturnType<typeof useDriverNavigation>; top: number; onLocation: () => void; onHeight?: (height: number) => void;
+export function DriverNavigation({ navigation, top, onLocation, onHeight, language = 'ru' }: {
+  navigation: ReturnType<typeof useDriverNavigation>; top: number; onLocation: () => void; onHeight?: (height: number) => void; language?: Language;
 }) {
+  const t = tr(language);
   const theme = useTheme();
   const { progress, loading, error, gpsStatus } = navigation;
   const [diagnosticsOpen, setDiagnosticsOpen] = React.useState(false);
@@ -40,7 +42,7 @@ export function DriverNavigation({ navigation, top, onLocation, onHeight }: {
   }, [diagnosticsOpen]);
   const offRoute = (progress?.offRouteMeters || 0) > offRouteThreshold(navigation.position?.accuracy ?? 20);
   const ready = !!progress && !gpsStatus && !offRoute && !loading && (!error || !!navigation.route);
-  const title = gpsStatus || (loading ? 'Строим маршрут' : offRoute ? 'Вы отклонились от маршрута' : progress?.instruction || (error ? 'Маршрут недоступен' : 'Готовим навигацию'));
+  const title = gpsStatus ? t(gpsStatus) : (loading ? t('Строим маршрут') : offRoute ? t('Вы отклонились от маршрута') : progress?.instruction || (error ? t('Маршрут недоступен') : t('Готовим навигацию')));
   const turn = navigation.route?.steps[progress?.stepIndex || 0];
   const maneuver = turn ? normalizeManeuver(turn) : undefined;
   return <><View testID="driver-navigation" pointerEvents="box-none" onLayout={event => onHeight?.(event.nativeEvent.layout.height)} style={[styles.position, { top }]}>
@@ -51,9 +53,9 @@ export function DriverNavigation({ navigation, top, onLocation, onHeight }: {
         <Text numberOfLines={2} style={[styles.title, theme.isDark && { color: theme.palette.muted, textShadowColor: '#000000' }]}>{title}</Text>
       </View>
     </View>
-    {!!gpsStatus && <Pressable accessibilityRole="button" accessibilityLabel="Проверить местоположение" onPress={() => { navigation.retry(); onLocation(); }} style={[styles.notice, theme.isDark && { backgroundColor: theme.palette.elevated }]}><Icon name="locate" color={theme.isDark ? theme.palette.ink : '#B57522'} size={16}/><Text numberOfLines={2} style={[styles.noticeText, theme.isDark && { color: theme.palette.ink }]}>{gpsStatus}</Text></Pressable>}
-    {!!error && <Pressable accessibilityRole="button" onPress={navigation.retry} style={[styles.notice, theme.isDark && { backgroundColor: theme.palette.elevated }]}><Icon name="refresh" color={theme.isDark ? theme.palette.ink : colors.blue} size={16}/><Text numberOfLines={2} style={[styles.noticeText, theme.isDark && { color: theme.palette.ink }]}>{error} · Повторить</Text></Pressable>}
-    {!!navigation.voiceError && <Pressable accessibilityRole="button" onPress={navigation.testVoice} style={[styles.notice, theme.isDark && { backgroundColor: theme.palette.elevated }]}><Text numberOfLines={2} style={[styles.noticeText, theme.isDark && { color: theme.palette.ink }]}>{navigation.voiceError} · Проверить</Text></Pressable>}
+    {!!gpsStatus && <Pressable accessibilityRole="button" accessibilityLabel={t('Проверить местоположение')} onPress={() => { navigation.retry(); onLocation(); }} style={[styles.notice, theme.isDark && { backgroundColor: theme.palette.elevated }]}><Icon name="locate" color={theme.isDark ? theme.palette.ink : '#B57522'} size={16}/><Text numberOfLines={2} style={[styles.noticeText, theme.isDark && { color: theme.palette.ink }]}>{t(gpsStatus)}</Text></Pressable>}
+    {!!error && <Pressable accessibilityRole="button" onPress={navigation.retry} style={[styles.notice, theme.isDark && { backgroundColor: theme.palette.elevated }]}><Icon name="refresh" color={theme.isDark ? theme.palette.ink : colors.blue} size={16}/><Text numberOfLines={2} style={[styles.noticeText, theme.isDark && { color: theme.palette.ink }]}>{t(error)} · {t('Повторить')}</Text></Pressable>}
+    {!!navigation.voiceError && <Pressable accessibilityRole="button" onPress={navigation.testVoice} style={[styles.notice, theme.isDark && { backgroundColor: theme.palette.elevated }]}><Text numberOfLines={2} style={[styles.noticeText, theme.isDark && { color: theme.palette.ink }]}>{t(navigation.voiceError)} · {t('Проверить')}</Text></Pressable>}
     {trackingDiagnosticsEnabled && <>
       <Pressable accessibilityRole="button" accessibilityLabel="Диагностика трекинга" onPress={() => setDiagnosticsOpen(value => !value)} style={[styles.diagnosticsToggle, theme.isDark && { backgroundColor: theme.palette.surface }]}><Text style={[styles.diagnosticsText, theme.isDark && { color: theme.palette.ink }]}>Диагностика {diagnosticsOpen ? '−' : '+'}</Text></Pressable>
       {diagnosticsOpen && <View testID="driver-tracking-diagnostics" style={[styles.diagnosticsPanel, theme.isDark && { backgroundColor: theme.palette.surface }]}>
@@ -82,7 +84,7 @@ export function DriverNavigation({ navigation, top, onLocation, onHeight }: {
         </View>
       </View>}
     </>}
-  </View><RoadFeatureAlerts features={navigation.roadFeatures || []} along={progress?.along || 0} top={top}/></>;
+  </View><RoadFeatureAlerts language={language} features={navigation.roadFeatures || []} along={progress?.along || 0} top={top}/></>;
 }
 const styles = StyleSheet.create({
   position: { position: 'absolute', left: 14, width: 250, gap: 7, zIndex: 10, elevation: 6 },

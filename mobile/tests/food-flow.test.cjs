@@ -80,6 +80,7 @@ async function setup(t, options = {}) {
         if (id === 'expo-status-bar') return { StatusBar: 'StatusBar' };
         if (id === '../design/theme') return { useTheme: () => ({ isDark: !!options.dark, palette: { background: options.dark ? '#050505' : '#F4F8FD' } }) };
         if (id === '../api') return { api, ApiError, messageOf: error => error.message, requestId: () => `request-${++nextId}` };
+        if (id === '../ui') return { tr: () => text => text };
         if (id === './cart') return load('cart.ts');
         if (id === './storage') return {
           readFoodState: async userId => clone(values.get(userId) ?? null),
@@ -93,6 +94,7 @@ async function setup(t, options = {}) {
           },
         };
         if (id === './ScreenTransition') return { ScreenTransition: props => React.createElement('ScreenTransition', props, props.children) };
+        if (id === './i18n') return { FoodLanguageProvider: props => props.children };
         if (['./HomeScreen', './CatalogScreens', './FavoritesScreen', './CheckoutScreens', './OrderScreens'].includes(id)) return screens;
         throw new Error(`Unexpected dependency ${id}`);
       },
