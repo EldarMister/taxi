@@ -7,7 +7,7 @@ import { Reveal, SpringPressable } from '../design/motion';
 import { palette, radii } from '../design/tokens';
 import { fonts } from '../design/typography';
 import { useTheme } from '../design/theme';
-import { FoodButton, FoodHeader, FoodIconButton, foodColors as c, money } from './components';
+import { FoodButton, FoodFavoriteButton, FoodHeader, FoodIconButton, foodColors as c, money } from './components';
 import { useFoodColors, useFoodStyles } from './foodTheme';
 import { foodImage } from './assets';
 import { MAX_FOOD_QUANTITY } from './cart';
@@ -29,11 +29,11 @@ function SearchField({ value, onChange, placeholder, inputRef }: {
   </View>;
 }
 
-function EmptyState({ title, subtitle }: { title: string; subtitle?: string }) {
+function EmptyState({ title, subtitle, dishes = false }: { title: string; subtitle?: string; dishes?: boolean }) {
   const s = useFoodStyles(baseStyles);
   const c = useFoodColors();
   return <View style={s.empty}>
-    <Ionicons name="restaurant-outline" size={36} color={c.muted} />
+    {dishes ? <Image source={require('../../assets/food/empty-dishes-3d.png')} resizeMode="contain" style={s.emptyDishesImage} /> : <Ionicons name="restaurant-outline" size={36} color={c.muted} />}
     <Text style={s.emptyTitle}>{title}</Text>
     {!!subtitle && <Text style={s.emptySubtitle}>{subtitle}</Text>}
   </View>;
@@ -65,10 +65,12 @@ function reviewLabel(count: number) {
   return count >= 1000 ? `${(count / 1000).toFixed(1).replace(/\.0$/, '')}K` : String(count);
 }
 
-export function RestaurantsScreen({ restaurants, onBack, onRestaurant, onCart, cartCount, cartTotal, cartRestaurantName, loading, error, onRetry }: {
+export function RestaurantsScreen({ restaurants, onBack, onRestaurant, onFavorites, favoriteCount, onCart, cartCount, cartTotal, cartRestaurantName, loading, error, onRetry }: {
   restaurants: FoodRestaurant[];
   onBack: () => void;
   onRestaurant: (restaurant: FoodRestaurant) => void;
+  onFavorites: () => void;
+  favoriteCount: number;
   onCart: () => void;
   cartCount: number;
   cartTotal: number;
@@ -99,6 +101,12 @@ export function RestaurantsScreen({ restaurants, onBack, onRestaurant, onCart, c
   return <SafeAreaView style={s.screen} edges={['top', 'left', 'right']}>
     <Reveal><FoodHeader title="Рестораны" onBack={onBack} right={<CartHeaderButton count={cartCount} onPress={onCart} />} /></Reveal>
     <Reveal delay={35} style={s.catalogSearch}><SearchField value={search} onChange={setSearch} placeholder="Ресторан, кухня или блюдо" /></Reveal>
+    <Reveal delay={50} style={s.favoritesEntryWrap}><SpringPressable accessibilityRole="button" accessibilityLabel={`Избранное: ${favoriteCount} сохранённых ресторанов и блюд`} onPress={onFavorites} pressScale={.98} style={s.favoritesEntry}>
+      <View style={s.favoritesEntryIcon}><Ionicons name="heart" size={20} color={c.blue} /></View>
+      <Text style={s.favoritesEntryTitle}>Избранное</Text>
+      {favoriteCount > 0 && <View style={s.favoritesEntryCount}><Text style={s.favoritesEntryCountText}>{favoriteCount}</Text></View>}
+      <Ionicons name="chevron-forward" size={20} color={c.muted} />
+    </SpringPressable></Reveal>
     <Reveal delay={65} style={s.filtersWrap}><ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.filters}>
       {categories.map(item => <Pressable key={item} accessibilityRole="button" accessibilityState={{ selected: item === category }} onPress={() => setCategory(item)} style={[s.filter, item === category && s.filterActive]}>
         <Text style={[s.filterText, item === category && s.filterTextActive]}>{item}</Text>
@@ -182,7 +190,7 @@ export function RestaurantScreen({ restaurant, onBack, onDish, onAdd, onDecrease
         <View style={[s.heroNav, { top: insets.top + 12, left: Math.max(insets.left, 14), right: Math.max(insets.right, 14) }]}>
           <FoodIconButton name="chevron-back" label="Назад" color="white" backgroundColor="rgba(80,80,80,.55)" onPress={onBack} size={30} />
           <View style={s.heroNavRight}>
-            <FoodIconButton name={favorite ? 'heart' : 'heart-outline'} label={favorite ? 'Убрать ресторан из избранного' : 'Добавить ресторан в избранное'} color="white" backgroundColor="rgba(80,80,80,.3)" onPress={onFavorite} size={30} />
+            <FoodFavoriteButton favorite={favorite} item="ресторан" onPress={onFavorite} />
             <FoodIconButton name="search-outline" label="Поиск по меню" color="white" backgroundColor="rgba(255,255,255,.45)" onPress={() => { setShowSearch(value => !value); setSearch(''); scroll.current?.scrollTo({ y: width * .4, animated: true }); }} size={29} />
           </View>
         </View>
@@ -194,7 +202,9 @@ export function RestaurantScreen({ restaurant, onBack, onDish, onAdd, onDecrease
           <View style={s.metaDivider} /><Text style={s.detailEta}>{restaurant.etaMin}–{restaurant.etaMax} мин</Text>
           <FoodIconButton name="information-circle-outline" label="Информация о ресторане" onPress={() => setShowInfo(true)} size={29} style={{ marginLeft: 'auto', marginRight: -5 }} />
         </View>
-        <Text style={[s.deliveryLabel, restaurant.deliveryFee === 0 && { color: c.green }]}>{restaurant.deliveryFee === 0 ? 'Бесплатная доставка' : `Доставка от ${money(restaurant.deliveryFee)}`}</Text>
+        <Text style={[s.deliveryLabel, restaurant.deliveryFee === 0 && { color: c.green }]}>{restaurant.deliveryFee === 0 ? 'Бесплатная доставка' : `Доставка ${money(restaurant.deliveryFee)}`}</Text>
+        {!!restaurant.deliveryFee && !!restaurant.freeDeliveryThreshold && <Text style={s.freeDeliveryLabel}>Бесплатная доставка от {money(restaurant.freeDeliveryThreshold)}</Text>}
+        <View style={s.restaurantAddressRow}><Ionicons name="location-outline" size={17} color={c.muted} /><Text style={s.restaurantAddress} numberOfLines={2}>Адрес: {restaurant.address}</Text></View>
         {showSearch && <View style={{ marginTop: 14 }}><SearchField inputRef={searchInput} value={search} onChange={setSearch} placeholder="Поиск по меню" /></View>}
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.menuTabs} style={s.menuTabsFrame}>
           {restaurant.menuCategories.map(item => <Pressable key={item} accessibilityRole="tab" accessibilityState={{ selected: category === item }} onPress={() => { setCategory(item); setSearch(''); }} style={[s.menuTab, category === item && s.menuTabSelected]}>
@@ -220,7 +230,7 @@ export function RestaurantScreen({ restaurant, onBack, onDish, onAdd, onDecrease
             </View> : <SpringPressable accessibilityRole="button" accessibilityLabel={`Добавить ${dish.name} в корзину`} disabled={!dish.available} accessibilityState={{ disabled: !dish.available }} onPress={() => onAdd(dish)} pressScale={.88} containerStyle={s.dishAddTarget} style={[s.dishAdd, !dish.available && { backgroundColor: palette.line }]}><Ionicons name="add" color={dish.available ? c.blue : c.muted} size={24} /></SpringPressable>}
           </View>;
           })}
-          {!dishes.length && <EmptyState title="Блюда не найдены" subtitle={query ? 'Попробуйте изменить поисковый запрос.' : 'В этой категории пока нет блюд. Выберите другую категорию.'} />}
+          {!dishes.length && <EmptyState dishes title="Блюда не найдены" subtitle={query ? 'Попробуйте изменить поисковый запрос.' : 'В этой категории пока нет блюд. Выберите другую категорию.'} />}
         </Reveal>
       </Reveal>
     </ScrollView>
@@ -263,7 +273,7 @@ export function DishScreen({ dish, restaurant, onBack, onAdd, favorite, onFavori
         <Image fadeDuration={160} source={foodImage(dish.heroImageKey || dish.imageKey, dish.heroImageUrl || dish.imageUrl)} style={s.heroImage} resizeMode="cover" />
         <View style={[s.heroNav, { top: insets.top + 15, left: Math.max(insets.left, 18), right: Math.max(insets.right, 18) }]}>
           <FoodIconButton name="chevron-back" label="Назад" color="white" backgroundColor="rgba(210,210,214,.65)" onPress={onBack} size={30} />
-          <FoodIconButton name={favorite ? 'heart' : 'heart-outline'} label={favorite ? 'Убрать блюдо из избранного' : 'Добавить блюдо в избранное'} color={favorite ? c.blue : c.ink} backgroundColor="white" onPress={onFavorite} size={28} />
+          <FoodFavoriteButton favorite={favorite} item="блюдо" onPress={onFavorite} />
         </View>
       </View>
       <Reveal delay={35} style={[s.dishSheet, { paddingLeft: Math.max(insets.left, 21), paddingRight: Math.max(insets.right, 21) }]}>
@@ -307,6 +317,12 @@ const baseStyles = StyleSheet.create({
   searchInput: { flex: 1, paddingVertical: 11, color: c.ink, fontFamily: fonts.regular, fontSize: 16, lineHeight: 22 },
   searchClear: { width: 26, height: 28 },
   catalogSearch: { paddingHorizontal: 16, paddingTop: 3 },
+  favoritesEntryWrap: { paddingHorizontal: 16, paddingTop: 10 },
+  favoritesEntry: { minHeight: 48, flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 12, borderRadius: 16, backgroundColor: palette.blueSoft },
+  favoritesEntryIcon: { width: 30, height: 30, borderRadius: 10, alignItems: 'center', justifyContent: 'center', backgroundColor: c.white },
+  favoritesEntryTitle: { flex: 1, color: c.ink, fontFamily: fonts.bold, fontSize: 15 },
+  favoritesEntryCount: { minWidth: 22, height: 22, borderRadius: 11, paddingHorizontal: 5, alignItems: 'center', justifyContent: 'center', backgroundColor: c.blue },
+  favoritesEntryCountText: { color: c.white, fontFamily: fonts.bold, fontSize: 12 },
   filtersWrap: { paddingTop: 13, paddingBottom: 16 },
   filters: { gap: 8, paddingHorizontal: 16 },
   filter: { minHeight: 40, justifyContent: 'center', paddingHorizontal: 16, borderRadius: radii.pill, backgroundColor: palette.surface },
@@ -334,6 +350,7 @@ const baseStyles = StyleSheet.create({
   discountBadge: { position: 'absolute', left: 8, top: 8, paddingHorizontal: 9, paddingVertical: 6, borderRadius: 10, backgroundColor: palette.coral },
   discountText: { color: c.white, fontFamily: fonts.bold, fontSize: 12, lineHeight: 15 },
   empty: { flex: 1, padding: 28, alignItems: 'center', justifyContent: 'center', gap: 12 },
+  emptyDishesImage: { width: 208, height: 172, marginBottom: 4 },
   emptyTitle: { color: c.ink, fontFamily: fonts.semibold, fontSize: 19, textAlign: 'center' },
   emptySubtitle: { color: c.muted, fontFamily: fonts.regular, fontSize: 15, lineHeight: 22, textAlign: 'center' },
   heroImage: { width: '100%', height: '100%', backgroundColor: '#161916' },
@@ -347,7 +364,10 @@ const baseStyles = StyleSheet.create({
   detailReview: { color: palette.inkSoft, fontFamily: fonts.regular },
   metaDivider: { height: 16, width: 1, backgroundColor: c.line },
   detailEta: { color: palette.inkSoft, fontFamily: fonts.medium, fontSize: 15 },
-  deliveryLabel: { marginTop: 2, marginBottom: 15, color: c.muted, fontFamily: fonts.semibold, fontSize: 14 },
+  deliveryLabel: { marginTop: 2, marginBottom: 3, color: c.muted, fontFamily: fonts.semibold, fontSize: 14 },
+  freeDeliveryLabel: { color: c.green, fontFamily: fonts.semibold, fontSize: 14, lineHeight: 19, marginBottom: 5 },
+  restaurantAddressRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 6, marginBottom: 15 },
+  restaurantAddress: { flex: 1, color: c.muted, fontFamily: fonts.regular, fontSize: 13, lineHeight: 18 },
   menuTabsFrame: { marginHorizontal: -20 },
   menuTabs: { gap: 8, paddingHorizontal: 20, paddingVertical: 5 },
   menuTab: { minHeight: 40, justifyContent: 'center', paddingHorizontal: 15, borderRadius: radii.pill, backgroundColor: palette.surface },

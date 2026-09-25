@@ -5,7 +5,7 @@ export interface FoodDish {
 }
 export interface FoodRestaurant {
   id:string; name:string; rating:number; reviewCount:number; cuisine:string; categories:string[];
-  etaMin:number; etaMax:number; deliveryFee:number; minimumOrder:number; address:string; phone:string|null;
+  etaMin:number; etaMax:number; deliveryFee:number; freeDeliveryThreshold?:number; minimumOrder:number; address:string; phone:string|null;
   imageKey:string; imageUrl?:string; heroImageKey:string; heroImageUrl?:string; discountPercent?:number; menuCategories:string[];
   dishes:FoodDish[]; options:FoodOption[]; isDemo:boolean;
 }
@@ -32,7 +32,7 @@ export const DEMO_FOOD_RESTAURANTS:FoodRestaurant[] = [
   },
   {
     id:'kfc',name:'KFC',rating:4.6,reviewCount:1200,cuisine:'Фастфуд',categories:['Бургеры','Фастфуд'],
-    etaMin:25,etaMax:35,deliveryFee:100,minimumOrder:0,address:'Кочкор-Ата',phone:null,
+    etaMin:25,etaMax:35,deliveryFee:100,freeDeliveryThreshold:1000,minimumOrder:0,address:'Кочкор-Ата',phone:null,
     imageKey:'kfc',heroImageKey:'kfc',menuCategories:['Бургеры','Курица','Закуски'],isDemo:true,
     dishes:[
       {id:'chicken-burger',name:'Чикенбургер',category:'Бургеры',description:'Куриное филе, салат и фирменный соус в булочке.',portion:'1 шт.',weightGrams:210,price:290,imageKey:'burger',available:true,optionIds:[]},
@@ -50,7 +50,7 @@ export const DEMO_FOOD_RESTAURANTS:FoodRestaurant[] = [
   },
   {
     id:'ali-burger',name:'Али Бургер',rating:4.4,reviewCount:280,cuisine:'Бургеры',categories:['Бургеры','Фастфуд'],
-    etaMin:25,etaMax:40,deliveryFee:100,minimumOrder:0,address:'Кочкор-Ата',phone:null,
+    etaMin:25,etaMax:40,deliveryFee:100,freeDeliveryThreshold:1000,minimumOrder:0,address:'Кочкор-Ата',phone:null,
     imageKey:'ali-burger',heroImageKey:'ali-burger',menuCategories:['Бургеры','Комбо'],isDemo:true,
     dishes:[
       {id:'ali-cheeseburger',name:'Чизбургер',category:'Бургеры',description:'Говяжья котлета, сыр, овощи и соус в мягкой булочке.',portion:'1 шт.',weightGrams:280,price:320,imageKey:'burger',available:true,optionIds:[]},

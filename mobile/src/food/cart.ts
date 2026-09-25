@@ -26,7 +26,7 @@ export function cartSummary(restaurant: FoodRestaurant | undefined, lines: CartL
   });
   const subtotal = items.reduce((sum, item) => sum + item.total, 0);
   const count = items.reduce((sum, item) => sum + item.quantity, 0);
-  const deliveryFee = count && fulfillment === 'DELIVERY' ? restaurant?.deliveryFee || 0 : 0;
+  const deliveryFee = count && fulfillment === 'DELIVERY' && !(restaurant?.freeDeliveryThreshold && subtotal >= restaurant.freeDeliveryThreshold) ? restaurant?.deliveryFee || 0 : 0;
   const invalid = lines.length !== items.length || items.some(item => !item.dish.available || item.quantity < 1 || item.quantity > MAX_FOOD_QUANTITY || !Number.isInteger(item.quantity) || item.optionIds.some(id => !item.dish.optionIds.includes(id) || !restaurant!.options.some(option => option.id === id)));
   return { items, subtotal, count, deliveryFee, total: subtotal + deliveryFee, invalid };
 }

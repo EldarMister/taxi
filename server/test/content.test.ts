@@ -19,7 +19,7 @@ test('catalog validation accepts full menus and reconstructs bounded values with
 });
 test('catalog edits reject invalid pricing, duplicate identities, orphan categories and foreign options',()=>{
   const changes:((source:ReturnType<typeof restaurant>)=>void)[]=[
-    s=>{s.dishes[0].price=-1;},s=>{s.dishes[0].price=0.5;},s=>{s.deliveryFee=Infinity;},s=>{s.rating=7;},s=>{s.etaMin=100;s.etaMax=10;},
+    s=>{s.dishes[0].price=-1;},s=>{s.dishes[0].price=0.5;},s=>{s.deliveryFee=Infinity;},s=>{s.freeDeliveryThreshold=-1;},s=>{s.rating=7;},s=>{s.etaMin=100;s.etaMax=10;},
     s=>{s.dishes[1].id=s.dishes[0].id;},s=>{s.options[1].id=s.options[0].id;},s=>{s.dishes[0].category='Нет категории';},s=>{s.options=[];},
     s=>{s.dishes[0].optionIds=['soy','soy'];},s=>{s.menuCategories.push(s.menuCategories[0]);},s=>{s.dishes[0].name='';},
   ];

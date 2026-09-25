@@ -24,7 +24,7 @@ const restaurant = {
 const otherRestaurant = { ...restaurant, id: 'kfc', name: 'KFC', dishes: [otherDish] };
 const catalog = { restaurants: [restaurant, otherRestaurant], paymentMethods: [{ id: 'CASH', name: 'Наличные', available: true }], isDemo: true };
 class ApiError extends Error { constructor(status, message) { super(message); this.status = status; } }
-const screenNames = ['ServiceHomeScreen', 'RestaurantsScreen', 'RestaurantScreen', 'DishScreen', 'CartScreen', 'CheckoutScreen', 'FoodOrderScreen', 'FoodHistoryScreen'];
+const screenNames = ['ServiceHomeScreen', 'RestaurantsScreen', 'FavoritesScreen', 'RestaurantScreen', 'DishScreen', 'CartScreen', 'CheckoutScreen', 'FoodOrderScreen', 'FoodHistoryScreen'];
 
 function order(id = 'server-order-1', fields = {}) {
   return {
@@ -93,7 +93,7 @@ async function setup(t, options = {}) {
           },
         };
         if (id === './ScreenTransition') return { ScreenTransition: props => React.createElement('ScreenTransition', props, props.children) };
-        if (['./HomeScreen', './CatalogScreens', './CheckoutScreens', './OrderScreens'].includes(id)) return screens;
+        if (['./HomeScreen', './CatalogScreens', './FavoritesScreen', './CheckoutScreens', './OrderScreens'].includes(id)) return screens;
         throw new Error(`Unexpected dependency ${id}`);
       },
     });
@@ -165,6 +165,27 @@ test('configured banners open their actual restaurant, food catalog, or taxi ser
   assert.equal(h.screen, 'RestaurantScreen'); assert.equal(h.view.restaurant.id, 'kfc');
   await h.change({ entry: { screen: 'home', key: 2 } });
   await h.press('onBanner', { actionType: 'FOOD' });
+  assert.equal(h.screen, 'RestaurantsScreen');
+});
+
+test('food favorites list saved restaurants and dishes and return to the list after opening either', async t => {
+  const saved = { restaurantId: null, lines: [], favorites: ['sushi-roll'], favoriteDishes: ['kfc:burger'], address: 'ул. Ленина 12' };
+  const h = await setup(t, { saved: { 'client-a': saved } });
+  await h.press('onFood');
+  assert.equal(h.view.favoriteCount, 2);
+  await h.press('onFavorites');
+  assert.equal(h.screen, 'FavoritesScreen');
+  assert.deepEqual(clone(h.view.restaurants.map(item => item.id)), ['sushi-roll']);
+  assert.deepEqual(clone(h.view.dishes.map(item => `${item.restaurant.id}:${item.dish.id}`)), ['kfc:burger']);
+  await h.press('onRestaurant', restaurant);
+  assert.equal(h.screen, 'RestaurantScreen');
+  await h.press('onBack');
+  assert.equal(h.screen, 'FavoritesScreen');
+  await h.press('onDish', otherRestaurant, otherDish);
+  assert.equal(h.screen, 'DishScreen');
+  await h.hardwareBack();
+  assert.equal(h.screen, 'FavoritesScreen');
+  await h.press('onBack');
   assert.equal(h.screen, 'RestaurantsScreen');
 });
 

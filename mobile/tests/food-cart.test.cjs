@@ -122,6 +122,17 @@ test('empty carts do not attract a delivery fee and free-delivery restaurants re
   assert.equal(free.total, 520);
 });
 
+test('a configured free-delivery threshold changes the cart total at the same subtotal as the server', () => {
+  const restaurant = { ...menu(), freeDeliveryThreshold: 1000 };
+  const below = cartSummary(restaurant, [{ dishId: 'california', quantity: 2, optionIds: [] }]);
+  assert.equal(below.subtotal, 920);
+  assert.equal(below.deliveryFee, 100);
+  const free = cartSummary(restaurant, [{ dishId: 'philadelphia', quantity: 2, optionIds: [] }]);
+  assert.equal(free.subtotal, 1040);
+  assert.equal(free.deliveryFee, 0);
+  assert.equal(free.total, 1040);
+});
+
 test('stale dishes, unavailable dishes, malformed quantities and unsupported options mark a cart invalid', () => {
   const restaurant = menu();
   const valid = { dishId: 'philadelphia', quantity: 1, optionIds: [] };

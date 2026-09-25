@@ -66,6 +66,14 @@ export function FoodIconButton({ name, onPress, label, color, backgroundColor = 
   </SpringPressable>;
 }
 
+export function FoodFavoriteButton({ favorite, onPress, item }: { favorite: boolean; onPress: () => void; item: 'ресторан' | 'блюдо' }) {
+  const s = useFoodStyles(baseStyles);
+  return <SpringPressable accessibilityRole="button" accessibilityLabel={favorite ? `Убрать ${item} из избранного` : `Добавить ${item} в избранное`}
+    accessibilityState={{ selected: favorite }} onPress={onPress} hitSlop={8} pressScale={.9} style={s.favoriteButton}>
+    <Ionicons name={favorite ? 'heart' : 'heart-outline'} color="#FFFFFF" size={28} />
+  </SpringPressable>;
+}
+
 export function FoodHeader({ title, onBack, right, backDisabled, backBusy }: { title: string; onBack: () => void; right?: React.ReactNode; backDisabled?: boolean; backBusy?: boolean }) {
   const s = useFoodStyles(baseStyles);
   return <View style={s.header}>
@@ -80,6 +88,7 @@ const baseStyles = StyleSheet.create({
   secondaryButton: { backgroundColor: palette.blueSoft, shadowOpacity: 0, elevation: 0 },
   buttonText: { color: foodColors.white, fontFamily: fonts.bold, fontSize: 17, lineHeight: 23, textAlign: 'center' },
   iconButton: { width: 42, height: 42, borderRadius: 21, alignItems: 'center', justifyContent: 'center' },
+  favoriteButton: { width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(35,39,45,.52)', borderWidth: 1, borderColor: 'rgba(255,255,255,.35)' },
   header: { height: 64, marginHorizontal: 12, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   headerTitle: { flex: 1, textAlign: 'center', color: foodColors.ink, fontFamily: fonts.bold, fontSize: 21, letterSpacing: -.55, paddingHorizontal: 3 },
   headerRight: { width: 42, minHeight: 42, alignItems: 'center', justifyContent: 'center' },

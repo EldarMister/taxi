@@ -43,7 +43,7 @@ function imageFields(value:Record<string,unknown>,hero=false) {
 
 // Reconstruct a bounded, typed catalog rather than persisting arbitrary admin JSON.
 export function validateRestaurantCatalog(value:unknown,id:string,isDemo:boolean):FoodRestaurant {
-  const r=object(value,'catalog',['id','name','rating','reviewCount','cuisine','categories','etaMin','etaMax','deliveryFee','minimumOrder','address','phone','imageKey','imageUrl','heroImageKey','heroImageUrl','discountPercent','menuCategories','dishes','options','isDemo']);
+  const r=object(value,'catalog',['id','name','rating','reviewCount','cuisine','categories','etaMin','etaMax','deliveryFee','freeDeliveryThreshold','minimumOrder','address','phone','imageKey','imageUrl','heroImageKey','heroImageUrl','discountPercent','menuCategories','dishes','options','isDemo']);
   if(r.id!==undefined&&r.id!==id)return fail('catalog.id');
   if(r.isDemo!==undefined&&typeof r.isDemo!=='boolean')return fail('catalog.isDemo');
   const menuCategories=strings(r.menuCategories,'menuCategories');
@@ -64,7 +64,7 @@ export function validateRestaurantCatalog(value:unknown,id:string,isDemo:boolean
   if(etaMax<etaMin)return fail('etaMax: должно быть не меньше etaMin');
   const phone=r.phone==null||r.phone===''?null:string(r.phone,'phone',30,5);
   if(phone&&!/^\+?[\d ()-]{5,30}$/.test(phone))return fail('phone');
-  return {id,isDemo,name:string(r.name,'name',150,1),rating:number(r.rating,'rating',5,0,false),reviewCount:number(r.reviewCount,'reviewCount',10_000_000),cuisine:string(r.cuisine,'cuisine',200),categories:strings(r.categories,'categories'),etaMin,etaMax,deliveryFee:number(r.deliveryFee,'deliveryFee'),minimumOrder:number(r.minimumOrder,'minimumOrder'),address:string(r.address,'address',500,1),phone,...imageFields(r,true),heroImageKey:r.heroImageKey===undefined?'':string(r.heroImageKey,'heroImageKey',100),...(r.discountPercent===undefined||r.discountPercent===null?{}:{discountPercent:number(r.discountPercent,'discountPercent',100)}),menuCategories,dishes,options};
+  return {id,isDemo,name:string(r.name,'name',150,1),rating:number(r.rating,'rating',5,0,false),reviewCount:number(r.reviewCount,'reviewCount',10_000_000),cuisine:string(r.cuisine,'cuisine',200),categories:strings(r.categories,'categories'),etaMin,etaMax,deliveryFee:number(r.deliveryFee,'deliveryFee'),freeDeliveryThreshold:r.freeDeliveryThreshold===undefined?0:number(r.freeDeliveryThreshold,'freeDeliveryThreshold'),minimumOrder:number(r.minimumOrder,'minimumOrder'),address:string(r.address,'address',500,1),phone,...imageFields(r,true),heroImageKey:r.heroImageKey===undefined?'':string(r.heroImageKey,'heroImageKey',100),...(r.discountPercent===undefined||r.discountPercent===null?{}:{discountPercent:number(r.discountPercent,'discountPercent',100)}),menuCategories,dishes,options};
 }
 
 export interface BannerInput {title:string;subtitle:string;imageUrl:string|null;imageKey:string|null;actionType:'NONE'|'RESTAURANT'|'FOOD'|'TAXI';restaurantId:string|null;sortOrder:number;active:boolean}

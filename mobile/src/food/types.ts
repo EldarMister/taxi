@@ -34,6 +34,7 @@ export type FoodRestaurant = {
   etaMin: number;
   etaMax: number;
   deliveryFee: number;
+  freeDeliveryThreshold?: number;
   minimumOrder: number;
   address: string;
   phone: string | null;

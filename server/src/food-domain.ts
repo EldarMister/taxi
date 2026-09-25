@@ -40,7 +40,8 @@ export function priceFoodOrder(restaurant:FoodRestaurant,items:CreateFoodOrderDt
   });
   const subtotal=lines.reduce((sum,line)=>sum+line.lineTotal,0);
   if(subtotal<restaurant.minimumOrder)throw new BadRequestException(`Минимальный заказ — ${restaurant.minimumOrder} сом`);
-  const deliveryFee=fulfillment==='PICKUP'?0:restaurant.deliveryFee;
+  const freeThreshold=restaurant.freeDeliveryThreshold??0;
+  const deliveryFee=fulfillment==='PICKUP'||(freeThreshold>0&&subtotal>=freeThreshold)?0:restaurant.deliveryFee;
   const total=subtotal+deliveryFee;
   if(!Number.isSafeInteger(total)||total<0||total>1_000_000||!Number.isInteger(deliveryFee)||deliveryFee<0)throw new BadRequestException('Не удалось рассчитать стоимость заказа');
   return {items:lines,subtotal,deliveryFee,total};
