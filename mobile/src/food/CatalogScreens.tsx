@@ -230,7 +230,7 @@ export function RestaurantScreen({ restaurant, onBack, onDish, onAdd, onDecrease
             </View> : <SpringPressable accessibilityRole="button" accessibilityLabel={`Добавить ${dish.name} в корзину`} disabled={!dish.available} accessibilityState={{ disabled: !dish.available }} onPress={() => onAdd(dish)} pressScale={.88} containerStyle={s.dishAddTarget} style={[s.dishAdd, !dish.available && { backgroundColor: palette.line }]}><Ionicons name="add" color={dish.available ? c.blue : c.muted} size={24} /></SpringPressable>}
           </View>;
           })}
-          {!dishes.length && <EmptyState dishes title="Блюда не найдены" subtitle={query ? 'Попробуйте изменить поисковый запрос.' : 'В этой категории пока нет блюд. Выберите другую категорию.'} />}
+          {!dishes.length && <EmptyState dishes title="Блюда не найдены" subtitle={query ? 'Измените запрос.' : 'Выберите другую категорию.'} />}
         </Reveal>
       </Reveal>
     </ScrollView>
@@ -350,7 +350,7 @@ const baseStyles = StyleSheet.create({
   discountBadge: { position: 'absolute', left: 8, top: 8, paddingHorizontal: 9, paddingVertical: 6, borderRadius: 10, backgroundColor: palette.coral },
   discountText: { color: c.white, fontFamily: fonts.bold, fontSize: 12, lineHeight: 15 },
   empty: { flex: 1, padding: 28, alignItems: 'center', justifyContent: 'center', gap: 12 },
-  emptyDishesImage: { width: 208, height: 172, marginBottom: 4 },
+  emptyDishesImage: { width: 190, height: 190, marginBottom: 2 },
   emptyTitle: { color: c.ink, fontFamily: fonts.semibold, fontSize: 19, textAlign: 'center' },
   emptySubtitle: { color: c.muted, fontFamily: fonts.regular, fontSize: 15, lineHeight: 22, textAlign: 'center' },
   heroImage: { width: '100%', height: '100%', backgroundColor: '#161916' },
