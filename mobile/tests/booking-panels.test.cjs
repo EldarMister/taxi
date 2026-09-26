@@ -44,7 +44,8 @@ function load(file) {
     if (id === 'expo-contacts') return contacts;
     if (id === 'react-native-svg') return { __esModule: true, default: 'Svg', Path: 'Path', Circle: 'Circle' };
     if (id === 'react-native-gesture-handler') return { PanGestureHandler: 'PanGestureHandler', State: { BEGAN: 2, END: 5, CANCELLED: 3, FAILED: 1 } };
-    if (id === './navigation') return { displayDistance: value => value + ' м', distanceBetween: () => 125, navigationConfig: { offRouteMeters: 40 }, offRouteThreshold: () => 40,
+    if (id === './navigation') return { displayDistance: value => value + ' м', distantManeuverInstruction: progress => progress.instruction,
+      distanceBetween: () => 125, navigationConfig: { offRouteMeters: 40 }, offRouteThreshold: () => 40,
       normalizeManeuver: step => ({ kind: step.maneuver.type, side: step.maneuver.modifier }) };
     if (id === './RoadFeatureAlerts') return { RoadFeatureAlerts: 'RoadFeatureAlerts' };
     if (id === './native/driverTracking') return { getDriverTrackingDiagnostics: () => ({ raw: null, processed: null, ageMs: null,

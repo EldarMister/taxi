@@ -17,7 +17,7 @@ export function rideComment(details: RideDetails): string {
 type EditField = 'entrance' | 'comment';
 type Surface = 'summary' | 'details' | 'payment' | 'passenger' | EditField;
 type Props = {
-  pickup: Point | null; dropoff: Point | null; tariffs: Tariff[]; tariffId: string;
+  pickup: Point | null; dropoff: Point | null; locatingPickup?: boolean; tariffs: Tariff[]; tariffId: string;
   quote: Quote | null; previewQuote?: Quote | null; quotes: Record<string, Quote>; calculating: boolean; quoteError: string; bookingError?: string; busy: boolean;
   language: User['language']; details: RideDetails; onDetails: (value: RideDetails) => void;
   onAddress: (field: 'pickup' | 'dropoff') => void; onTariff: (id: string) => void;
@@ -28,7 +28,7 @@ type Props = {
 const carColor = (index: number) => index === 0 ? '#E5ECF4' : index === 1 ? '#67788D' : '#253447';
 const titles: Record<EditField, string> = { entrance: 'Укажите номер подъезда', comment: 'Комментарий водителю' };
 
-export function BookingPanel({ pickup, dropoff, tariffs, tariffId, quote, previewQuote, quotes, calculating, quoteError, bookingError, busy, language, details, onDetails, onAddress, registerAddressOpener, onTariff, onSwap, onBook, onHeight, hidden }: Props) {
+export function BookingPanel({ pickup, dropoff, locatingPickup = false, tariffs, tariffId, quote, previewQuote, quotes, calculating, quoteError, bookingError, busy, language, details, onDetails, onAddress, registerAddressOpener, onTariff, onSwap, onBook, onHeight, hidden }: Props) {
   const { isDark, palette } = useTheme();
   const b = useThemeStyles(baseB);
   const t = tr(language);
@@ -88,8 +88,8 @@ export function BookingPanel({ pickup, dropoff, tariffs, tariffId, quote, previe
   };
   const footer = (expanded = false) => <View style={b.footer}>
     <Pressable accessibilityRole="button" accessibilityLabel={t('Способы оплаты')} onPress={payment} disabled={busy} style={b.iconButton}><Icon name="cash-outline" size={27} color={colors.blue}/></Pressable>
-    <Pressable testID="book-ride" accessibilityRole="button" accessibilityState={{ disabled: busy || (ready && !quote) || tooLong }} disabled={busy || (ready && !quote) || tooLong} onPress={!ready ? () => onAddress(pickup ? 'dropoff' : 'pickup') : onBook} style={({ pressed }) => [b.primary, { flex: 1 }, (pressed || busy || (ready && !quote) || tooLong) && { opacity: .6 }]}>
-    {(busy || (ready && !quote && calculating)) && <ActivityIndicator color={palette.accentText} size="small"/>}<Text style={b.primaryText}>{t(!ready ? 'Укажите маршрут' : quote ? 'Заказать' : quoteError ? 'Повторим автоматически' : shownQuote ? 'Обновляем цену…' : 'Считаем…')}</Text>
+    <Pressable testID="book-ride" accessibilityRole="button" accessibilityState={{ disabled: locatingPickup || busy || (ready && !quote) || tooLong }} disabled={locatingPickup || busy || (ready && !quote) || tooLong} onPress={!ready ? () => onAddress(pickup ? 'dropoff' : 'pickup') : onBook} style={({ pressed }) => [b.primary, { flex: 1 }, (pressed || locatingPickup || busy || (ready && !quote) || tooLong) && { opacity: .6 }]}>
+    {(locatingPickup || busy || (ready && !quote && calculating)) && <ActivityIndicator color={palette.accentText} size="small"/>}<Text style={b.primaryText}>{t(locatingPickup ? 'Определяем местоположение' : !ready ? 'Укажите маршрут' : quote ? 'Заказать' : quoteError ? 'Повторим автоматически' : shownQuote ? 'Обновляем цену…' : 'Считаем…')}</Text>
     </Pressable>
     <Pressable accessibilityRole="button" accessibilityLabel={t(expanded ? 'Свернуть детали поездки' : 'Детали поездки')} onPress={() => navigate(expanded ? 'summary' : 'details')} style={b.iconButton}><Icon name={expanded ? 'chevron-down' : 'options-outline'} size={25}/></Pressable>
   </View>;
@@ -100,7 +100,7 @@ export function BookingPanel({ pickup, dropoff, tariffs, tariffId, quote, previe
         <View style={b.homeTitle}><Image source={require('../assets/logo1.png')} accessibilityLabel="Atlas" resizeMode="contain" style={b.serviceLogo}/><Text style={b.title}>{t('Такси')}</Text></View>
         <Pressable accessibilityRole="button" accessibilityLabel={t('Куда едем?')} onPress={() => requestAddress('dropoff')} style={b.destination}><Text style={b.where}>{t('Куда едем?')}</Text><Icon name="arrow-forward-circle" size={23}/></Pressable>
       </View> : <>
-        <View style={b.addressRow}><Pressable accessibilityRole="button" accessibilityLabel={t('Откуда')} disabled={busy} onPress={() => requestAddress('pickup')} style={b.address}><PickupIcon size={20}/><Text numberOfLines={1} style={b.addressText}>{shortAddress(pickup?.address) || t('Место подачи')}</Text></Pressable><Pressable accessibilityRole="button" accessibilityLabel={t('Подъезд')} onPress={() => edit('entrance')} style={b.pill}><Text numberOfLines={1} style={b.pillText}>{details.entrance ? t('Подъезд') + ' ' + details.entrance : t('Подъезд')}</Text></Pressable></View>
+        <View style={b.addressRow}><Pressable accessibilityRole="button" accessibilityLabel={t('Откуда')} disabled={busy} onPress={() => requestAddress('pickup')} style={b.address}><PickupIcon size={20}/><Text numberOfLines={1} style={b.addressText}>{shortAddress(pickup?.address) || t(locatingPickup ? 'Определяем местоположение' : 'Место подачи')}</Text></Pressable><Pressable accessibilityRole="button" accessibilityLabel={t('Подъезд')} onPress={() => edit('entrance')} style={b.pill}><Text numberOfLines={1} style={b.pillText}>{details.entrance ? t('Подъезд') + ' ' + details.entrance : t('Подъезд')}</Text></Pressable></View>
         <View style={b.addressRow}><Pressable accessibilityRole="button" accessibilityLabel={t('Куда')} disabled={busy} onPress={() => requestAddress('dropoff')} style={b.address}><Icon name="flag" size={20}/><Text numberOfLines={1} style={b.addressText}>{shortAddress(dropoff.address)}</Text></Pressable><Pressable accessibilityRole="button" accessibilityLabel={t('Поменять адреса местами')} onPress={onSwap} disabled={busy} style={b.iconButton}><Icon name="swap-vertical" size={20}/></Pressable></View>
         <View style={b.serviceRow}><Text style={b.caption}>{shownQuote ? km(shownQuote.distanceMeters) + ' · ≈ ' + mins(shownQuote.durationSeconds, language) + ' ' + t('в пути') : t('Выберите тариф')}</Text></View>
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={b.tariffs}>

@@ -178,6 +178,8 @@ function TaxiApp() {
   const [savedPlaces, setSavedPlaces] = useState<SavedPlaces>({});
   const [savedPlaceEditing, setSavedPlaceEditing] = useState<SavedPlaceKind | null>(null);
   const savedPlaceMapTransition = useRef(false);
+  const savedPlacePickupRequest = useRef(0);
+  const [locatingSavedPlacePickup, setLocatingSavedPlacePickup] = useState(false);
   const [addressField, setAddressField] = useState<"pickup" | "dropoff" | null>(
     null,
   );
@@ -211,6 +213,8 @@ function TaxiApp() {
   const showingServices = !driver && page === 'home' && service === 'hub' && !order;
   const locationEnabled = !!locationPermission?.granted && locationPermission.servicesEnabled;
   useEffect(() => {
+    savedPlacePickupRequest.current++;
+    setLocatingSavedPlacePickup(false);
     setSavedPlaces({});
     setSavedPlaceEditing(null);
     if (!user?.id || driver) return;
@@ -684,7 +688,7 @@ function TaxiApp() {
   const selectAddress = (field: "pickup" | "dropoff", point: Point) => {
     const selected = normalizePoint(point);
     setError("");
-    if (field === "pickup") { setPickup(selected); markManualPickup(!selected.address.startsWith('GPS:')); setRideDetails(current => ({ ...current, entrance: "" })); }
+    if (field === "pickup") { savedPlacePickupRequest.current++; setLocatingSavedPlacePickup(false); setPickup(selected); markManualPickup(!selected.address.startsWith('GPS:')); setRideDetails(current => ({ ...current, entrance: "" })); }
     else setDropoff(selected);
     setAddressField(null);
     setMapField(field === "dropoff" && !pickup ? "pickup" : null);
@@ -715,11 +719,28 @@ function TaxiApp() {
     setError('');
   };
   const openSavedPlace = (kind: SavedPlaceKind) => {
-    if (savedPlaces[kind]) {
-      setDropoff(savedPlaces[kind]);
+    const place = savedPlaces[kind];
+    if (place) {
+      const request = ++savedPlacePickupRequest.current;
+      const accountId = user?.id;
+      setDropoff(place);
       setAddressField(null);
       setMapField(null);
       setService('taxi');
+      markManualPickup(false);
+      setPickup(null);
+      setLocatingSavedPlacePickup(true);
+      void getCurrentPosition().then(point => {
+        if (savedPlacePickupRequest.current !== request || userRef.current?.id !== accountId || pickupChosenManuallyRef.current) return;
+        setPickup(gpsPoint(point));
+        setLocatingSavedPlacePickup(false);
+        void resolvePoint(point).then(resolved => {
+          if (savedPlacePickupRequest.current !== request || userRef.current?.id !== accountId || pickupChosenManuallyRef.current) return;
+          setPickup(selected => selected && selected.latitude === point.latitude && selected.longitude === point.longitude ? normalizePoint(resolved) : selected);
+        }).catch(() => undefined);
+      }).catch(cause => {
+        if (savedPlacePickupRequest.current === request && userRef.current?.id === accountId) { setLocatingSavedPlacePickup(false); setError(messageOf(cause)); }
+      }).finally(() => void refreshLocationPermission().catch(() => undefined));
     } else {
       editSavedPlace(kind);
     }
@@ -1292,7 +1313,7 @@ function TaxiApp() {
           {driver && <DriverPanel key={offer?.id || order?.id || 'idle'} user={user} order={visibleDriverOrder} offer={offer} busy={busy} coming={coming} approach={approach} navigation={navigation} backgroundReady={navigation.backgroundReady} onBackground={navigation.enableBackground} onAccept={accept} onRateClient={rateClient} onCompletionHeight={setDriverCompletionHeight} onHeight={setDriverPanelHeight} onOnline={() => online(true)} onAction={action} onChat={() => setChat(true)} onDone={done}/>}
           {!driver && <View pointerEvents="none" style={{ flex: 1 }}/>}
           {!driver && !order && service === 'taxi' && <>
-            <BookingPanel pickup={pickup} dropoff={dropoff} tariffs={tariffs} tariffId={tariffId}
+            <BookingPanel pickup={pickup} dropoff={dropoff} locatingPickup={locatingSavedPlacePickup} tariffs={tariffs} tariffId={tariffId}
               quote={quote} previewQuote={previewQuote} quotes={quotes} calculating={calculating} quoteError={quoteError} bookingError={error} busy={busy}
               language={user.language} details={rideDetails} onDetails={setRideDetails}
               onAddress={setAddressField} registerAddressOpener={registerAddressOpener} onTariff={setTariffId} hidden={!!mapSelection || !!addressField} onHeight={setBookingHeight}
