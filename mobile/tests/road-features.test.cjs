@@ -36,3 +36,15 @@ test('shows several approaching warnings and retires each 10 metres after passin
   assert.equal(roadFeatureDistanceLabel(signs[0], 620), 'позади');
   assert.match(roadFeatureAnnouncement([signs[0], signs[1]], 250, 'ru'), /триста пятьдесят метров знак Стоп.*четыреста метров светофор/);
 });
+
+test('announces signs at the same rounded distance in one phrase', () => {
+  const signs = [
+    { id: 'crossing', kind: 'pedestrian_crossing', along: 160 },
+    { id: 'light', kind: 'traffic_light', along: 163 },
+    { id: 'camera', kind: 'speed_camera', along: 210 },
+  ];
+  assert.equal(roadFeatureAnnouncement(signs, 0, 'ru'),
+    'Через сто шестьдесят метров пешеходный переход и светофор. Через двести десять метров камера контроля скорости.');
+  assert.equal(roadFeatureAnnouncement(signs.slice(0, 2), 0, 'ky'),
+    '160 метрден кийин жөө жүргүнчүлөр өтмөгү жана светофор.');
+});

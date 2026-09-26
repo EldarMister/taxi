@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
-import { Camera, LineLayer, MapView, PointAnnotation, ShapeSource, type CameraRef } from '@maplibre/maplibre-react-native';
+import { Camera, LineLayer, MapView, MarkerView, ShapeSource, type CameraRef } from '@maplibre/maplibre-react-native';
 import { useTheme } from '../design/theme';
 import type { Order, User } from '../types';
 import { Icon, tr } from '../ui';
@@ -8,7 +8,7 @@ import { getCurrentPosition } from './location';
 import { isMapPoint, routeFrame } from './routeFrame';
 import { darkRasterMapFallback, mapStyleForLanguage, rasterMapFallback } from './taxiMapStyle';
 
-export function HistoryRouteMap({ order, language, onError }: { order: Order; language: User['language']; onError: (message: string) => void }) {
+export function HistoryRouteMap({ order, language, onError, onInteractionChange }: { order: Order; language: User['language']; onError: (message: string) => void; onInteractionChange?: (active: boolean) => void }) {
   const { isDark, palette } = useTheme();
   const camera = useRef<CameraRef>(null);
   const [size, setSize] = useState({ width: 0, height: 0 });
@@ -37,12 +37,13 @@ export function HistoryRouteMap({ order, language, onError }: { order: Order; la
 
   const center = pickupValid ? order.pickup : dropoffValid ? order.dropoff : null;
   if (!center) return null;
-  return <View style={[styles.container, { backgroundColor: palette.elevated }]} onLayout={({ nativeEvent: { layout } }) => setSize({ width: layout.width, height: layout.height })}>
+  return <View style={[styles.container, { backgroundColor: palette.elevated }]} onLayout={({ nativeEvent: { layout } }) => setSize({ width: layout.width, height: layout.height })}
+    onTouchStart={() => onInteractionChange?.(true)} onTouchEnd={() => onInteractionChange?.(false)} onTouchCancel={() => onInteractionChange?.(false)}>
     <MapView
       key={fallback ? 'raster' : 'vector'}
       style={StyleSheet.absoluteFill}
       mapStyle={fallback ? isDark ? darkRasterMapFallback : rasterMapFallback : mapStyleForLanguage(language, isDark)}
-      scrollEnabled={false} zoomEnabled={false} rotateEnabled={false} pitchEnabled={false}
+      scrollEnabled zoomEnabled rotateEnabled pitchEnabled={false}
       logoEnabled={false} attributionEnabled={false} compassEnabled={false}
       onDidFinishLoadingStyle={() => setReady(true)}
       onDidFailLoadingMap={() => { if (!fallback) { setReady(false); setFallback(true); } }}
@@ -53,8 +54,8 @@ export function HistoryRouteMap({ order, language, onError }: { order: Order; la
         <LineLayer id="history-route-outline" style={{ lineColor: '#0757BE', lineWidth: 7, lineCap: 'round', lineJoin: 'round' }}/>
         <LineLayer id="history-route-line" style={{ lineColor: '#39A2FF', lineWidth: 4, lineCap: 'round', lineJoin: 'round' }}/>
       </ShapeSource>}
-      {pickupValid && <PointAnnotation id="history-pickup" coordinate={[order.pickup.longitude, order.pickup.latitude]}><View collapsable={false} style={[styles.marker, { backgroundColor: '#1686EF' }]}><Text style={styles.markerText}>А</Text></View></PointAnnotation>}
-      {dropoffValid && <PointAnnotation id="history-dropoff" coordinate={[order.dropoff.longitude, order.dropoff.latitude]}><View collapsable={false} style={[styles.marker, { backgroundColor: isDark ? '#FFFFFF' : '#172741' }]}><Text style={[styles.markerText, isDark && { color: '#101010' }]}>Б</Text></View></PointAnnotation>}
+      {pickupValid && <MarkerView testID="history-pickup" coordinate={[order.pickup.longitude, order.pickup.latitude]} allowOverlap anchor={{ x: .5, y: .5 }}><View collapsable={false} style={[styles.marker, { backgroundColor: '#1686EF' }]}><Text style={styles.markerText}>А</Text></View></MarkerView>}
+      {dropoffValid && <MarkerView testID="history-dropoff" coordinate={[order.dropoff.longitude, order.dropoff.latitude]} allowOverlap anchor={{ x: .5, y: .5 }}><View collapsable={false} style={[styles.marker, { backgroundColor: isDark ? '#FFFFFF' : '#172741' }]}><Text style={[styles.markerText, isDark && { color: '#101010' }]}>Б</Text></View></MarkerView>}
     </MapView>
     <Pressable accessibilityRole="button" accessibilityLabel={tr(language)('Моё местоположение')} onPress={() => void locate()} style={[styles.locate, { backgroundColor: palette.surface, borderColor: palette.line }]}><Icon name="navigate" size={19} color={palette.ink}/></Pressable>
   </View>;
@@ -62,7 +63,7 @@ export function HistoryRouteMap({ order, language, onError }: { order: Order; la
 
 const styles = StyleSheet.create({
   container: { height: 232, borderRadius: 22, overflow: 'hidden' },
-  marker: { width: 28, height: 28, borderRadius: 14, borderWidth: 2, borderColor: '#FFFFFF', justifyContent: 'center', alignItems: 'center' },
+  marker: { width: 32, height: 32, borderRadius: 16, borderWidth: 3, borderColor: '#FFFFFF', justifyContent: 'center', alignItems: 'center', elevation: 5, shadowColor: '#101D38', shadowOpacity: .25, shadowRadius: 4, shadowOffset: { width: 0, height: 2 } },
   markerText: { color: '#FFFFFF', fontSize: 13, fontWeight: '800' },
   locate: { position: 'absolute', top: 13, right: 13, width: 38, height: 38, borderRadius: 19, borderWidth: 1, alignItems: 'center', justifyContent: 'center' },
 });

@@ -70,3 +70,34 @@ test('details show real driver, completion and rating data; cancelled trips neve
   assert.match(textOf(renderer), /Отменён.*0 сом/);
   await act(async () => renderer.unmount());
 });
+
+test('history route map allows gestures and keeps endpoint markers above the road', async () => {
+  const interactions = [];
+  const mapExports = {};
+  const mapSource = fs.readFileSync(path.join(__dirname, '../src/native/HistoryRouteMap.tsx'), 'utf8');
+  const mapCode = ts.transpileModule(mapSource, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX, esModuleInterop: true } }).outputText;
+  vm.runInNewContext(mapCode, { exports: mapExports, require: id => {
+    if (id === 'react' || id === 'react/jsx-runtime') return require(id);
+    if (id === 'react-native') return { View: 'View', Text: 'Text', Pressable: 'Pressable', StyleSheet: { create: styles => styles, absoluteFill: {} } };
+    if (id === '@maplibre/maplibre-react-native') return { Camera: 'Camera', LineLayer: 'LineLayer', MapView: 'MapView', MarkerView: 'MarkerView', ShapeSource: 'ShapeSource' };
+    if (id === '../design/theme') return { useTheme: () => ({ isDark: false, palette: palettes.light }) };
+    if (id === '../ui') return { Icon: 'Icon', tr: () => value => value };
+    if (id === './location') return { getCurrentPosition: async () => trip.pickup };
+    if (id === './routeFrame') return { isMapPoint: point => Number.isFinite(point?.latitude) && Number.isFinite(point?.longitude), routeFrame: () => null };
+    if (id === './taxiMapStyle') return { mapStyleForLanguage: () => ({}), rasterMapFallback: {}, darkRasterMapFallback: {} };
+    return {};
+  } });
+  let renderer;
+  await act(async () => { renderer = create(React.createElement(mapExports.HistoryRouteMap, { order: { ...trip, geometry: [trip.pickup, trip.dropoff] }, language: 'ru', onError: () => {}, onInteractionChange: active => interactions.push(active) })); });
+  const map = renderer.root.findByType('MapView');
+  assert.equal(map.props.scrollEnabled, true);
+  assert.equal(map.props.zoomEnabled, true);
+  assert.equal(map.props.rotateEnabled, true);
+  const layers = map.findAll(node => ['ShapeSource', 'MarkerView'].includes(node.type));
+  assert.deepEqual(layers.map(node => node.type), ['ShapeSource', 'MarkerView', 'MarkerView']);
+  assert.deepEqual(map.findAllByType('MarkerView').map(node => node.props.testID), ['history-pickup', 'history-dropoff']);
+  const container = renderer.root.findByType('View');
+  await act(async () => { container.props.onTouchStart(); container.props.onTouchEnd(); });
+  assert.deepEqual(interactions, [true, false]);
+  await act(async () => renderer.unmount());
+});

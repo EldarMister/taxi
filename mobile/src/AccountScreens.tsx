@@ -56,8 +56,10 @@ export function AccountScreen({ page, user, config, onUser, onError, onOnline, o
   const [earnings, setEarnings] = useState<{ today: Order[]; week: Order[] } | null>(null);
   const [loading, setLoading] = useState(['history', 'balance'].includes(page) || (page === 'profile' && user.role === 'DRIVER'));
   const [expandedOrder, setExpandedOrder] = useState<string | null>(null);
+  const [historyMapInteracting, setHistoryMapInteracting] = useState(false);
   const [notificationPermission, setNotificationPermission] = useState<boolean | null>(null);
   const requestVersion = useRef(0);
+  useEffect(() => setHistoryMapInteracting(false), [page, historyDetailId]);
 
   async function refresh() {
     if (!['history', 'balance'].includes(page) && !(page === 'profile' && user.role === 'DRIVER')) return;
@@ -148,7 +150,7 @@ export function AccountScreen({ page, user, config, onUser, onError, onOnline, o
   }, []);
   const driverProfile = user.driverProfile;
 
-  return <ScrollView key={page === 'history' && user.role === 'CLIENT' ? historyDetailId || 'history-list' : page} showsVerticalScrollIndicator={false} style={{ backgroundColor: isDark ? palette.background : page === 'profile' ? '#F3F8FC' : '#FFFFFF' }} contentContainerStyle={styles.page} refreshControl={['history', 'balance'].includes(page) || (page === 'profile' && user.role === 'DRIVER') ? <RefreshControl refreshing={loading} onRefresh={refresh} tintColor={palette.accent}/> : undefined} keyboardShouldPersistTaps="handled">
+  return <ScrollView key={page === 'history' && user.role === 'CLIENT' ? historyDetailId || 'history-list' : page} scrollEnabled={!historyMapInteracting} showsVerticalScrollIndicator={false} style={{ backgroundColor: isDark ? palette.background : page === 'profile' ? '#F3F8FC' : '#FFFFFF' }} contentContainerStyle={styles.page} refreshControl={['history', 'balance'].includes(page) || (page === 'profile' && user.role === 'DRIVER') ? <RefreshControl refreshing={loading} onRefresh={refresh} tintColor={palette.accent}/> : undefined} keyboardShouldPersistTaps="handled">
     {page === 'profile' && <>
       <View style={styles.profileCard}>
         <Pressable accessibilityRole="button" accessibilityLabel={local('Редактировать профиль', 'Профилди түзөтүү')} accessibilityState={{ expanded: editing }} onPress={() => { setName(user.name || ''); setEditing(!editing); }} style={styles.profilePerson}>
@@ -187,7 +189,7 @@ export function AccountScreen({ page, user, config, onUser, onError, onOnline, o
     </>}
 
     {page === 'history' && user.role === 'CLIENT' && historyDetailId ? (
-      history.find(order => order.id === historyDetailId) ? <ClientTripHistoryDetail order={history.find(order => order.id === historyDetailId)!} user={user} onError={onError}/> : loading ? <ActivityIndicator style={{ paddingVertical: 20 }} color={palette.accent}/> : <Empty icon="time-outline" title={t('Поездка не найдена')}/>
+      history.find(order => order.id === historyDetailId) ? <ClientTripHistoryDetail order={history.find(order => order.id === historyDetailId)!} user={user} onError={onError} onMapInteractionChange={setHistoryMapInteracting}/> : loading ? <ActivityIndicator style={{ paddingVertical: 20 }} color={palette.accent}/> : <Empty icon="time-outline" title={t('Поездка не найдена')}/>
     ) : page === 'history' && <>
       <View style={styles.segments}>{[['today', 'Сегодня'], ['week', 'Неделя'], ['all', 'Все']].map(([value, label]) => <Pressable key={value} accessibilityRole="button" accessibilityState={{ selected: period === value }} onPress={() => { if (value !== period) { setLoading(true); setHistory([]); setExpandedOrder(null); setPeriod(value); } }} style={[styles.segment, period === value && styles.segmentActive]}><Text style={[styles.segmentText, period === value && { color: isDark ? '#050505' : '#FFFFFF' }]}>{t(label)}</Text></Pressable>)}</View>
       {user.role === 'DRIVER' && <View style={styles.historySummary}>

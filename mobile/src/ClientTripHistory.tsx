@@ -44,7 +44,7 @@ function InfoRow({ label, value, strong = false }: { label: string; value: strin
   return <View style={styles.infoRow}><Text style={[styles.infoLabel, { color: palette.muted }]}>{label}</Text><Text style={[strong ? styles.infoStrong : styles.infoValue, { color: palette.ink }]} numberOfLines={2}>{value}</Text></View>;
 }
 
-export function ClientTripHistoryDetail({ order, user, onError }: { order: Order; user: User; onError: (message: string) => void }) {
+export function ClientTripHistoryDetail({ order, user, onError, onMapInteractionChange }: { order: Order; user: User; onError: (message: string) => void; onMapInteractionChange?: (active: boolean) => void }) {
   const { palette } = useTheme();
   const t = tr(user.language);
   const locale = user.language === 'ky' ? 'ky-KG' : 'ru-RU';
@@ -57,7 +57,7 @@ export function ClientTripHistoryDetail({ order, user, onError }: { order: Order
   const canCall = !!driver?.phone && order.status === 'COMPLETED';
 
   return <View style={styles.detailPage}>
-    <HistoryRouteMap order={order} language={user.language} onError={onError}/>
+    <HistoryRouteMap order={order} language={user.language} onError={onError} onInteractionChange={onMapInteractionChange}/>
     <Card>
       <View style={styles.detailRoute}><RoutePins/><View style={{ flex: 1, gap: 18 }}><Text style={[styles.detailAddress, { color: palette.ink }]}>{order.pickup.address}</Text><Text style={[styles.detailAddress, { color: palette.ink }]}>{order.dropoff.address}</Text></View></View>
       <View style={[styles.cardDivider, { backgroundColor: palette.line }]}/>

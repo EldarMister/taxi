@@ -59,11 +59,20 @@ function russianNumber(value: number) {
   return pieces.filter(Boolean).join(' ');
 }
 export function roadFeatureAnnouncement(features: RoadFeature[], along: number, language: Language): string {
-  return features.map(feature => {
+  const groups = new Map<number, RoadFeatureKind[]>();
+  for (const feature of features) {
     const distance = Math.max(10, Math.round((feature.along - along) / 10) * 10);
+    const kinds = groups.get(distance) ?? [];
+    if (!kinds.includes(feature.kind)) kinds.push(feature.kind);
+    groups.set(distance, kinds);
+  }
+  return [...groups].map(([distance, kinds]) => {
+    const names = kinds.map(kind => language === 'ky' ? kyrgyzNames[kind] : russianNames[kind]);
+    const joined = names.length < 3 ? names.join(language === 'ky' ? ' жана ' : ' и ')
+      : `${names.slice(0, -1).join(', ')}${language === 'ky' ? ' жана ' : ' и '}${names[names.length - 1]}`;
     return language === 'ky'
-      ? `${distance} метрден кийин ${kyrgyzNames[feature.kind]}.`
-      : `Через ${russianNumber(distance)} метров ${russianNames[feature.kind]}.`;
+      ? `${distance} метрден кийин ${joined}.`
+      : `Через ${russianNumber(distance)} метров ${joined}.`;
   }).join(' ');
 }
 
