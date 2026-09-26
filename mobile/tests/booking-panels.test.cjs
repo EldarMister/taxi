@@ -463,6 +463,7 @@ test('driver keeps contacts and the stage slider visible while trip details coll
   assert.doesNotMatch(textOf(renderer.root), /Новый заказ/);
   assert.match(textOf(renderer.root), /До клиента.*2500.*прибытие ≈ \d{2}:\d{2}/s, 'pickup distance and arrival time lead the offer panel');
   assert.equal(renderer.root.findAllByProps({ testID: 'driver-offer-approach' }).length, 1);
+  assert.equal(textOf(renderer.root.findByProps({ testID: 'driver-route-pins' })), 'АБ');
   assert.match(textOf(renderer.root), /2500.*прибытие ≈ \d{2}:\d{2}.*Средняя подача.*Эконом/s, 'approach metrics and category are shown separately from trip metrics');
   assert.match(textOf(renderer.root), /4800.*Маршрут поездки.*720.*Время поездки/s);
   assert.match(textOf(renderer.root), /Пассажир.*4,75/s);
@@ -492,6 +493,7 @@ test('driver keeps contacts and the stage slider visible while trip details coll
   assert.equal(renderer.root.findAll(node => node.props.accessibilityLabel === 'Приехал').length, 1);
   await tap(renderer, 'Раскрыть детали поездки');
   assert.equal(renderer.root.findAllByProps({ testID: 'driver-trip-details' }).length, 1);
+  assert.equal(textOf(renderer.root.findByProps({ testID: 'driver-route-pins' })), 'АБ');
   assert.equal(renderer.root.findAllByProps({ testID: 'driver-current-destination' }).length, 0, 'expanded route shows the pickup address only once');
   assert.match(textOf(renderer.root.findByProps({ testID: 'driver-trip-details' })), /A.*B.*321/s);
   assert.doesNotMatch(textOf(renderer.root.findByProps({ testID: 'driver-trip-details' })), /4800|720|мин|Время поездки/, 'expanded pickup shows price and addresses without a second trip-duration metric');
@@ -499,9 +501,13 @@ test('driver keeps contacts and the stage slider visible while trip details coll
   await slide(renderer, 'Приехал'); assert.deepEqual(actions, ['arrive']);
   await status('ASSIGNED', true); await slide(renderer, 'Приехал'); assert.deepEqual(actions, ['arrive'], 'busy request blocks duplicate swipes');
   await status('ASSIGNED'); await slide(renderer, 'Приехал'); assert.deepEqual(actions, ['arrive', 'arrive'], 'failed request resets the thumb for a retry');
-  await status('ARRIVED'); await slide(renderer, 'Начать поездку'); assert.deepEqual(actions, ['arrive', 'arrive', 'start']);
+  await status('ARRIVED');
+  assert.equal(textOf(renderer.root.findByProps({ testID: 'driver-route-pins' })), 'АБ');
+  await slide(renderer, 'Начать поездку'); assert.deepEqual(actions, ['arrive', 'arrive', 'start']);
   await status('IN_PROGRESS');
   assert.match(textOf(renderer.root), /490 м.*до цели/s);
+  await tap(renderer, 'Раскрыть детали поездки');
+  assert.equal(textOf(renderer.root.findByProps({ testID: 'driver-route-pins' })), 'АБ');
   assert.equal(button(renderer, 'Отменить заказ'), undefined);
   await slide(renderer, 'Завершить поездку'); assert.deepEqual(actions, ['arrive', 'arrive', 'start', 'complete']);
   assert.equal(renderer.root.findAllByType('BottomPanel').length, 0, 'the deliberate completion slider is the confirmation');

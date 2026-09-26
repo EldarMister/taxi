@@ -22,7 +22,7 @@ const config: ExpoConfig = {
   slug: identity.slug,
   scheme: identity.scheme,
   icon: variant === 'client' ? './assets/logo.png' : './assets/edu-drive-icon.png',
-  version: '1.1.31',
+  version: '1.1.32',
   orientation: 'portrait',
   userInterfaceStyle: 'automatic',
   newArchEnabled: false,

@@ -9,8 +9,8 @@ function roadGeometry(value?: RoadOrder | RoadQuote | null): Coordinate[] | unde
     ? value.geometry : undefined;
 }
 
-// The approach is a separate journey to pickup. The accepted fare's geometry
-// stays blue even while turn-by-turn navigation is guiding the driver there.
+// Show only the road the driver is currently following. The fare route becomes
+// active after the passenger has boarded and the trip has started.
 export function tripMapRoutes({ driver, order, offer, quote, navigationRoute, approachRoute }: {
   driver: boolean;
   order: Order | null;
@@ -22,13 +22,15 @@ export function tripMapRoutes({ driver, order, offer, quote, navigationRoute, ap
   const displayed = order || offer;
   const headingToPickup = order?.status === 'ASSIGNED';
   const inProgress = order?.status === 'IN_PROGRESS';
-  const ride = inProgress && driver ? navigationRoute?.geometry || roadGeometry(order) :
-    roadGeometry(displayed) || (!displayed ? roadGeometry(quote) : undefined);
-  const approach = headingToPickup && driver ? navigationRoute?.geometry
-    : !order && driver && offer ? approachRoute?.geometry : undefined;
+  const ride = driver && headingToPickup ? navigationRoute?.geometry
+    : driver && order?.status === 'ARRIVED' ? undefined
+    : inProgress && driver ? navigationRoute?.geometry || roadGeometry(order)
+    : roadGeometry(displayed) || (!displayed ? roadGeometry(quote) : undefined);
+  const approach = !order && driver && offer ? approachRoute?.geometry : undefined;
   return {
     geometry: ride,
     approachGeometry: approach,
-    routeOverview: !!order && ['ASSIGNED', 'ARRIVED', 'COMPLETED'].includes(order.status),
+    routeOverview: !!order && ['ASSIGNED', 'ARRIVED', 'COMPLETED'].includes(order.status)
+      && (!driver || order.status === 'COMPLETED'),
   };
 }

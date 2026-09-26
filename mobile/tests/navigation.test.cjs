@@ -26,7 +26,8 @@ test('client map omits the driver-to-pickup path while driver navigation keeps i
   const order = { status: 'ASSIGNED', routeProvider: 'osrm', geometry: [a, b] };
   const navigationRoute = { geometry: [c, a] };
   assert.equal(routes.tripMapRoutes({ driver: false, order, navigationRoute, approachRoute: navigationRoute }).approachGeometry, undefined);
-  assert.deepEqual(JSON.parse(JSON.stringify(routes.tripMapRoutes({ driver: true, order, navigationRoute }).approachGeometry)), [c, a]);
+  assert.equal(routes.tripMapRoutes({ driver: true, order, navigationRoute }).approachGeometry, undefined);
+  assert.deepEqual(JSON.parse(JSON.stringify(routes.tripMapRoutes({ driver: true, order, navigationRoute }).geometry)), [c, a]);
 });
 const point = (latitude, longitude) => ({ latitude, longitude });
 const a = point(42.87, 74.59), b = point(42.875, 74.59), c = point(42.875, 74.595);

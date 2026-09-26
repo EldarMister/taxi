@@ -18,15 +18,18 @@ const approach = { geometry: [driverStart, pickup] };
 const drive = { geometry: [pickup, dropoff] };
 const order = status => ({ status, pickup, dropoff, geometry: drive.geometry, routeProvider: 'osrm' });
 
-test('accepted order shows the approach and the complete fare route to both roles', () => {
+test('accepted order shows only the road to pickup for the driver, with the fare overview for the client', () => {
   const forDriver = tripMapRoutes({ driver: true, order: order('ASSIGNED'), navigationRoute: approach });
-  assert.equal(forDriver.approachGeometry, approach.geometry);
-  assert.equal(forDriver.geometry, drive.geometry);
-  assert.equal(forDriver.routeOverview, true);
+  assert.equal(forDriver.approachGeometry, undefined);
+  assert.equal(forDriver.geometry, approach.geometry);
+  assert.equal(forDriver.routeOverview, false);
   const forClient = tripMapRoutes({ driver: false, order: order('ASSIGNED'), approachRoute: approach });
-  assert.equal(forClient.approachGeometry, approach.geometry);
+  assert.equal(forClient.approachGeometry, undefined);
   assert.equal(forClient.geometry, drive.geometry);
   assert.equal(forClient.routeOverview, true);
+  const waiting = tripMapRoutes({ driver: true, order: order('ARRIVED') });
+  assert.equal(waiting.geometry, undefined);
+  assert.equal(waiting.routeOverview, false);
 });
 
 test('active trip uses blue navigation; completed trip returns the full booked road for both roles', () => {
@@ -47,6 +50,6 @@ test('unverified straight-line data cannot masquerade as the booked blue road', 
   const preview = tripMapRoutes({ driver: false, order: null, quote: { routeProvider: 'development', geometry: drive.geometry } });
   assert.equal(preview.geometry, undefined);
   const assigned = tripMapRoutes({ driver: true, order: { ...order('ASSIGNED'), routeProvider: 'development' }, navigationRoute: approach });
-  assert.equal(assigned.geometry, undefined);
-  assert.equal(assigned.approachGeometry, approach.geometry);
+  assert.equal(assigned.geometry, approach.geometry);
+  assert.equal(assigned.approachGeometry, undefined);
 });

@@ -75,9 +75,9 @@ export function DriverCompletionPanel({ order, user, busy, onDone, onRateClient,
           <Text style={s.successTitle}>{say('Заказ успешно\nвыполнен!', 'Буюртма ийгиликтүү\nаткарылды!')}</Text>
           <Text style={s.successSubtitle}>{say('Спасибо, что выбрали Atlas', 'Atlasты тандаганыңыз үчүн рахмат')}</Text>
           <View style={s.routeCard}>
-            <View style={s.routeRow}><Icon name="person" size={22} color={palette.ink}/><View style={s.routeCopy}><Text style={s.routeLabel}>{say('Откуда', 'Кайдан')}</Text><Text style={s.routeText} numberOfLines={2}>{shortAddress(order.pickup.address)}</Text></View></View>
+            <View style={s.routeRow}><View style={s.routeLetter}><Text style={s.routeLetterText}>А</Text></View><View style={s.routeCopy}><Text style={s.routeLabel}>{say('Откуда', 'Кайдан')}</Text><Text style={s.routeText} numberOfLines={2}>{shortAddress(order.pickup.address)}</Text></View></View>
             <View style={s.routeDivider}/>
-            <View style={s.routeRow}><Icon name="flag" size={22} color={palette.ink}/><View style={s.routeCopy}><Text style={s.routeLabel}>{say('Куда', 'Кайда')}</Text><Text style={s.routeText} numberOfLines={2}>{shortAddress(order.dropoff.address)}</Text></View></View>
+            <View style={s.routeRow}><View style={s.routeLetter}><Text style={s.routeLetterText}>Б</Text></View><View style={s.routeCopy}><Text style={s.routeLabel}>{say('Куда', 'Кайда')}</Text><Text style={s.routeText} numberOfLines={2}>{shortAddress(order.dropoff.address)}</Text></View></View>
           </View>
           <View style={s.metricsCard}>
             <View style={s.metric}><Text style={s.metricLabel}>{say('Общий путь', 'Жалпы жол')}</Text><Text style={s.metricValue}>{km(order.distanceMeters)}</Text></View>
@@ -110,10 +110,12 @@ const lightS = StyleSheet.create({
   successSubtitle: { fontSize: 14, lineHeight: 19, color: '#63718D', textAlign: 'center', marginBottom: 3 },
   routeCard: { backgroundColor: '#F3F7FF', borderRadius: 15, paddingHorizontal: 15, paddingVertical: 9, gap: 7 },
   routeRow: { flexDirection: 'row', alignItems: 'center', gap: 13 },
+  routeLetter: { width: 29, height: 29, borderWidth: 2, borderColor: '#30384A', borderRadius: 10, alignItems: 'center', justifyContent: 'center' },
+  routeLetterText: { color: '#30384A', fontSize: 17, fontWeight: '800' },
   routeCopy: { flex: 1, gap: 2 },
   routeLabel: { fontSize: 11, lineHeight: 15, color: '#72819B' },
   routeText: { fontSize: 14, lineHeight: 19, fontWeight: '500', color: '#101D38' },
-  routeDivider: { marginLeft: 34, height: 1, backgroundColor: '#DFE8F5' },
+  routeDivider: { marginLeft: 42, height: 1, backgroundColor: '#DFE8F5' },
   metricsCard: { backgroundColor: '#F3F7FF', borderRadius: 15, minHeight: 63, flexDirection: 'row', alignItems: 'center', paddingVertical: 7 },
   metric: { flex: 1, alignItems: 'center', gap: 3 },
   metricLabel: { fontSize: 12, lineHeight: 17, color: '#72819B' },
@@ -141,6 +143,8 @@ const darkS = StyleSheet.create({
   successTitle: { ...lightS.successTitle, color: '#FFFFFF' },
   successSubtitle: { ...lightS.successSubtitle, color: '#B0B0B0' },
   routeCard: { ...lightS.routeCard, backgroundColor: '#1D1D1D' },
+  routeLetter: { ...lightS.routeLetter, borderColor: '#FFFFFF' },
+  routeLetterText: { ...lightS.routeLetterText, color: '#FFFFFF' },
   routeLabel: { ...lightS.routeLabel, color: '#B0B0B0' },
   routeText: { ...lightS.routeText, color: '#FFFFFF' },
   routeDivider: { ...lightS.routeDivider, backgroundColor: '#353535' },

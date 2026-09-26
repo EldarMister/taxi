@@ -1071,6 +1071,7 @@ function TaxiApp() {
   const approachScope = driver && offer ? `offer:${offer.id}` : '';
   const approach = useApproachRoute(driver ? navigation.position : null, driver ? offer?.pickup : null, approachScope);
   const mapRoutes = tripMapRoutes({ driver, order: visibleDriverOrder, offer, quote: savedPlaceEditing ? null : service === 'delivery' ? deliveryQuote : quote, navigationRoute: navigation.route, approachRoute: approach.route });
+  const hideTripDestination = driver && !!visibleDriverOrder && ['ASSIGNED', 'ARRIVED'].includes(visibleDriverOrder.status);
   useEffect(() => {
     if (!driver || !offer || !order || !['CANCELLED', 'NO_DRIVER'].includes(order.status)) return;
     dismissedOrderIds.current.add(order.id);
@@ -1261,7 +1262,7 @@ function TaxiApp() {
               theme={theme}
               language={user.language}
               pickup={displayed?.pickup || pickup}
-              dropoff={savedPlaceEditing ? savedPlaces[savedPlaceEditing] || null : displayed?.dropoff || dropoff}
+              dropoff={hideTripDestination ? null : savedPlaceEditing ? savedPlaces[savedPlaceEditing] || null : displayed?.dropoff || dropoff}
               dropoffRouteLabel={driver && offer ? `${km(offer.distanceMeters)} · ${tripTime(offer.durationSeconds, user.language)}` : undefined}
               geometry={mapRoutes.geometry}
               approachGeometry={mapRoutes.approachGeometry}

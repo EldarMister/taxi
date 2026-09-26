@@ -130,10 +130,9 @@ function SlideToConfirm({ label, hint, onConfirm, busy, resetKey, compact = fals
 
 function RouteDetails({ order, language, offer = false }: { order: Order; language: User['language']; offer?: boolean }) {
   const d = useDriverStyles();
-  const { palette } = useTheme();
   const t = tr(language);
   return <View style={d.route}>
-    <View style={[d.routePins, offer && { paddingTop: 0 }]}>{offer ? <View style={d.routeLetter}><Text style={d.routeLetterText}>А</Text></View> : <Icon name="radio-button-on" color={palette.accent} size={22}/>}<View style={d.routeLine}/>{offer ? <View style={d.routeLetter}><Text style={d.routeLetterText}>Б</Text></View> : <Icon name="location" color={palette.ink} size={25}/>}</View>
+    <View testID="driver-route-pins" style={[d.routePins, offer && { paddingTop: 0 }]}><View style={d.routeLetter}><Text style={d.routeLetterText}>А</Text></View><View style={d.routeLine}/><View style={d.routeLetter}><Text style={d.routeLetterText}>Б</Text></View></View>
     <View style={{ flex: 1, gap: 13 }}>
       <View style={{ gap: 3 }}>{!offer && <Text style={d.caption}>{t('Откуда')}</Text>}<Text numberOfLines={offer ? 1 : 2} style={[d.address, offer && d.offerAddress]}>{shortAddress(order.pickup.address)}</Text></View>
       <View style={{ gap: 3 }}>{!offer && <Text style={d.caption}>{t('Куда')}</Text>}<Text numberOfLines={offer ? 1 : 2} style={[d.address, offer && d.offerAddress]}>{shortAddress(order.dropoff.address)}</Text></View>
@@ -198,7 +197,7 @@ export function DriverPanel({ user, order, offer, busy, coming, onAccept, onRate
       {!displayed ? <View style={d.idle}>
         <View style={d.row}><View style={d.idleIcon}><Icon name={!user.driverProfile?.verified ? 'shield-checkmark-outline' : user.driverProfile.online ? 'radio-outline' : 'car-outline'} size={25} color={palette.accent}/></View><View style={{ flex: 1, gap: 5 }}><Text style={d.title}>{t(!user.driverProfile?.verified ? 'Ожидаем подтверждение' : user.driverProfile.online ? 'Ищем заказы рядом' : 'Вы не на линии')}</Text><Text style={d.caption}>{t(!user.driverProfile?.verified ? 'Диспетчер проверяет профиль и автомобиль' : user.driverProfile.online ? 'Новый заказ появится здесь' : 'Выйдите на линию, чтобы получать заказы')}</Text></View></View>
         {!!user.driverProfile?.verified && !user.driverProfile.online && <Action label={t('Выйти на линию')} onPress={onOnline} busy={busy}/>}
-      </View> : <View style={{ gap: compactPassengerPickup ? 9 : 13 }}>
+      </View> : <View style={{ gap: compactPassengerPickup ? 9 : offer ? 8 : 13 }}>
         {offer ? <View style={d.offerLead}>
           <Text style={d.approachLabel}>{t(delivery ? 'До отправителя' : 'До клиента')}</Text>
           <View style={d.offerTools}><Deadline order={offer} language={user.language}/><Pressable accessibilityRole="button" accessibilityLabel={t(detailsExpanded ? delivery ? 'Свернуть детали доставки' : 'Свернуть детали поездки' : delivery ? 'Раскрыть детали доставки' : 'Раскрыть детали поездки')} accessibilityState={{ expanded: detailsExpanded }} onPress={() => setDetailsExpanded(value => !value)} style={d.offerToggle}><Icon name={detailsExpanded ? 'chevron-up' : 'chevron-down'} color={palette.muted} size={19}/></Pressable></View>
@@ -271,7 +270,7 @@ export function DriverPanel({ user, order, offer, busy, coming, onAccept, onRate
 }
 
 const lightD = StyleSheet.create({
-  panel: { marginTop: -30, paddingHorizontal: 18, paddingTop: 20, paddingBottom: 17, borderTopLeftRadius: 28, borderTopRightRadius: 28 },
+  panel: { marginTop: -30, paddingHorizontal: 18, paddingTop: 17, paddingBottom: 17, borderTopLeftRadius: 28, borderTopRightRadius: 28 },
   dragHandle: { width: 38, height: 4, borderRadius: 2, alignSelf: 'center', backgroundColor: '#AAB6C8', marginTop: -10, marginBottom: 11 },
   compactSummary: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 9, borderTopWidth: 1, borderBottomWidth: 1, borderColor: '#E8EFF7' },
   pickupPrice: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 10, borderTopWidth: 1, borderColor: '#E8EFF7' },
@@ -280,11 +279,11 @@ const lightD = StyleSheet.create({
   waitingPrice: { fontSize: 17, fontWeight: '800', color: colors.ink },
   compactService: { fontSize: 15, fontWeight: '700', color: colors.ink },
   compactPrice: { fontSize: 23, fontWeight: '800', color: colors.ink },
-  offerLead: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12 },
+  offerLead: { flexDirection: 'row', alignItems: 'flex-end', justifyContent: 'space-between', gap: 12 },
   offerTools: { flexDirection: 'row', alignItems: 'center', gap: 5 },
   offerToggle: { width: 28, height: 35, alignItems: 'center', justifyContent: 'center' },
   approachLabel: { color: colors.muted, fontSize: 14, fontWeight: '700' },
-  approach: { gap: 5 },
+  approach: { gap: 3 },
   approachTitle: { color: '#122640', fontSize: 29, fontWeight: '800', fontVariant: ['tabular-nums'] },
   approachPlaceholder: { fontSize: 17, fontWeight: '600', lineHeight: 23 },
   approachTags: { flexDirection: 'row', gap: 6, flexWrap: 'wrap' },
