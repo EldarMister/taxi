@@ -6,7 +6,8 @@ import { haversine } from './domain';
 export type RoadFeatureKind = 'stop' | 'give_way' | 'speed_limit_60' | 'pedestrian_crossing' | 'speed_camera' | 'traffic_light';
 export type RoadFeature = { id: string; kind: RoadFeatureKind; latitude: number; longitude: number; along: number };
 export type RoadPoint = { latitude: number; longitude: number };
-type OsmNode = { id: number; latitude: number; longitude: number; tags: Record<string, string> };
+type OsmNode = { id: number; latitude: number; longitude: number; tags: Record<string, string>;
+  roads?: { latitude: number; longitude: number; bearing: number; distance: number }[] };
 
 function kinds(tags: Record<string, string>): RoadFeatureKind[] {
   const sign = (tags.traffic_sign || '').toLowerCase();
@@ -16,8 +17,8 @@ function kinds(tags: Record<string, string>): RoadFeatureKind[] {
   if (tags.highway === 'traffic_signals' || tags.crossing === 'traffic_signals' || tags['crossing:signals'] === 'yes') result.push('traffic_light');
   if (tags.highway === 'stop' || has('stop')) result.push('stop');
   if (tags.highway === 'give_way' || has('give_way') || has('yield')) result.push('give_way');
-  if ((tags.highway === 'crossing' && !result.includes('traffic_light')) || has('pedestrian_crossing')) result.push('pedestrian_crossing');
-  if (tags.highway === 'speed_camera' || has('speed_camera')) result.push('speed_camera');
+  if (tags.highway === 'crossing' || (tags.crossing && tags.crossing !== 'no') || has('pedestrian_crossing')) result.push('pedestrian_crossing');
+  if (tags.highway === 'speed_camera' || tags.enforcement === 'maxspeed' || has('speed_camera')) result.push('speed_camera');
   if ((has('maxspeed') && tags.maxspeed === '60') || tokens.some(value => /^(?:[a-z]{2}:)?3\.24\[60\]$/i.test(value))) result.push('speed_limit_60');
   return result;
 }
@@ -58,7 +59,15 @@ export function selectRoadFeatures(nodes: OsmNode[], points: RoadPoint[], startA
     const projected = projection(node, points, cumulative);
     for (const kind of kinds(node.tags)) {
       const roadside = node.tags.traffic_sign || kind === 'speed_camera';
-      if (projected.distance > (roadside ? 28 : 14)) continue;
+      if (projected.distance > (kind === 'speed_camera' ? 45 : roadside ? 28 : 14)) continue;
+      // The warning's own road must coincide with this route at the feature.
+      // Mere proximity to a junction includes signs on crossing side streets.
+      if (node.roads && !node.roads.some(road => {
+        const routeAtRoad = projection(road, points, cumulative);
+        const roadAngle = angleDifference(road.bearing, routeAtRoad.heading);
+        return routeAtRoad.distance <= 8 && Math.min(roadAngle, 180 - roadAngle) <= 45
+          && Math.abs(routeAtRoad.along - projected.along) <= 30;
+      })) continue;
       const direction = numericDirection(node.tags['traffic_sign:direction'] || node.tags['traffic_signals:direction']);
       if (direction != null && kind !== 'speed_camera' && angleDifference(direction, projected.heading) > 70) continue;
       result.push({ id: `${node.id}:${kind}`, kind, latitude: node.latitude, longitude: node.longitude,

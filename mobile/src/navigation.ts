@@ -17,12 +17,12 @@ export type NavigationProgress = {
 };
 export const navigationConfig = {
   offRouteMeters: 35,
-  rerouteFixes: 3,
+  rerouteFixes: 5,
   turnConfirmationMeters: 35,
   turnConfirmationFixes: 2,
 } as const;
 export function offRouteThreshold(accuracy: number): number {
-  return Math.max(25, Math.min(75, Number.isFinite(accuracy) ? accuracy * 1.5 : 35));
+  return Math.max(35, Math.min(85, Number.isFinite(accuracy) ? accuracy * 2 : 35));
 }
 export type NormalizedManeuver = {
   kind: 'depart' | 'arrive' | 'roundabout' | 'exit-roundabout' | 'merge' | 'fork' | 'off-ramp' | 'uturn' | 'turn' | 'continue';
@@ -280,18 +280,30 @@ export function routeProgress(prepared: PreparedRoute, fix: NavigationFix, previ
 export function displayDistance(meters: number) {
   return meters >= 1000 ? `${(meters / 1000).toFixed(1)} км` : `${Math.max(0, Math.round(meters / 10) * 10)} м`;
 }
+export function distantManeuverInstruction(progress: NavigationProgress, language: Language = 'ru'): string {
+  return !progress.arrived && progress.maneuverDistance > 200
+    ? language === 'ky' ? 'Түз жүрүңүз' : 'Двигайтесь прямо'
+    : progress.instruction;
+}
+export function shouldReroute(fixes: number, since: number, now: number, travelled: number): boolean {
+  return fixes >= navigationConfig.rerouteFixes && now - since >= 6000 && travelled >= 20;
+}
 export type GuidanceCue = { key: string; text: string; priority: number; stage: number; supersedes: string[] };
 export function guidanceCue(progress: NavigationProgress, language: Language = 'ru', routeVersion = 0, legIndex = 0): GuidanceCue | null {
   const prefix = `${routeVersion}:${legIndex}:${progress.stepIndex}`;
-  if (progress.arrived) return { key: `${prefix}:arrived`, text: language === 'ky' ? 'Бара турган жериңизге жеттиңиз.' : 'Вы прибыли в пункт назначения.', priority: 4, stage: 0, supersedes: [`${prefix}:500`, `${prefix}:200`, `${prefix}:0`] };
+  if (progress.arrived) return { key: `${prefix}:arrived`, text: language === 'ky' ? 'Бара турган жериңизге жеттиңиз.' : 'Вы прибыли в пункт назначения.', priority: 4, stage: 0, supersedes: [`${prefix}:600`, `${prefix}:200`, `${prefix}:0`] };
   if (progress.maneuverPassed || progress.offRouteMeters > navigationConfig.offRouteMeters) return null;
   const meters = progress.maneuverDistance;
-  if (meters > 550) return null;
+  if (meters > 750) return null;
   const speed = Math.max(0, progress.speedMps ?? 0);
   const nearThreshold = Math.max(50, Math.min(75, speed * 3));
-  const approachThreshold = Math.max(200, Math.min(280, speed * 9));
-  const stage = meters <= nearThreshold ? 0 : meters <= approachThreshold ? 200 : 500;
+  const approachThreshold = Math.max(150, Math.min(200, speed * 9));
+  const stage = meters <= nearThreshold ? 0 : meters <= approachThreshold ? 200 : 600;
   const distance = meters >= 100 ? Math.round(meters / 50) * 50 : Math.max(50, Math.round(meters / 10) * 10);
-  const supersedes = stage === 0 ? [`${prefix}:500`, `${prefix}:200`] : stage === 200 ? [`${prefix}:500`] : [];
-  return { key: `${prefix}:${stage}`, text: stage === 0 ? `${progress.instruction}.` : language === 'ky' ? `${distance} метрден кийин ${progress.instruction[0].toLowerCase() + progress.instruction.slice(1)}.` : `Через ${distance} метров ${progress.instruction[0].toLocaleLowerCase('ru') + progress.instruction.slice(1)}.`, priority: stage === 0 ? 3 : stage === 200 ? 2 : 1, stage, supersedes };
+  const supersedes = stage === 0 ? [`${prefix}:600`, `${prefix}:200`] : stage === 200 ? [`${prefix}:600`] : [];
+  const text = stage === 600 ? language === 'ky' ? `${distance} метр түз жүрүңүз.` : `${distance} метров прямо.`
+    : stage === 0 ? `${progress.instruction}.`
+      : language === 'ky' ? `${distance} метрден кийин ${progress.instruction[0].toLowerCase() + progress.instruction.slice(1)}.`
+        : `Через ${distance} метров ${progress.instruction[0].toLocaleLowerCase('ru') + progress.instruction.slice(1)}.`;
+  return { key: `${prefix}:${stage}`, text, priority: stage === 0 ? 3 : stage === 200 ? 2 : 1, stage, supersedes };
 }

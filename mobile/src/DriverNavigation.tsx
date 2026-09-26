@@ -1,7 +1,7 @@
 import React from 'react';
 import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
 import Svg, { Path, Circle } from 'react-native-svg';
-import { displayDistance, normalizeManeuver, NormalizedManeuver, NavigationFix, offRouteThreshold } from './navigation';
+import { displayDistance, distantManeuverInstruction, normalizeManeuver, NormalizedManeuver, NavigationFix, offRouteThreshold } from './navigation';
 import { useDriverNavigation } from './useDriverNavigation';
 import { freezeDriverGps, getDriverTrackingDiagnostics, replayDriverGps, startDriverGpsRecording, stopDriverGpsDiagnostic, stopDriverGpsRecording } from './native/driverTracking';
 import { colors, Icon, tr } from './ui';
@@ -42,9 +42,9 @@ export function DriverNavigation({ navigation, top, onLocation, onHeight, langua
   }, [diagnosticsOpen]);
   const offRoute = (progress?.offRouteMeters || 0) > offRouteThreshold(navigation.position?.accuracy ?? 20);
   const ready = !!progress && !gpsStatus && !offRoute && !loading && (!error || !!navigation.route);
-  const title = gpsStatus ? t(gpsStatus) : (loading ? t('Строим маршрут') : offRoute ? t('Вы отклонились от маршрута') : progress?.instruction || (error ? t('Маршрут недоступен') : t('Готовим навигацию')));
+  const title = gpsStatus ? t(gpsStatus) : (loading ? t('Строим маршрут') : offRoute ? t('Вы отклонились от маршрута') : progress ? distantManeuverInstruction(progress, language) : (error ? t('Маршрут недоступен') : t('Готовим навигацию')));
   const turn = navigation.route?.steps[progress?.stepIndex || 0];
-  const maneuver = turn ? normalizeManeuver(turn) : undefined;
+  const maneuver = turn && progress && progress.maneuverDistance <= 200 ? normalizeManeuver(turn) : undefined;
   return <><View testID="driver-navigation" pointerEvents="box-none" onLayout={event => onHeight?.(event.nativeEvent.layout.height)} style={[styles.position, { top }]}>
     <View style={styles.guidance}>
       <View style={[styles.turn, theme.isDark && { backgroundColor: theme.palette.accent, shadowColor: '#000000' }]}>{loading ? <ActivityIndicator color={theme.isDark ? theme.palette.accentText : 'white'}/> : <TurnArrow maneuver={maneuver} arrived={progress?.arrived} color={theme.isDark ? theme.palette.accentText : 'white'}/>}</View>

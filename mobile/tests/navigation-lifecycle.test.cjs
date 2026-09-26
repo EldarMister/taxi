@@ -55,6 +55,7 @@ async function setup(options = {}) {
     'expo-keep-awake': { activateKeepAwakeAsync: async () => {}, deactivateKeepAwake: async () => {} },
     './api': { messageOf: error => error.message, api: { request: async (path, init) => {
       if (path === '/routes/road-features') return { features: options.roadFeatures ?? [] };
+      if (path === '/routes/match') return null;
       const body = JSON.parse(init.body); requests.push({ path, init, body });
       if (options.legacyRouteServer && ('fast' in body || 'bearing' in body)) {
         const error = new Error(`property ${'fast' in body ? 'fast' : 'bearing'} should not exist`); error.status = 400; throw error;
@@ -153,10 +154,10 @@ test('a visible road sign speaks once and its remaining distance follows GPS pro
   ];
   const app = await setup({ roadFeatures: signs });
   try {
-    await app.gps(a); await app.gps(a);
+    await app.gps(a); await app.speechStarted(); await app.run(() => app.speechOptions?.onDone?.()); await app.gps(a);
     assert.equal(app.value.roadFeatures.length, 2);
     assert.equal(app.value.roadFeatures[0].id, 'stop-1');
-    assert.equal(app.speaks.filter(text => /знак Стоп/.test(text)).length, 1);
+    assert.equal(app.speaks.filter(text => /знак Стоп/.test(text)).length, 1, JSON.stringify(app.speaks));
     assert.match(app.speaks.find(text => /знак Стоп/.test(text)), /светофор/);
     const before = app.value.roadFeatures[0].along - app.value.progress.along;
     await app.speechStarted();
@@ -343,15 +344,16 @@ test('trip start changes target; terminal status aborts old work and stops guida
     assert.equal(app.value.active, false); assert.equal(app.value.route, null);
   } finally { await app.close(); }
 });
-test('three confirmed accurate off-route fixes trigger prompt rerouting', async () => {
+test('a short GPS deviation is ignored, then sustained travel away triggers rerouting', async () => {
   const app = await setup();
   try {
     await app.gps(); await app.advance(7000);
-    const away = { latitude: 42.87, longitude: 74.596 };
+    const away = { latitude: 42.87, longitude: 74.5908 };
     await app.gps(away); assert.equal(app.requests.length, 1);
-    await app.advance(1000); await app.gps(away); assert.equal(app.requests.length, 1);
-    await app.gps(away); assert.equal(app.requests.length, 1);
-    await app.gps(away); assert.equal(app.requests.length, 2);
+    for (let index = 0; index < 5; index++) { await app.gps({ ...away, longitude: away.longitude + index * .00005 }); if (index === 3) await app.advance(1); }
+    assert.equal(app.requests.length, 1);
+    for (let index = 5; index < 9; index++) { await app.gps({ ...away, longitude: away.longitude + index * .00005 }); if (index === 7) await app.advance(1); }
+    assert.equal(app.requests.length, 2);
   } finally { await app.close(); }
 });
 test('a failed reroute retains the previous geometry and reports the unavailable service', async () => {
@@ -360,8 +362,8 @@ test('a failed reroute retains the previous geometry and reports the unavailable
     await app.gps(a);
     const original = app.value.route;
     await app.advance(8000);
-    const away = { latitude: 42.87, longitude: 74.596 };
-    await app.gps(away); await app.gps(away); await app.gps(away); await app.gps(away);
+    const away = { latitude: 42.87, longitude: 74.5908 };
+    for (let index = 0; index < 9; index++) { await app.gps({ ...away, longitude: away.longitude + index * .00005 }); if (index === 3 || index === 7) await app.advance(1); }
     assert.equal(app.requests.length, 2);
     assert.equal(app.value.route, original);
     assert.match(app.value.error, /Сеть недоступна/);

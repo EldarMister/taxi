@@ -23,6 +23,16 @@ test('road warnings follow the route, ignore the parallel road and never invent 
   assert.ok(features.every(feature => feature.along >= 100));
 });
 
+test('road anchors reject a side-street stop while keeping a crossing and a roadside radar', () => {
+  const features = selectRoadFeatures([
+    { ...node(11, 42.875, 74.5901, { highway: 'stop' }), roads: [{ latitude: 42.875, longitude: 74.5901, bearing: 90, distance: 0 }] },
+    { ...node(12, 42.876, 74.59, { highway: 'crossing', crossing: 'traffic_signals' }), roads: [{ latitude: 42.876, longitude: 74.59, bearing: 0, distance: 0 }] },
+    { ...node(13, 42.877, 74.59025, { highway: 'speed_camera' }), roads: [{ latitude: 42.877, longitude: 74.59, bearing: 0, distance: 20 }] },
+    { ...node(14, 42.878, 74.5901, { highway: 'give_way' }), roads: [{ latitude: 42.878, longitude: 74.5901, bearing: 0, distance: 0 }] },
+  ], points, 0);
+  assert.deepEqual(features.map(item => item.kind).sort(), ['traffic_light', 'pedestrian_crossing', 'speed_camera'].sort());
+});
+
 test('road warning snapshot loads and searches a real Kyrgyzstan route', () => {
   const service = new RoadFeaturesService();
   assert.ok(service.generatedAt);

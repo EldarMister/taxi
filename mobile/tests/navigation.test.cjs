@@ -182,13 +182,21 @@ test('Russian voice prompts cover turns, fork, roundabout, ramps, uturn and arri
 });
 test('route, leg, maneuver and stage produce stable deduplication keys', () => {
   const progress = { stepIndex: 1, instruction: 'Поверните направо', arrived: false };
-  assert.equal(guidanceCue({ ...progress, maneuverDistance: 600 }), null);
-  assert.equal(guidanceCue({ ...progress, maneuverDistance: 501 }, 'ru', 7, 1).key, '7:1:1:500');
-  assert.equal(guidanceCue({ ...progress, maneuverDistance: 200 }).text, 'Через 200 метров поверните направо.');
+  assert.equal(guidanceCue({ ...progress, maneuverDistance: 800 }), null);
+  assert.equal(guidanceCue({ ...progress, maneuverDistance: 620 }).text, '600 метров прямо.');
+  assert.equal(guidanceCue({ ...progress, maneuverDistance: 501 }, 'ru', 7, 1).key, '7:1:1:600');
+  assert.equal(guidanceCue({ ...progress, maneuverDistance: 150 }).text, 'Через 150 метров поверните направо.');
   assert.equal(guidanceCue({ ...progress, maneuverDistance: 95 }, 'ru', 7, 1).key, '7:1:1:200');
   assert.equal(guidanceCue({ ...progress, maneuverDistance: 25 }, 'ru', 7, 1).key, '7:1:1:0');
-  assert.deepEqual(Array.from(guidanceCue({ ...progress, maneuverDistance: 25 }, 'ru', 7, 1).supersedes), ['7:1:1:500', '7:1:1:200']);
+  assert.deepEqual(Array.from(guidanceCue({ ...progress, maneuverDistance: 25 }, 'ru', 7, 1).supersedes), ['7:1:1:600', '7:1:1:200']);
   assert.notEqual(guidanceCue({ ...progress, maneuverDistance: 95 }, 'ru', 8, 1).key, guidanceCue({ ...progress, maneuverDistance: 95 }, 'ru', 7, 1).key);
+});
+test('distant turn stays straight on screen and brief GPS jitter cannot trigger rerouting', () => {
+  assert.equal(exportsObject.distantManeuverInstruction({ instruction: 'Поверните направо', maneuverDistance: 620, arrived: false }), 'Двигайтесь прямо');
+  assert.equal(exportsObject.distantManeuverInstruction({ instruction: 'Поверните направо', maneuverDistance: 100, arrived: false }), 'Поверните направо');
+  assert.equal(exportsObject.shouldReroute(5, 1000, 4000, 30), false);
+  assert.equal(exportsObject.shouldReroute(5, 1000, 8000, 5), false);
+  assert.equal(exportsObject.shouldReroute(5, 1000, 8000, 30), true);
 });
 
 test('a turn announces distance and the destination street without losing its name', () => {

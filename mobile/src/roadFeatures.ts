@@ -23,7 +23,7 @@ function pointAt(prepared: PreparedRoute, along: number) {
 }
 
 export function roadFeatureWindow(prepared: PreparedRoute, along: number): RoadFeatureWindow {
-  const startAlong = Math.max(0, Math.floor(along - 140));
+  const startAlong = Math.max(0, Math.floor(along - 15));
   const endAlong = Math.min(prepared.total, startAlong + 1200);
   const points = [];
   for (let distance = startAlong; distance < endAlong; distance += 20) points.push(pointAt(prepared, distance));
@@ -33,7 +33,7 @@ export function roadFeatureWindow(prepared: PreparedRoute, along: number): RoadF
 
 export function visibleRoadFeatures(features: RoadFeature[], along: number): RoadFeature[] {
   const relevant = features.filter(feature => Number.isFinite(feature.along)
-    && feature.along - along >= -140 && feature.along - along <= 400);
+    && feature.along - along >= -10 && feature.along - along <= 400);
   relevant.sort((a, b) => Math.abs(a.along - along) - Math.abs(b.along - along));
   const kinds = new Set<RoadFeatureKind>();
   return relevant.filter(feature => {
