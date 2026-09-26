@@ -381,13 +381,14 @@ export function useDriverNavigation({ userId, order, enabled, locationEnabled, m
       return;
     }
     if (requestRef.current) return;
-    if (progressRef.current && position.timestamp - progressRef.current.timestamp > 15_000) {
+    const next = routeProgress(routeRef.current, position, progressRef.current, language);
+    if (progressRef.current && position.timestamp - progressRef.current.timestamp > 15_000
+      && next.offRouteMeters > offRouteThreshold(position.accuracy)) {
       progressRef.current = { ...progressRef.current, timestamp: position.timestamp }; latestGuidanceRef.current = null;
       setProgress(null); stopSpeech();
       if (Date.now() - lastRequest.current >= 15_000) void loadRoute(true, 'gps-gap');
       return;
     }
-    const next = routeProgress(routeRef.current, position, progressRef.current, language);
     latestGuidanceRef.current = next;
     if (next.offRouteMeters > offRouteThreshold(position.accuracy)) {
       // Count distinct fixes, not timer renders, before triggering a reroute.

@@ -207,6 +207,7 @@ test('driver navigation retries without unsupported route fields on the deployed
     assert.equal(app.value.error, '');
     await app.advance(31000);
     await app.gps({ ...a, latitude: a.latitude + .0001 });
+    assert.equal(app.requests.length, 2, 'a GPS pause on the same road keeps the current route');
     assert.equal(app.requests.at(-1).body.fast, undefined);
     assert.equal(app.requests.at(-1).body.bearing, undefined);
   } finally { await app.close(); }
@@ -300,7 +301,7 @@ test('a queued instruction refreshes its distance immediately before speech star
     assert.doesNotMatch(app.speaks.at(-1), /200 метров/);
   } finally { await app.close(); }
 });
-test('a GPS gap cancels stale speech and rebuilds guidance from the fresh fix', async () => {
+test('a GPS gap on the same road resumes guidance without replacing the route', async () => {
   const app = await setup();
   try {
     await app.gps({ ...a, latitude: 42.8741 });
@@ -309,9 +310,19 @@ test('a GPS gap cancels stale speech and rebuilds guidance from the fresh fix', 
     await app.advance(31000);
     assert.match(app.value.gpsStatus, /Актуальное местоположение недоступно/);
     await app.gps({ ...a, latitude: 42.87411 });
+    assert.equal(app.requests.length, 1);
+    assert.equal(app.value.rerouteReason, 'initial');
+    assert.ok(app.speaks.length >= first + 1);
+  } finally { await app.close(); }
+});
+test('a GPS gap far from the previous road builds a new route', async () => {
+  const app = await setup();
+  try {
+    await app.gps(a);
+    await app.advance(31000);
+    await app.gps({ latitude: a.latitude, longitude: a.longitude + .002 });
     assert.equal(app.requests.length, 2);
     assert.equal(app.value.rerouteReason, 'gps-gap');
-    assert.ok(app.speaks.length >= first + 1);
   } finally { await app.close(); }
 });
 test('Android can use its Russian default voice when enumeration is empty', async () => {
