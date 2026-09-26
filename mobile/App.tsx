@@ -111,6 +111,12 @@ function isDismissedOrderUpdate(next: Order | null, dismissedOrderIds: ReadonlyS
   return next != null && dismissedOrderIds.has(next.id);
 }
 
+const savedPlaceTitles: Record<SavedPlaceKind, string> = {
+  home: 'Адрес дома',
+  work: 'Адрес работы',
+  favorite: 'Избранный адрес',
+};
+
 export default function App() {
   const [fontsLoaded, fontError] = useFonts({
     Inter_400Regular,
@@ -1274,7 +1280,7 @@ function TaxiApp() {
               followDriver={driver && !offer && navigation.followDriver}
               onFollowDriverChange={navigation.setFollowDriver}
               selectionMode={mapSelection}
-              selectionTitle={savedPlaceEditing === 'home' ? 'Адрес дома' : savedPlaceEditing === 'work' ? 'Адрес работы' : undefined}
+              selectionTitle={savedPlaceEditing ? savedPlaceTitles[savedPlaceEditing] : undefined}
               browsePickup={browsingPickup}
               showUserPosition={locationEnabled && !driver}
               onUserLocation={point => setSearchCenter(previous => previous && Math.hypot(
@@ -1487,7 +1493,7 @@ function TaxiApp() {
           center={searchCenter || pickup}
           pickup={pickup}
           dropoff={dropoff}
-          savedPlace={savedPlaceEditing ? { title: savedPlaceEditing === 'home' ? 'Адрес дома' : 'Адрес работы', point: savedPlaces[savedPlaceEditing] } : undefined}
+          savedPlace={savedPlaceEditing ? { title: savedPlaceTitles[savedPlaceEditing], point: savedPlaces[savedPlaceEditing] } : undefined}
           onFieldChange={setAddressField}
           language={user.language}
           onSelect={(point) => { if (savedPlaceEditing) void run(() => persistSavedPlace(savedPlaceEditing, point)); else selectAddress(addressField, point); }}

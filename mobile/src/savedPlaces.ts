@@ -1,7 +1,7 @@
 import * as SecureStore from 'expo-secure-store';
 import type { Point } from './types';
 
-export type SavedPlaceKind = 'home' | 'work';
+export type SavedPlaceKind = 'home' | 'work' | 'favorite';
 export type SavedPlaces = Partial<Record<SavedPlaceKind, Point>>;
 
 const key = (userId: string) => `taxi.saved-places.v1.${userId.replace(/[^a-zA-Z0-9._-]/g, '_')}`;
@@ -23,6 +23,7 @@ export async function readSavedPlaces(userId: string): Promise<SavedPlaces> {
     return {
       ...(validPoint(stored.home) ? { home: stored.home } : {}),
       ...(validPoint(stored.work) ? { work: stored.work } : {}),
+      ...(validPoint(stored.favorite) ? { favorite: stored.favorite } : {}),
     };
   } catch { return {}; }
 }

@@ -17,16 +17,17 @@ vm.runInNewContext(compiled, {
   } : (() => { throw Error(name); })(),
 });
 
-test('home and work survive restart and stay private to each account', async () => {
+test('home, work and favorite survive restart and stay private to each account', async () => {
   const home = { latitude: 42.87, longitude: 74.59, address: 'ул. Манаса, 10' };
   const work = { latitude: 42.9, longitude: 74.61, address: 'ул. Киевская, 50' };
-  await moduleExports.writeSavedPlaces('client-a', { home, work });
-  assert.deepEqual(JSON.parse(JSON.stringify(await moduleExports.readSavedPlaces('client-a'))), { home, work });
+  const favorite = { latitude: 42.88, longitude: 74.60, address: 'ул. Ибраимова, 115' };
+  await moduleExports.writeSavedPlaces('client-a', { home, work, favorite });
+  assert.deepEqual(JSON.parse(JSON.stringify(await moduleExports.readSavedPlaces('client-a'))), { home, work, favorite });
   assert.deepEqual(JSON.parse(JSON.stringify(await moduleExports.readSavedPlaces('client-b'))), {});
 });
 
 test('damaged storage cannot put an invalid destination into a taxi order', async () => {
-  values.set('taxi.saved-places.v1.bad', JSON.stringify({ home: { latitude: 999, longitude: 74, address: 'wrong' }, work: { latitude: 42.9, longitude: 74.6, address: 'Работа' } }));
+  values.set('taxi.saved-places.v1.bad', JSON.stringify({ home: { latitude: 999, longitude: 74, address: 'wrong' }, work: { latitude: 42.9, longitude: 74.6, address: 'Работа' }, favorite: { latitude: 42.9, longitude: 181, address: 'wrong' } }));
   assert.deepEqual(JSON.parse(JSON.stringify(await moduleExports.readSavedPlaces('bad'))), { work: { latitude: 42.9, longitude: 74.6, address: 'Работа' } });
   values.set('taxi.saved-places.v1.broken', '{');
   assert.deepEqual(JSON.parse(JSON.stringify(await moduleExports.readSavedPlaces('broken'))), {});

@@ -158,7 +158,7 @@ export function ServiceHomeScreen({ language = 'ru', onTaxi, onTruck, onSearch, 
       <View style={[styles.places, compact && styles.placesCompact]}>
         <SavedPlace language={language} icon="home" title={t('Дом')} point={savedPlaces.home ? savedPlaceLabel(savedPlaces.home.address) : undefined} onPress={() => onSavedPlace('home')} onEdit={() => onEditSavedPlace('home')}/>
         <SavedPlace language={language} icon="briefcase" title={t('Работа')} point={savedPlaces.work ? savedPlaceLabel(savedPlaces.work.address) : undefined} onPress={() => onSavedPlace('work')} onEdit={() => onEditSavedPlace('work')}/>
-        <SavedPlace language={language} icon="star" title={t('Избранное')} onPress={onSearch}/>
+        <SavedPlace language={language} icon="star" title={t('Избранное')} point={savedPlaces.favorite ? savedPlaceLabel(savedPlaces.favorite.address) : undefined} onPress={() => onSavedPlace('favorite')} onEdit={() => onEditSavedPlace('favorite')}/>
       </View>
 
       {hasOrder && <View>
