@@ -1360,7 +1360,7 @@ function TaxiApp() {
           onVoiceEnabledChange={driver ? navigation.setVoiceEnabled : undefined}
         />
       )}
-      {driver && (page !== "home" || !displayed) ? (
+      {driver && (page !== "home" || !offer) ? (
         <View
           style={{
             backgroundColor: palette.surface,

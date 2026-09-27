@@ -96,7 +96,7 @@ test('client booking opens at current GPS even with an old pickup and focus', as
   assert.deepEqual(Array.from(h.cameraCalls.at(-1).centerCoordinate), [74.6, 42.9]);
 });
 
-test('close map zoom loads visible traffic lights and crossings for a passenger', async t => {
+test('one zoom step loads traffic lights and cross-road markings for a passenger', async t => {
   const mapped = [
     { id: '1:traffic_light', kind: 'traffic_light', latitude: 42.885, longitude: 74.59 },
     { id: '2:pedestrian_crossing', kind: 'pedestrian_crossing', latitude: 42.886, longitude: 74.591, bearing: 0 },
@@ -107,7 +107,7 @@ test('close map zoom loads visible traffic lights and crossings for a passenger'
     throw Error(url);
   } });
   await h.ready();
-  await act(async () => h.map().props.onRegionDidChange(feature(42.89, 74.59, { zoomLevel: 16 })));
+  await act(async () => h.map().props.onRegionDidChange(feature(42.89, 74.59, { zoomLevel: 15 })));
   await act(async () => {
     for (const [id, callback] of [...h.timers]) { h.timers.delete(id); callback(); }
   });
@@ -115,6 +115,11 @@ test('close map zoom loads visible traffic lights and crossings for a passenger'
   const source = h.renderer.root.findByProps({ id: 'map-road-features' });
   assert.deepEqual(source.props.shape.features.map(item => item.properties.kind), ['traffic_light']);
   assert.equal(h.renderer.root.findByProps({ id: 'map-traffic-lights' }).props.style.iconImage, 'traffic-light.png');
+  assert.equal(h.renderer.root.findByProps({ id: 'map-traffic-lights' }).props.minZoomLevel, 14.5);
+  const overview = h.renderer.root.findByProps({ id: 'map-crossing-overview' }).props.shape.features;
+  assert.equal(overview.length, 2);
+  assert.ok(overview.every(item => item.geometry.coordinates.length === 1));
+  assert.equal(h.renderer.root.findByProps({ id: 'map-crossing-overview-line' }).props.minZoomLevel, 14.5);
   const crossings = h.renderer.root.findByProps({ id: 'map-pedestrian-crossings' }).props.shape.features;
   const crossing = crossings[0];
   assert.equal(crossing.geometry.type, 'MultiLineString');
@@ -128,6 +133,23 @@ test('close map zoom loads visible traffic lights and crossings for a passenger'
     assert.ok(Math.abs(line[0][0] - line[1][0]) < 1e-9);
   }
   assert.equal(h.renderer.root.findAllByProps({ id: 'map-crossing-stripes' }).length, 1);
+});
+
+test('wider map view still requests road features within the server area limit', async t => {
+  const h = await mountMap(t, { passengerView: true }, {
+    mapBounds: [[74.61, 42.91], [74.59, 42.86]],
+    request: async url => url.startsWith('/routes/map-features?') ? { features: [] } : Promise.reject(Error(url)),
+  });
+  await h.ready();
+  await act(async () => h.map().props.onRegionDidChange(feature(42.89, 74.59, { zoomLevel: 15 })));
+  await act(async () => {
+    for (const [id, callback] of [...h.timers]) { h.timers.delete(id); callback(); }
+  });
+  const url = h.requests.find(request => request.url.startsWith('/routes/map-features?'))?.url;
+  assert.ok(url);
+  const bounds = new URL(`https://api.example.test${url}`).searchParams;
+  assert.ok(Number(bounds.get('north')) - Number(bounds.get('south')) < .06);
+  assert.ok(Number(bounds.get('east')) - Number(bounds.get('west')) < .08);
 });
 
 test('a delayed initial GPS fix does not undo the client dragging the pickup pin', async t => {
@@ -149,7 +171,7 @@ test('routes added after GPS stay explicitly below the driver symbol', async t =
   await h.ready();
   await h.update({ driverPosition: a, geometry: [a, b], approachGeometry: [b, a] });
   const layers = h.renderer.root.findAllByType('LineLayer');
-  assert.equal(layers.length, 8);
+  assert.equal(layers.length, 10);
   assert.ok(layers.every(layer => layer.props.belowLayerID === 'driver-navigation-arrow'));
 });
 
