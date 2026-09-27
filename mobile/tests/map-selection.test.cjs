@@ -55,7 +55,6 @@ async function mountMap(t, initialProps, options = {}) {
       if (id === '../../assets/tracking-car-white.png') return 'tracking-car-white.png';
       if (id === '../../assets/driver-navigation-arrow.png') return 'driver-navigation-arrow.png';
       if (id === '../../assets/road-signs/traffic-light.png') return 'traffic-light.png';
-      if (id === '../../assets/road-signs/pedestrian-crossing.png') return 'pedestrian-crossing.png';
       if (id === 'react-native-safe-area-context') return { useSafeAreaInsets: () => ({ top: 24, bottom: 24 }) };
       if (id === '../ui') return { Button: 'Button', Icon: 'Icon', PickupIcon: 'PickupIcon', colors: {}, shortAddress: x => x || '', tr: () => value => value };
       if (id === '@maplibre/maplibre-react-native') return { Camera, MapView: NativeMap, PointAnnotation: 'PointAnnotation', MarkerView: 'MarkerView', ShapeSource: 'ShapeSource', LineLayer: 'LineLayer', SymbolLayer: 'SymbolLayer', FillLayer: 'FillLayer', UserLocation: 'UserLocation', addCustomHeader: (...args) => headers.push(args) };
@@ -100,7 +99,8 @@ test('client booking opens at current GPS even with an old pickup and focus', as
 test('close map zoom loads visible traffic lights and crossings for a passenger', async t => {
   const mapped = [
     { id: '1:traffic_light', kind: 'traffic_light', latitude: 42.885, longitude: 74.59 },
-    { id: '2:pedestrian_crossing', kind: 'pedestrian_crossing', latitude: 42.886, longitude: 74.591 },
+    { id: '2:pedestrian_crossing', kind: 'pedestrian_crossing', latitude: 42.886, longitude: 74.591, bearing: 0 },
+    { id: '3:pedestrian_crossing', kind: 'pedestrian_crossing', latitude: 42.887, longitude: 74.592, bearing: 90 },
   ];
   const h = await mountMap(t, { passengerView: true }, { request: async url => {
     if (url.startsWith('/routes/map-features?')) return { features: mapped };
@@ -113,9 +113,21 @@ test('close map zoom loads visible traffic lights and crossings for a passenger'
   });
   assert.ok(h.requests.some(request => request.url.startsWith('/routes/map-features?')));
   const source = h.renderer.root.findByProps({ id: 'map-road-features' });
-  assert.deepEqual(source.props.shape.features.map(item => item.properties.kind), ['traffic_light', 'pedestrian_crossing']);
+  assert.deepEqual(source.props.shape.features.map(item => item.properties.kind), ['traffic_light']);
   assert.equal(h.renderer.root.findByProps({ id: 'map-traffic-lights' }).props.style.iconImage, 'traffic-light.png');
-  assert.equal(h.renderer.root.findByProps({ id: 'map-pedestrian-crossings' }).props.style.iconImage, 'pedestrian-crossing.png');
+  const crossings = h.renderer.root.findByProps({ id: 'map-pedestrian-crossings' }).props.shape.features;
+  const crossing = crossings[0];
+  assert.equal(crossing.geometry.type, 'MultiLineString');
+  assert.equal(crossing.geometry.coordinates.length, 5);
+  for (const line of crossing.geometry.coordinates) {
+    assert.ok(line[0][0] < 74.591 && line[1][0] > 74.591, 'each stripe runs across the north-south road');
+    assert.ok(Math.abs(line[0][1] - line[1][1]) < 1e-9);
+  }
+  for (const line of crossings[1].geometry.coordinates) {
+    assert.ok(line[0][1] > 42.887 && line[1][1] < 42.887, 'each stripe runs across the east-west road');
+    assert.ok(Math.abs(line[0][0] - line[1][0]) < 1e-9);
+  }
+  assert.equal(h.renderer.root.findAllByProps({ id: 'map-crossing-stripes' }).length, 1);
 });
 
 test('a delayed initial GPS fix does not undo the client dragging the pickup pin', async t => {
@@ -137,7 +149,7 @@ test('routes added after GPS stay explicitly below the driver symbol', async t =
   await h.ready();
   await h.update({ driverPosition: a, geometry: [a, b], approachGeometry: [b, a] });
   const layers = h.renderer.root.findAllByType('LineLayer');
-  assert.equal(layers.length, 6);
+  assert.equal(layers.length, 8);
   assert.ok(layers.every(layer => layer.props.belowLayerID === 'driver-navigation-arrow'));
 });
 

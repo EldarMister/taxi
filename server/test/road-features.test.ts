@@ -49,6 +49,8 @@ test('map features include mapped crossings and signals only inside the requeste
   const features = service.mapFeatures(bounds);
   assert.ok(features.some(feature => feature.kind === 'traffic_light'));
   assert.ok(features.some(feature => feature.kind === 'pedestrian_crossing'));
+  assert.ok(features.filter(feature => feature.kind === 'pedestrian_crossing')
+    .every(feature => Number.isFinite(feature.bearing) && feature.bearing! >= 0 && feature.bearing! < 360));
   assert.ok(features.every(feature => feature.latitude >= bounds.south && feature.latitude <= bounds.north
     && feature.longitude >= bounds.west && feature.longitude <= bounds.east));
   assert.equal(new Set(features.map(feature => feature.id)).size, features.length);

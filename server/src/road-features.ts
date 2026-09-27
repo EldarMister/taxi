@@ -6,7 +6,7 @@ import { haversine } from './domain';
 export type RoadFeatureKind = 'stop' | 'give_way' | 'speed_limit_60' | 'pedestrian_crossing' | 'speed_camera' | 'traffic_light';
 export type RoadFeature = { id: string; kind: RoadFeatureKind; latitude: number; longitude: number; along: number };
 export type RoadPoint = { latitude: number; longitude: number };
-export type MapRoadFeature = { id: string; kind: 'traffic_light' | 'pedestrian_crossing'; latitude: number; longitude: number };
+export type MapRoadFeature = { id: string; kind: 'traffic_light' | 'pedestrian_crossing'; latitude: number; longitude: number; bearing?: number };
 export type MapBounds = { south: number; west: number; north: number; east: number };
 type OsmNode = { id: number; latitude: number; longitude: number; tags: Record<string, string>;
   roads?: { latitude: number; longitude: number; bearing: number; distance: number }[] };
@@ -107,7 +107,13 @@ export class RoadFeaturesService {
           const tagged = kinds(node.tags);
           const kind = node.tags.highway === 'crossing' || tagged.includes('pedestrian_crossing') && !tagged.includes('traffic_light')
             ? 'pedestrian_crossing' : tagged.includes('traffic_light') ? 'traffic_light' : null;
-          if (kind) result.push({ id: `${node.id}:${kind}`, kind, latitude: node.latitude, longitude: node.longitude });
+          if (!kind) continue;
+          if (kind === 'pedestrian_crossing') {
+            const road = node.roads?.[0];
+            if (!road || road.distance > 8 || !Number.isFinite(road.bearing)) continue;
+            result.push({ id: `${node.id}:${kind}`, kind, latitude: node.latitude, longitude: node.longitude,
+              bearing: road.bearing });
+          } else result.push({ id: `${node.id}:${kind}`, kind, latitude: node.latitude, longitude: node.longitude });
         }
       }
     }
