@@ -42,3 +42,14 @@ test('road warning snapshot loads and searches a real Kyrgyzstan route', () => {
   ], 0);
   assert.ok(Array.isArray(signal));
 });
+
+test('map features include mapped crossings and signals only inside the requested area', () => {
+  const service = new RoadFeaturesService();
+  const bounds = { south: 42.88, west: 74.58, north: 42.89, east: 74.61 };
+  const features = service.mapFeatures(bounds);
+  assert.ok(features.some(feature => feature.kind === 'traffic_light'));
+  assert.ok(features.some(feature => feature.kind === 'pedestrian_crossing'));
+  assert.ok(features.every(feature => feature.latitude >= bounds.south && feature.latitude <= bounds.north
+    && feature.longitude >= bounds.west && feature.longitude <= bounds.east));
+  assert.equal(new Set(features.map(feature => feature.id)).size, features.length);
+});

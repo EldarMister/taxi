@@ -27,7 +27,10 @@ async function mountMap(t, initialProps, options = {}) {
   let next = 0, renderer, props = initialProps;
   const nativeCamera = { setCamera: config => cameraCalls.push(config), fitBounds: (...args) => bounds.push(args) };
   const Camera = React.forwardRef((cameraProps, ref) => { React.useImperativeHandle(ref, () => nativeCamera); return React.createElement('Camera', cameraProps); });
-  const NativeMap = React.forwardRef((mapProps, ref) => { React.useImperativeHandle(ref, () => ({ getCenter: async () => options.mapCenter || null })); return React.createElement('MapView', mapProps); });
+  const NativeMap = React.forwardRef((mapProps, ref) => { React.useImperativeHandle(ref, () => ({
+    getCenter: async () => options.mapCenter || null,
+    getVisibleBounds: async () => options.mapBounds || [[74.6, 42.9], [74.58, 42.88]],
+  })); return React.createElement('MapView', mapProps); });
   const exports = {};
   const api = { baseUrl: 'https://api.example.test/api', request: async (url, init) => {
     requests.push({ url, init });
@@ -51,6 +54,8 @@ async function mountMap(t, initialProps, options = {}) {
       if (id === 'react-native') return { View: 'View', Image: 'Image', Text: 'Text', Pressable: 'Pressable', ActivityIndicator: 'Spinner', StyleSheet: { create: s => s }, Linking: { openURL: async () => {} } };
       if (id === '../../assets/tracking-car-white.png') return 'tracking-car-white.png';
       if (id === '../../assets/driver-navigation-arrow.png') return 'driver-navigation-arrow.png';
+      if (id === '../../assets/road-signs/traffic-light.png') return 'traffic-light.png';
+      if (id === '../../assets/road-signs/pedestrian-crossing.png') return 'pedestrian-crossing.png';
       if (id === 'react-native-safe-area-context') return { useSafeAreaInsets: () => ({ top: 24, bottom: 24 }) };
       if (id === '../ui') return { Button: 'Button', Icon: 'Icon', PickupIcon: 'PickupIcon', colors: {}, shortAddress: x => x || '', tr: () => value => value };
       if (id === '@maplibre/maplibre-react-native') return { Camera, MapView: NativeMap, PointAnnotation: 'PointAnnotation', MarkerView: 'MarkerView', ShapeSource: 'ShapeSource', LineLayer: 'LineLayer', SymbolLayer: 'SymbolLayer', FillLayer: 'FillLayer', UserLocation: 'UserLocation', addCustomHeader: (...args) => headers.push(args) };
@@ -90,6 +95,27 @@ test('client booking opens at current GPS even with an old pickup and focus', as
   const h = await mountMap(t, { passengerView: true, browsePickup: true, showUserPosition: true, pickup: old, focusPoint: old }, { position });
   await h.ready();
   assert.deepEqual(Array.from(h.cameraCalls.at(-1).centerCoordinate), [74.6, 42.9]);
+});
+
+test('close map zoom loads visible traffic lights and crossings for a passenger', async t => {
+  const mapped = [
+    { id: '1:traffic_light', kind: 'traffic_light', latitude: 42.885, longitude: 74.59 },
+    { id: '2:pedestrian_crossing', kind: 'pedestrian_crossing', latitude: 42.886, longitude: 74.591 },
+  ];
+  const h = await mountMap(t, { passengerView: true }, { request: async url => {
+    if (url.startsWith('/routes/map-features?')) return { features: mapped };
+    throw Error(url);
+  } });
+  await h.ready();
+  await act(async () => h.map().props.onRegionDidChange(feature(42.89, 74.59, { zoomLevel: 16 })));
+  await act(async () => {
+    for (const [id, callback] of [...h.timers]) { h.timers.delete(id); callback(); }
+  });
+  assert.ok(h.requests.some(request => request.url.startsWith('/routes/map-features?')));
+  const source = h.renderer.root.findByProps({ id: 'map-road-features' });
+  assert.deepEqual(source.props.shape.features.map(item => item.properties.kind), ['traffic_light', 'pedestrian_crossing']);
+  assert.equal(h.renderer.root.findByProps({ id: 'map-traffic-lights' }).props.style.iconImage, 'traffic-light.png');
+  assert.equal(h.renderer.root.findByProps({ id: 'map-pedestrian-crossings' }).props.style.iconImage, 'pedestrian-crossing.png');
 });
 
 test('a delayed initial GPS fix does not undo the client dragging the pickup pin', async t => {

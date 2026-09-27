@@ -6,6 +6,8 @@ import { haversine } from './domain';
 export type RoadFeatureKind = 'stop' | 'give_way' | 'speed_limit_60' | 'pedestrian_crossing' | 'speed_camera' | 'traffic_light';
 export type RoadFeature = { id: string; kind: RoadFeatureKind; latitude: number; longitude: number; along: number };
 export type RoadPoint = { latitude: number; longitude: number };
+export type MapRoadFeature = { id: string; kind: 'traffic_light' | 'pedestrian_crossing'; latitude: number; longitude: number };
+export type MapBounds = { south: number; west: number; north: number; east: number };
 type OsmNode = { id: number; latitude: number; longitude: number; tags: Record<string, string>;
   roads?: { latitude: number; longitude: number; bearing: number; distance: number }[] };
 
@@ -95,6 +97,22 @@ export class RoadFeaturesService {
     }
   }
   private cellKey(latitude: number, longitude: number) { return `${Math.floor(latitude * 100)}:${Math.floor(longitude * 100)}`; }
+  mapFeatures(bounds: MapBounds): MapRoadFeature[] {
+    const result: MapRoadFeature[] = [];
+    for (let lat = Math.floor(bounds.south * 100); lat <= Math.floor(bounds.north * 100); lat++) {
+      for (let lon = Math.floor(bounds.west * 100); lon <= Math.floor(bounds.east * 100); lon++) {
+        for (const node of this.cells.get(`${lat}:${lon}`) || []) {
+          if (node.latitude < bounds.south || node.latitude > bounds.north
+            || node.longitude < bounds.west || node.longitude > bounds.east) continue;
+          const tagged = kinds(node.tags);
+          const kind = node.tags.highway === 'crossing' || tagged.includes('pedestrian_crossing') && !tagged.includes('traffic_light')
+            ? 'pedestrian_crossing' : tagged.includes('traffic_light') ? 'traffic_light' : null;
+          if (kind) result.push({ id: `${node.id}:${kind}`, kind, latitude: node.latitude, longitude: node.longitude });
+        }
+      }
+    }
+    return result.slice(0, 500);
+  }
   along(points: RoadPoint[], startAlong: number): RoadFeature[] {
     const lats = points.map(point => point.latitude), lons = points.map(point => point.longitude);
     const south = Math.floor((Math.min(...lats) - .0004) * 100), north = Math.floor((Math.max(...lats) + .0004) * 100);

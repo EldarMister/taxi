@@ -69,6 +69,8 @@ function pointFromFeature(feature: GeoJSON.Feature): MapPoint | null {
 
 type DriverPoint = NonNullable<TaxiMapProps['driverPosition']>;
 type DisplayDriverPoint = DriverPoint & { roadAlong?: number; authoritativePosition?: boolean };
+type MapRoadFeature = { id: string; kind: 'traffic_light' | 'pedestrian_crossing'; latitude: number; longitude: number };
+type MapBounds = { south: number; west: number; north: number; east: number };
 const EMPTY_CAR_ROUTE: MapPoint[] = [];
 const trackingDiagnosticsEnabled = typeof process !== 'undefined' && process.env.EXPO_PUBLIC_TRACKING_DIAGNOSTICS === '1';
 
@@ -293,6 +295,10 @@ export default function TaxiMap({
   const [panelHeight, setPanelHeight] = useState(180);
   const [passengerFollowing, setPassengerFollowing] = useState(true);
   const [userLocation, setUserLocation] = useState<MapPoint | null>(null);
+  const [mapRoadFeatures, setMapRoadFeatures] = useState<MapRoadFeature[]>([]);
+  const mapFeatureCoverage = useRef<MapBounds | null>(null);
+  const mapFeatureRequest = useRef(0);
+  const mapFeatureTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [locationError, setLocationError] = useState('');
   const [locating, setLocating] = useState(false);
   const center = pickup ?? BISHKEK;
@@ -315,6 +321,58 @@ export default function TaxiMap({
   const driverLayerID = passengerView ? 'client-driver-car' : 'driver-navigation-arrow';
   const userLocationCallback = useRef(onUserLocation);
   userLocationCallback.current = onUserLocation;
+  const mapFeatureShape = useMemo<GeoJSON.FeatureCollection<GeoJSON.Point>>(() => ({
+    type: 'FeatureCollection',
+    features: mapRoadFeatures.filter(isMapPoint).map(feature => ({
+      type: 'Feature', id: feature.id, geometry: { type: 'Point', coordinates: toCoordinate(feature) },
+      properties: { kind: feature.kind },
+    })),
+  }), [mapRoadFeatures]);
+  const loadMapFeatures = async () => {
+    if (!mapView.current) return;
+    if (zoomLevel.current < 15.5) {
+      mapFeatureRequest.current++;
+      mapFeatureCoverage.current = null;
+      setMapRoadFeatures([]);
+      return;
+    }
+    const readVersion = mapFeatureRequest.current;
+    let request = readVersion;
+    try {
+      const [northEast, southWest] = await mapView.current.getVisibleBounds();
+      if (readVersion !== mapFeatureRequest.current) return;
+      const visible = { south: southWest[1], west: southWest[0], north: northEast[1], east: northEast[0] };
+      if (!Object.values(visible).every(Number.isFinite) || visible.south >= visible.north || visible.west >= visible.east) return;
+      const covered = mapFeatureCoverage.current;
+      if (covered && visible.south >= covered.south && visible.west >= covered.west
+        && visible.north <= covered.north && visible.east <= covered.east) return;
+      const latPad = (visible.north - visible.south) * .2;
+      const lonPad = (visible.east - visible.west) * .2;
+      const bounds = { south: visible.south - latPad, west: visible.west - lonPad,
+        north: visible.north + latPad, east: visible.east + lonPad };
+      if (bounds.north - bounds.south > .06 || bounds.east - bounds.west > .08) return;
+      request = ++mapFeatureRequest.current;
+      mapFeatureCoverage.current = bounds;
+      const query = Object.entries(bounds).map(([key, value]) => `${key}=${value.toFixed(6)}`).join('&');
+      const result = await api.request<{ features: MapRoadFeature[] }>(`/routes/map-features?${query}`);
+      if (request !== mapFeatureRequest.current) return;
+      setMapRoadFeatures(Array.isArray(result.features) ? result.features.filter(feature =>
+        (feature.kind === 'traffic_light' || feature.kind === 'pedestrian_crossing') && isMapPoint(feature)) : []);
+    } catch {
+      if (request === mapFeatureRequest.current) { mapFeatureCoverage.current = null; setMapRoadFeatures([]); }
+    }
+  };
+  const scheduleMapFeatures = () => {
+    if (mapFeatureTimer.current) clearTimeout(mapFeatureTimer.current);
+    mapFeatureTimer.current = setTimeout(() => { mapFeatureTimer.current = null; void loadMapFeatures(); }, 250);
+  };
+  useEffect(() => {
+    if (attached) scheduleMapFeatures();
+  }, [attached, mapReadyRevision]);
+  useEffect(() => () => {
+    if (mapFeatureTimer.current) clearTimeout(mapFeatureTimer.current);
+    mapFeatureRequest.current++;
+  }, []);
   useEffect(() => {
     if (!showUserPosition || !passengerView || !browsePickup) return;
     let live = true;
@@ -656,6 +714,7 @@ export default function TaxiMap({
           if (regionCenter) cameraCenter.current = toCoordinate(regionCenter);
           if (Number.isFinite(feature.properties.heading)) cameraHeading.current = feature.properties.heading;
           if (Number.isFinite(feature.properties.zoomLevel)) zoomLevel.current = feature.properties.zoomLevel;
+          scheduleMapFeatures();
           if (picking) { setMoving(false); const point = pointFromFeature(feature); if (point) setCandidate(point); }
         }}
         onPress={selectFeature}
@@ -673,6 +732,20 @@ export default function TaxiMap({
           <LineLayer id="approach-route-outline" belowLayerID={driverLayerID} style={{ lineColor: dark ? '#9B5D00' : '#B77908', lineWidth: 9, lineCap: 'round', lineJoin: 'round' }} />
           <LineLayer id="approach-route-line" belowLayerID={driverLayerID} style={{ lineColor: dark ? '#FFBC4B' : '#FFD54A', lineWidth: 6, lineCap: 'round', lineJoin: 'round' }} />
         </ShapeSource>}
+        <ShapeSource id="map-road-features" shape={mapFeatureShape}>
+          <SymbolLayer id="map-traffic-lights" belowLayerID={driverLayerID}
+            filter={['==', ['get', 'kind'], 'traffic_light']}
+            minZoomLevel={15.5}
+            style={{ iconImage: require('../../assets/road-signs/traffic-light.png'),
+              iconSize: ['interpolate', ['linear'], ['zoom'], 15.5, .018, 18, .025],
+              iconAllowOverlap: false, iconIgnorePlacement: false }}/>
+          <SymbolLayer id="map-pedestrian-crossings" belowLayerID={driverLayerID}
+            filter={['==', ['get', 'kind'], 'pedestrian_crossing']}
+            minZoomLevel={15.5}
+            style={{ iconImage: require('../../assets/road-signs/pedestrian-crossing.png'),
+              iconSize: ['interpolate', ['linear'], ['zoom'], 15.5, .036, 18, .048],
+              iconAllowOverlap: false, iconIgnorePlacement: false }}/>
+        </ShapeSource>
         {debugAccuracyShape && <ShapeSource id="driver-accuracy" shape={debugAccuracyShape}>
           <FillLayer id="driver-accuracy-fill" belowLayerID={driverLayerID} style={{ fillColor: '#FF7A00', fillOpacity: .13 }}/>
           <LineLayer id="driver-accuracy-outline" belowLayerID={driverLayerID} style={{ lineColor: '#FF7A00', lineWidth: 1.5 }}/>
