@@ -81,24 +81,6 @@ function metresBetween(a: MapPoint, b: MapPoint) {
   );
 }
 
-function crossingStripes(feature: MapRoadFeature, offsets = [-6, -3, 0, 3, 6], halfWidth = 11): GeoJSON.Feature<GeoJSON.MultiLineString> | null {
-  const bearing = feature.bearing;
-  if (feature.kind !== 'pedestrian_crossing' || !isMapPoint(feature)
-    || typeof bearing !== 'number' || !Number.isFinite(bearing) || bearing < 0 || bearing >= 360) return null;
-  const radians = bearing * Math.PI / 180;
-  const roadEast = Math.sin(radians), roadNorth = Math.cos(radians);
-  const acrossEast = roadNorth, acrossNorth = -roadEast;
-  const lonMetres = 111320 * Math.cos(feature.latitude * Math.PI / 180);
-  const coordinate = (east: number, north: number) => [
-    feature.longitude + east / lonMetres, feature.latitude + north / 111320,
-  ];
-  return { type: 'Feature', id: feature.id, properties: {}, geometry: {
-    type: 'MultiLineString', coordinates: offsets.map(offset => [
-      coordinate(roadEast * offset - acrossEast * halfWidth, roadNorth * offset - acrossNorth * halfWidth),
-      coordinate(roadEast * offset + acrossEast * halfWidth, roadNorth * offset + acrossNorth * halfWidth),
-    ]),
-  } };
-}
 function pointAhead(point: MapPoint, heading: number, metres: number): MapPoint {
   const radians = heading * Math.PI / 180;
   return { latitude: point.latitude + Math.cos(radians) * metres / 111320,
@@ -342,20 +324,12 @@ export default function TaxiMap({
   userLocationCallback.current = onUserLocation;
   const mapFeatureShape = useMemo<GeoJSON.FeatureCollection<GeoJSON.Point>>(() => ({
     type: 'FeatureCollection',
-    features: mapRoadFeatures.filter(feature => feature.kind === 'traffic_light' && isMapPoint(feature)).map(feature => ({
+    features: mapRoadFeatures.filter(feature => isMapPoint(feature) && (feature.kind === 'traffic_light'
+      || feature.kind === 'pedestrian_crossing' && typeof feature.bearing === 'number'
+        && Number.isFinite(feature.bearing) && feature.bearing >= 0 && feature.bearing < 360)).map(feature => ({
       type: 'Feature', id: feature.id, geometry: { type: 'Point', coordinates: toCoordinate(feature) },
-      properties: { kind: feature.kind },
+      properties: { kind: feature.kind, bearing: feature.bearing ?? 0 },
     })),
-  }), [mapRoadFeatures]);
-  const crossingShape = useMemo<GeoJSON.FeatureCollection<GeoJSON.MultiLineString>>(() => ({
-    type: 'FeatureCollection',
-    features: mapRoadFeatures.map(feature => crossingStripes(feature))
-      .filter((feature): feature is GeoJSON.Feature<GeoJSON.MultiLineString> => feature !== null),
-  }), [mapRoadFeatures]);
-  const crossingOverviewShape = useMemo<GeoJSON.FeatureCollection<GeoJSON.MultiLineString>>(() => ({
-    type: 'FeatureCollection',
-    features: mapRoadFeatures.map(feature => crossingStripes(feature, [0], 15))
-      .filter((feature): feature is GeoJSON.Feature<GeoJSON.MultiLineString> => feature !== null),
   }), [mapRoadFeatures]);
   const loadMapFeatures = async () => {
     if (!mapView.current) return;
@@ -770,20 +744,13 @@ export default function TaxiMap({
             style={{ iconImage: require('../../assets/road-signs/traffic-light.png'),
               iconSize: ['interpolate', ['linear'], ['zoom'], 14.5, .014, 18, .025],
               iconAllowOverlap: false, iconIgnorePlacement: false }}/>
-        </ShapeSource>
-        <ShapeSource id="map-crossing-overview" shape={crossingOverviewShape}>
-          <LineLayer id="map-crossing-overview-outline" belowLayerID={driverLayerID} minZoomLevel={14.5} maxZoomLevel={16.5}
-            style={{ lineColor: dark ? '#353942' : '#697179', lineOpacity: .75, lineWidth: 4, lineCap: 'butt' }}/>
-          <LineLayer id="map-crossing-overview-line" belowLayerID={driverLayerID} minZoomLevel={14.5} maxZoomLevel={16.5}
-            style={{ lineColor: dark ? '#D8DCE3' : '#FFFFFF', lineOpacity: .95, lineWidth: 2, lineCap: 'butt' }}/>
-        </ShapeSource>
-        <ShapeSource id="map-pedestrian-crossings" shape={crossingShape}>
-          <LineLayer id="map-crossing-outline" belowLayerID={driverLayerID} minZoomLevel={16.5}
-            style={{ lineColor: dark ? '#353942' : '#697179', lineOpacity: .75,
-              lineWidth: ['interpolate', ['linear'], ['zoom'], 16.5, 3, 18, 5], lineCap: 'butt' }}/>
-          <LineLayer id="map-crossing-stripes" belowLayerID={driverLayerID} minZoomLevel={16.5}
-            style={{ lineColor: dark ? '#D8DCE3' : '#FFFFFF', lineOpacity: .95,
-              lineWidth: ['interpolate', ['linear'], ['zoom'], 16.5, 1.5, 18, 3], lineCap: 'butt' }}/>
+          <SymbolLayer id="map-pedestrian-crossings" belowLayerID={driverLayerID}
+            filter={['==', ['get', 'kind'], 'pedestrian_crossing']}
+            minZoomLevel={14.5}
+            style={{ iconImage: require('../../assets/map-crossing-zebra.png'),
+              iconSize: ['interpolate', ['linear'], ['zoom'], 14.5, .38, 17, .55, 19, .68],
+              iconRotate: ['get', 'bearing'], iconRotationAlignment: 'map', iconPitchAlignment: 'map',
+              iconAllowOverlap: false, iconIgnorePlacement: false }}/>
         </ShapeSource>
         {debugAccuracyShape && <ShapeSource id="driver-accuracy" shape={debugAccuracyShape}>
           <FillLayer id="driver-accuracy-fill" belowLayerID={driverLayerID} style={{ fillColor: '#FF7A00', fillOpacity: .13 }}/>

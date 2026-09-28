@@ -55,6 +55,7 @@ async function mountMap(t, initialProps, options = {}) {
       if (id === '../../assets/tracking-car-white.png') return 'tracking-car-white.png';
       if (id === '../../assets/driver-navigation-arrow.png') return 'driver-navigation-arrow.png';
       if (id === '../../assets/road-signs/traffic-light.png') return 'traffic-light.png';
+      if (id === '../../assets/map-crossing-zebra.png') return 'map-crossing-zebra.png';
       if (id === 'react-native-safe-area-context') return { useSafeAreaInsets: () => ({ top: 24, bottom: 24 }) };
       if (id === '../ui') return { Button: 'Button', Icon: 'Icon', PickupIcon: 'PickupIcon', colors: {}, shortAddress: x => x || '', tr: () => value => value };
       if (id === '@maplibre/maplibre-react-native') return { Camera, MapView: NativeMap, PointAnnotation: 'PointAnnotation', MarkerView: 'MarkerView', ShapeSource: 'ShapeSource', LineLayer: 'LineLayer', SymbolLayer: 'SymbolLayer', FillLayer: 'FillLayer', UserLocation: 'UserLocation', addCustomHeader: (...args) => headers.push(args) };
@@ -113,26 +114,21 @@ test('one zoom step loads traffic lights and cross-road markings for a passenger
   });
   assert.ok(h.requests.some(request => request.url.startsWith('/routes/map-features?')));
   const source = h.renderer.root.findByProps({ id: 'map-road-features' });
-  assert.deepEqual(source.props.shape.features.map(item => item.properties.kind), ['traffic_light']);
+  assert.deepEqual(source.props.shape.features.map(item => item.properties.kind),
+    ['traffic_light', 'pedestrian_crossing', 'pedestrian_crossing']);
+  assert.ok(source.props.shape.features.every(item => item.geometry.type === 'Point'));
+  assert.deepEqual(source.props.shape.features.slice(1).map(item => item.properties.bearing), [0, 90]);
   assert.equal(h.renderer.root.findByProps({ id: 'map-traffic-lights' }).props.style.iconImage, 'traffic-light.png');
   assert.equal(h.renderer.root.findByProps({ id: 'map-traffic-lights' }).props.minZoomLevel, 14.5);
-  const overview = h.renderer.root.findByProps({ id: 'map-crossing-overview' }).props.shape.features;
-  assert.equal(overview.length, 2);
-  assert.ok(overview.every(item => item.geometry.coordinates.length === 1));
-  assert.equal(h.renderer.root.findByProps({ id: 'map-crossing-overview-line' }).props.minZoomLevel, 14.5);
-  const crossings = h.renderer.root.findByProps({ id: 'map-pedestrian-crossings' }).props.shape.features;
-  const crossing = crossings[0];
-  assert.equal(crossing.geometry.type, 'MultiLineString');
-  assert.equal(crossing.geometry.coordinates.length, 5);
-  for (const line of crossing.geometry.coordinates) {
-    assert.ok(line[0][0] < 74.591 && line[1][0] > 74.591, 'each stripe runs across the north-south road');
-    assert.ok(Math.abs(line[0][1] - line[1][1]) < 1e-9);
-  }
-  for (const line of crossings[1].geometry.coordinates) {
-    assert.ok(line[0][1] > 42.887 && line[1][1] < 42.887, 'each stripe runs across the east-west road');
-    assert.ok(Math.abs(line[0][0] - line[1][0]) < 1e-9);
-  }
-  assert.equal(h.renderer.root.findAllByProps({ id: 'map-crossing-stripes' }).length, 1);
+  const crossing = h.renderer.root.findByProps({ id: 'map-pedestrian-crossings' });
+  assert.equal(crossing.props.minZoomLevel, 14.5);
+  assert.equal(crossing.props.style.iconImage, 'map-crossing-zebra.png');
+  assert.equal(crossing.props.style.iconRotationAlignment, 'map');
+  assert.deepEqual(Array.from(crossing.props.style.iconRotate), ['get', 'bearing']);
+  assert.equal(crossing.props.style.iconSize.at(-1), .68, 'crosswalk keeps a bounded screen size at high zoom');
+  const bitmap = fs.readFileSync(path.join(__dirname, '../assets/map-crossing-zebra.png'));
+  assert.equal(bitmap.readUInt32BE(16), 64);
+  assert.equal(bitmap.readUInt32BE(20), 64);
 });
 
 test('wider map view still requests road features within the server area limit', async t => {
@@ -171,7 +167,7 @@ test('routes added after GPS stay explicitly below the driver symbol', async t =
   await h.ready();
   await h.update({ driverPosition: a, geometry: [a, b], approachGeometry: [b, a] });
   const layers = h.renderer.root.findAllByType('LineLayer');
-  assert.equal(layers.length, 10);
+  assert.equal(layers.length, 6);
   assert.ok(layers.every(layer => layer.props.belowLayerID === 'driver-navigation-arrow'));
 });
 

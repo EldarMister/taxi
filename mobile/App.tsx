@@ -111,6 +111,10 @@ function isDismissedOrderUpdate(next: Order | null, dismissedOrderIds: ReadonlyS
   return next != null && dismissedOrderIds.has(next.id);
 }
 
+function shouldShowDriverTabs(order: Order | null, offer?: Order) {
+  return !offer && !isActive(order);
+}
+
 const savedPlaceTitles: Record<SavedPlaceKind, string> = {
   home: 'Адрес дома',
   work: 'Адрес работы',
@@ -1074,6 +1078,7 @@ function TaxiApp() {
     : undefined;
   const visibleDriverOrder = driver && offer ? null : order;
   const displayed = visibleDriverOrder || offer;
+  const showDriverTabs = shouldShowDriverTabs(order, offer);
   const approachScope = driver && offer ? `offer:${offer.id}` : '';
   const approach = useApproachRoute(driver ? navigation.position : null, driver ? offer?.pickup : null, approachScope);
   const mapRoutes = tripMapRoutes({ driver, order: visibleDriverOrder, offer, quote: savedPlaceEditing ? null : service === 'delivery' ? deliveryQuote : quote, navigationRoute: navigation.route, approachRoute: approach.route });
@@ -1360,7 +1365,7 @@ function TaxiApp() {
           onVoiceEnabledChange={driver ? navigation.setVoiceEnabled : undefined}
         />
       )}
-      {driver && (page !== "home" || !offer) ? (
+      {driver && showDriverTabs ? (
         <View
           style={{
             backgroundColor: palette.surface,
