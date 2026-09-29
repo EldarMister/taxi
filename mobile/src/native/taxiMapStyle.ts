@@ -232,7 +232,7 @@ const currentStreetNameLayers: StyleLayer[] = [
   // name is more useful than a highway number, especially inside Bishkek.
   { id: 'current-osm-street-major', type: 'symbol', source: 'osm_current_labels', 'source-layer': 'street_labels', minzoom: 11.5, maxzoom: 15.5,
     filter: ['all', ['any', ['has', 'name'], ['has', 'name_ru'], ['has', 'name_ky']], ['match', ['get', 'kind'], ['motorway', 'trunk', 'primary', 'secondary', 'tertiary', 'motorway_link', 'trunk_link', 'primary_link', 'secondary_link', 'tertiary_link'], true, false]],
-    layout: { 'symbol-placement': 'line', 'text-field': currentOsmName, 'text-font': ['Noto Sans Regular'], 'text-size': ['interpolate', ['linear'], ['zoom'], 12, 11.5, 16, 13], 'text-padding': 3, 'symbol-spacing': 360, 'text-allow-overlap': true },
+    layout: { 'symbol-placement': 'line', 'text-field': currentOsmName, 'text-font': ['Noto Sans Regular'], 'text-size': ['interpolate', ['linear'], ['zoom'], 12, 11.5, 16, 13], 'text-padding': 5, 'symbol-spacing': 360 },
     paint: { 'text-color': '#42536A', 'text-halo-color': '#FFFFFF', 'text-halo-width': 1.6 } },
   // Route references are secondary; delaying them prevents their shields from
   // occupying the label slot of a named arterial road at a city-wide zoom.
@@ -242,11 +242,11 @@ const currentStreetNameLayers: StyleLayer[] = [
     paint: { 'text-color': '#46586F' } },
   { id: 'current-osm-street-major-detail', type: 'symbol', source: 'osm_current_labels', 'source-layer': 'street_labels', minzoom: 15.5,
     filter: ['all', ['any', ['has', 'name'], ['has', 'name_ru'], ['has', 'name_ky']], ['match', ['get', 'kind'], ['motorway', 'trunk', 'primary', 'secondary', 'tertiary', 'motorway_link', 'trunk_link', 'primary_link', 'secondary_link', 'tertiary_link'], true, false]],
-    layout: { 'symbol-placement': 'line', 'text-field': currentOsmName, 'text-font': ['Noto Sans Regular'], 'text-size': ['interpolate', ['linear'], ['zoom'], 15.5, 13, 18, 14.5], 'text-padding': 2, 'symbol-spacing': 430, 'text-allow-overlap': true },
+    layout: { 'symbol-placement': 'line', 'text-field': currentOsmName, 'text-font': ['Noto Sans Regular'], 'text-size': ['interpolate', ['linear'], ['zoom'], 15.5, 13, 18, 14.5], 'text-padding': 5, 'symbol-spacing': 430 },
     paint: { 'text-color': '#354A64', 'text-halo-color': '#FFFFFF', 'text-halo-width': 1.8 } },
   { id: 'current-osm-street-local', type: 'symbol', source: 'osm_current_labels', 'source-layer': 'street_labels', minzoom: 14,
     filter: ['all', ['any', ['has', 'name'], ['has', 'name_ru'], ['has', 'name_ky']], ['!', ['match', ['get', 'kind'], ['motorway', 'trunk', 'primary', 'secondary', 'tertiary', 'motorway_link', 'trunk_link', 'primary_link', 'secondary_link', 'tertiary_link'], true, false]]],
-    layout: { 'symbol-placement': 'line', 'text-field': currentOsmName, 'text-font': ['Noto Sans Regular'], 'text-size': ['interpolate', ['linear'], ['zoom'], 14, 10.5, 17, 12], 'text-padding': 2, 'symbol-spacing': 380, 'text-allow-overlap': true },
+    layout: { 'symbol-placement': 'line', 'text-field': currentOsmName, 'text-font': ['Noto Sans Regular'], 'text-size': ['interpolate', ['linear'], ['zoom'], 14, 10.5, 17, 12], 'text-padding': 5, 'symbol-spacing': 380 },
     paint: { 'text-color': '#556780', 'text-halo-color': '#FFFFFF', 'text-halo-width': 1.5 } },
   { id: 'current-osm-street-area-names', type: 'symbol', source: 'osm_current_labels', 'source-layer': 'streets_polygons_labels', minzoom: 15,
     filter: ['any', ['has', 'name'], ['has', 'name_ru'], ['has', 'name_ky']],

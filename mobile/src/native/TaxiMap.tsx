@@ -326,9 +326,9 @@ export default function TaxiMap({
     type: 'FeatureCollection',
     features: mapRoadFeatures.filter(feature => isMapPoint(feature) && (feature.kind === 'traffic_light'
       || feature.kind === 'pedestrian_crossing' && typeof feature.bearing === 'number'
-        && Number.isFinite(feature.bearing) && feature.bearing >= 0 && feature.bearing < 360)).map(feature => ({
+        && Number.isFinite(feature.bearing))).map(feature => ({
       type: 'Feature', id: feature.id, geometry: { type: 'Point', coordinates: toCoordinate(feature) },
-      properties: { kind: feature.kind, bearing: feature.bearing ?? 0 },
+      properties: { kind: feature.kind, bearing: ((feature.bearing ?? 0) % 360 + 360) % 360 },
     })),
   }), [mapRoadFeatures]);
   const loadMapFeatures = async () => {
@@ -693,6 +693,9 @@ export default function TaxiMap({
       Math.max(insets.top + 54, viewport.height - contentBottomInset - controlsHeight - 12),
     )
     : contentTopInset + 56;
+  const activeMapStyle = rasterFallback ? dark ? darkRasterMapFallback : rasterMapFallback : mapStyleForLanguage(language, dark);
+  const featureLayerBelow = typeof activeMapStyle === 'string' || rasterFallback
+    ? driverLayerID : 'current-osm-street-major';
 
   return <View style={styles.root}>
     <View testID="map-viewport" onLayout={({ nativeEvent: { layout } }) => setViewport(previous => previous.width === layout.width && previous.height === layout.height ? previous : { width: layout.width, height: layout.height })} style={[StyleSheet.absoluteFill, { bottom: selectionMode ? panelHeight : 0 }]}>
@@ -701,7 +704,7 @@ export default function TaxiMap({
         preferredFramesPerSecond={Device.isDevice ? undefined : 30}
         key={`${attempt}:${rasterFallback ? 'raster' : 'vector'}`}
         style={StyleSheet.absoluteFill}
-        mapStyle={rasterFallback ? dark ? darkRasterMapFallback : rasterMapFallback : mapStyleForLanguage(language, dark)}
+        mapStyle={activeMapStyle}
         pitchEnabled={navigationActive}
         rotateEnabled
         logoEnabled={false}
@@ -738,19 +741,19 @@ export default function TaxiMap({
           <LineLayer id="approach-route-line" belowLayerID={driverLayerID} style={{ lineColor: dark ? '#FFBC4B' : '#FFD54A', lineWidth: 6, lineCap: 'round', lineJoin: 'round' }} />
         </ShapeSource>}
         <ShapeSource id="map-road-features" shape={mapFeatureShape}>
-          <SymbolLayer id="map-traffic-lights" belowLayerID={driverLayerID}
+          <SymbolLayer id="map-traffic-lights" belowLayerID={featureLayerBelow}
             filter={['==', ['get', 'kind'], 'traffic_light']}
             minZoomLevel={14.5}
             style={{ iconImage: require('../../assets/road-signs/traffic-light.png'),
               iconSize: ['interpolate', ['linear'], ['zoom'], 14.5, .014, 18, .025],
-              iconAllowOverlap: false, iconIgnorePlacement: false }}/>
-          <SymbolLayer id="map-pedestrian-crossings" belowLayerID={driverLayerID}
+              iconAllowOverlap: true, iconIgnorePlacement: false }}/>
+          <SymbolLayer id="map-pedestrian-crossings" belowLayerID={featureLayerBelow}
             filter={['==', ['get', 'kind'], 'pedestrian_crossing']}
             minZoomLevel={14.5}
             style={{ iconImage: require('../../assets/map-crossing-zebra.png'),
-              iconSize: ['interpolate', ['linear'], ['zoom'], 14.5, .38, 17, .55, 19, .68],
+              iconSize: ['interpolate', ['linear'], ['zoom'], 14.5, .58, 17, .77, 19, .95],
               iconRotate: ['get', 'bearing'], iconRotationAlignment: 'map', iconPitchAlignment: 'map',
-              iconAllowOverlap: false, iconIgnorePlacement: false }}/>
+              iconAllowOverlap: true, iconIgnorePlacement: false }}/>
         </ShapeSource>
         {debugAccuracyShape && <ShapeSource id="driver-accuracy" shape={debugAccuracyShape}>
           <FillLayer id="driver-accuracy-fill" belowLayerID={driverLayerID} style={{ fillColor: '#FF7A00', fillOpacity: .13 }}/>

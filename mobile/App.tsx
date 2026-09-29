@@ -112,7 +112,7 @@ function isDismissedOrderUpdate(next: Order | null, dismissedOrderIds: ReadonlyS
 }
 
 function shouldShowDriverTabs(order: Order | null, offer?: Order) {
-  return !offer && !isActive(order);
+  return !offer && !isActive(order) && (order?.status !== 'COMPLETED' || order.driverRating != null);
 }
 
 const savedPlaceTitles: Record<SavedPlaceKind, string> = {

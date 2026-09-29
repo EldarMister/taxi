@@ -100,8 +100,10 @@ test('client booking opens at current GPS even with an old pickup and focus', as
 test('one zoom step loads traffic lights and cross-road markings for a passenger', async t => {
   const mapped = [
     { id: '1:traffic_light', kind: 'traffic_light', latitude: 42.885, longitude: 74.59 },
-    { id: '2:pedestrian_crossing', kind: 'pedestrian_crossing', latitude: 42.886, longitude: 74.591, bearing: 0 },
-    { id: '3:pedestrian_crossing', kind: 'pedestrian_crossing', latitude: 42.887, longitude: 74.592, bearing: 90 },
+    { id: '2:pedestrian_crossing', kind: 'pedestrian_crossing', latitude: 41.1963546, longitude: 72.1795808, bearing: 89 },
+    { id: '3:pedestrian_crossing', kind: 'pedestrian_crossing', latitude: 41.1963556, longitude: 72.179758, bearing: 90 },
+    { id: '4:pedestrian_crossing', kind: 'pedestrian_crossing', latitude: 41.1962771, longitude: 72.1796587, bearing: 360 },
+    { id: '5:pedestrian_crossing', kind: 'pedestrian_crossing', latitude: 41.1964142, longitude: 72.1796581, bearing: 360 },
   ];
   const h = await mountMap(t, { passengerView: true }, { request: async url => {
     if (url.startsWith('/routes/map-features?')) return { features: mapped };
@@ -115,17 +117,20 @@ test('one zoom step loads traffic lights and cross-road markings for a passenger
   assert.ok(h.requests.some(request => request.url.startsWith('/routes/map-features?')));
   const source = h.renderer.root.findByProps({ id: 'map-road-features' });
   assert.deepEqual(source.props.shape.features.map(item => item.properties.kind),
-    ['traffic_light', 'pedestrian_crossing', 'pedestrian_crossing']);
+    ['traffic_light', 'pedestrian_crossing', 'pedestrian_crossing', 'pedestrian_crossing', 'pedestrian_crossing']);
   assert.ok(source.props.shape.features.every(item => item.geometry.type === 'Point'));
-  assert.deepEqual(source.props.shape.features.slice(1).map(item => item.properties.bearing), [0, 90]);
+  assert.deepEqual(source.props.shape.features.slice(1).map(item => item.properties.bearing), [89, 90, 0, 0]);
   assert.equal(h.renderer.root.findByProps({ id: 'map-traffic-lights' }).props.style.iconImage, 'traffic-light.png');
   assert.equal(h.renderer.root.findByProps({ id: 'map-traffic-lights' }).props.minZoomLevel, 14.5);
+  assert.equal(h.renderer.root.findByProps({ id: 'map-traffic-lights' }).props.style.iconAllowOverlap, true);
   const crossing = h.renderer.root.findByProps({ id: 'map-pedestrian-crossings' });
   assert.equal(crossing.props.minZoomLevel, 14.5);
   assert.equal(crossing.props.style.iconImage, 'map-crossing-zebra.png');
   assert.equal(crossing.props.style.iconRotationAlignment, 'map');
   assert.deepEqual(Array.from(crossing.props.style.iconRotate), ['get', 'bearing']);
-  assert.equal(crossing.props.style.iconSize.at(-1), .68, 'crosswalk keeps a bounded screen size at high zoom');
+  assert.equal(crossing.props.style.iconSize.at(-1), .95, 'crosswalk keeps a bounded screen size at high zoom');
+  assert.equal(crossing.props.style.iconAllowOverlap, true, 'all four crossings remain visible at a signalized junction');
+  assert.equal(crossing.props.belowLayerID, 'current-osm-street-major', 'street labels should give way to road markings');
   const bitmap = fs.readFileSync(path.join(__dirname, '../assets/map-crossing-zebra.png'));
   assert.equal(bitmap.readUInt32BE(16), 64);
   assert.equal(bitmap.readUInt32BE(20), 64);
@@ -682,10 +687,10 @@ test('the map styles vector roads and places, keeps attribution and can fall bac
   assert.equal(style.layers.find(layer => layer.id === 'current-osm-road-ref').minzoom, 13, 'route numbers do not hide street names on the overview');
   assert.equal(style.layers.find(layer => layer.id === 'current-osm-road-ref').maxzoom, 15.5, 'route numbers leave room for street names at close zoom');
   assert.equal(style.layers.find(layer => layer.id === 'current-osm-street-major').maxzoom, 15.5);
-  assert.equal(style.layers.find(layer => layer.id === 'current-osm-street-major').layout['text-allow-overlap'], true, 'major streets remain readable from a city-wide zoom');
+  assert.notEqual(style.layers.find(layer => layer.id === 'current-osm-street-major').layout['text-allow-overlap'], true, 'major street names must not cover each other');
   assert.equal(style.layers.find(layer => layer.id === 'current-osm-street-major-detail').minzoom, 15.5);
-  assert.equal(style.layers.find(layer => layer.id === 'current-osm-street-major-detail').layout['text-allow-overlap'], true, 'major street names stay readable at close zoom');
-  assert.equal(style.layers.find(layer => layer.id === 'current-osm-street-local').layout['text-allow-overlap'], true, 'local street names remain visible when the map is dense');
+  assert.notEqual(style.layers.find(layer => layer.id === 'current-osm-street-major-detail').layout['text-allow-overlap'], true, 'major street names avoid crossings at close zoom');
+  assert.notEqual(style.layers.find(layer => layer.id === 'current-osm-street-local').layout['text-allow-overlap'], true, 'local street names avoid other labels');
   assert.equal(style.layers.find(layer => layer.id === 'current-osm-street-area-names')['source-layer'], 'streets_polygons_labels');
   assert.ok(style.layers.findIndex(layer => layer.id === 'current-osm-street-major') > style.layers.findIndex(layer => layer.id === 'poi_r20'));
   assert.ok(style.layers.findIndex(layer => layer.id === 'current-osm-street-major') < style.layers.findIndex(layer => layer.id === 'current-osm-road-ref'), 'street names take label priority over route shields');

@@ -176,7 +176,9 @@ test('driver tabs stay hidden from a new offer through the active trip', () => {
   for (const status of ['ASSIGNED', 'ARRIVED', 'IN_PROGRESS']) {
     assert.equal(showTabs({ status }), false, status);
   }
-  for (const status of ['COMPLETED', 'CANCELLED', 'NO_DRIVER']) {
+  assert.equal(showTabs({ status: 'COMPLETED', driverRating: null }), false, 'completion sheet still requires rating or skip');
+  assert.equal(showTabs({ status: 'COMPLETED', driverRating: 5 }), true, 'rating restores the tabs');
+  for (const status of ['CANCELLED', 'NO_DRIVER']) {
     assert.equal(showTabs({ status }), true, status);
   }
   assert.match(source, /\{driver && showDriverTabs \?/);
