@@ -128,12 +128,14 @@ test('one zoom step loads traffic lights and cross-road markings for a passenger
   assert.equal(crossing.props.style.iconImage, 'map-crossing-zebra.png');
   assert.equal(crossing.props.style.iconRotationAlignment, 'map');
   assert.deepEqual(Array.from(crossing.props.style.iconRotate), ['get', 'bearing']);
-  assert.equal(crossing.props.style.iconSize.at(-1), .95, 'crosswalk keeps a bounded screen size at high zoom');
+  assert.deepEqual(JSON.parse(JSON.stringify(crossing.props.style.iconSize)),
+    ['interpolate', ['linear'], ['zoom'], 14.5, .22, 16, .34, 19, .62],
+    'crosswalk shrinks with the road when zooming out and remains bounded when zooming in');
   assert.equal(crossing.props.style.iconAllowOverlap, true, 'all four crossings remain visible at a signalized junction');
   assert.equal(crossing.props.belowLayerID, 'current-osm-street-major', 'street labels should give way to road markings');
   const bitmap = fs.readFileSync(path.join(__dirname, '../assets/map-crossing-zebra.png'));
-  assert.equal(bitmap.readUInt32BE(16), 64);
-  assert.equal(bitmap.readUInt32BE(20), 64);
+  assert.equal(bitmap.readUInt32BE(16), 32);
+  assert.equal(bitmap.readUInt32BE(20), 32);
 });
 
 test('wider map view still requests road features within the server area limit', async t => {

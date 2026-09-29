@@ -751,7 +751,7 @@ export default function TaxiMap({
             filter={['==', ['get', 'kind'], 'pedestrian_crossing']}
             minZoomLevel={14.5}
             style={{ iconImage: require('../../assets/map-crossing-zebra.png'),
-              iconSize: ['interpolate', ['linear'], ['zoom'], 14.5, .58, 17, .77, 19, .95],
+              iconSize: ['interpolate', ['linear'], ['zoom'], 14.5, .22, 16, .34, 19, .62],
               iconRotate: ['get', 'bearing'], iconRotationAlignment: 'map', iconPitchAlignment: 'map',
               iconAllowOverlap: true, iconIgnorePlacement: false }}/>
         </ShapeSource>
