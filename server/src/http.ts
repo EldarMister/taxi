@@ -7,7 +7,7 @@ import sharp from 'sharp';
 import { Actor, AuthGuard, AuthService, RateLimits } from './auth';
 import { AppConfig } from './config';
 import { DriverService } from './driver';
-import { CreateOrderDto, DriverPositionDto, DriverPreferencesDto, HistoryDto, MessageDto, OnlineDto, PhoneDto, ProfileDto, PushTokenDto, QuoteDto, RatingDto, RefreshDto, RemovePushTokenDto, TopupDto, VerifyDriverDto, VerifyDto } from './dto';
+import { CreateOrderDto, DriverPositionDto, DriverPreferencesDto, HistoryDto, MessageDto, PhotoMessageDto, OnlineDto, PhoneDto, ProfileDto, PushTokenDto, QuoteDto, RatingDto, RefreshDto, RemovePushTokenDto, TopupDto, VerifyDriverDto, VerifyDto } from './dto';
 import { OrdersService } from './orders';
 import { PrismaService } from './prisma.service';
 import { AdminGuard } from './admin.security';
@@ -127,6 +127,24 @@ export class OrdersController {
   @Post(':id/coming') coming(@Req() req:AuthedRequest,@Param('id',ParseUUIDPipe) id:string) {return this.orders.coming(req.actor,id);}
   @Get(':id/messages') messages(@Req() req:AuthedRequest,@Param('id',ParseUUIDPipe) id:string) {return this.orders.messages(req.actor,id);}
   @Post(':id/messages') message(@Req() req:AuthedRequest,@Param('id',ParseUUIDPipe) id:string,@Body() dto:MessageDto) {return this.orders.sendMessage(req.actor,id,dto);}
+  @Post(':id/messages/photo') @ApiConsumes('multipart/form-data')
+  @ApiBody({schema:{type:'object',required:['image','clientMessageId'],properties:{image:{type:'string',format:'binary'},text:{type:'string'},clientMessageId:{type:'string'}}}})
+  @UseInterceptors(FileInterceptor('image',{limits:{fileSize:8*1024*1024,files:1,fields:2},fileFilter:(_request,file,callback)=>{
+    if(!['image/jpeg','image/png','image/webp'].includes(file.mimetype.toLowerCase()))return callback(new BadRequestException('Разрешены фотографии JPEG, PNG и WEBP.'),false);
+    callback(null,true);
+  }}))
+  photoMessage(@Req() req:AuthedRequest,@Param('id',ParseUUIDPipe) id:string,@Body() dto:PhotoMessageDto,@UploadedFile() file?:AvatarFile) {
+    if(!file?.buffer)throw new BadRequestException('Выберите фотографию.');
+    return this.orders.sendMessage(req.actor,id,{text:dto.text??'',clientMessageId:dto.clientMessageId},file);
+  }
+  @Get(':id/messages/:messageId/photo') async messagePhoto(@Req() req:AuthedRequest,@Param('id',ParseUUIDPipe) id:string,@Param('messageId',ParseUUIDPipe) messageId:string,@Res() response:Response) {
+    const photo=await this.orders.messagePhoto(req.actor,id,messageId);
+    response.setHeader('Content-Type',photo.mime);
+    response.setHeader('Content-Length',String(photo.data.length));
+    response.setHeader('Cache-Control','private, max-age=3600');
+    response.setHeader('X-Content-Type-Options','nosniff');
+    return response.send(Buffer.from(photo.data));
+  }
   @Post(':id/rating') rate(@Req() req:AuthedRequest,@Param('id',ParseUUIDPipe) id:string,@Body() dto:RatingDto) {return this.orders.rate(req.actor,id,dto.score,dto.comment);}
   @Post(':id/client-rating') rateClient(@Req() req:AuthedRequest,@Param('id',ParseUUIDPipe) id:string,@Body() dto:RatingDto) {return this.orders.rateClient(req.actor,id,dto.score,dto.comment);}
 }

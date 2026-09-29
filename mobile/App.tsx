@@ -1526,6 +1526,7 @@ function TaxiApp() {
         <ChatOverlay
           orderId={order.id}
           user={user}
+          peerName={driver ? order.passenger?.name || order.client?.name : order.driver?.name}
           incoming={incoming}
           onClose={() => setChat(false)}
           onError={setError}

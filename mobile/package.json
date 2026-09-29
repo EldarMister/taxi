@@ -27,7 +27,7 @@
     "credentials:android:client": "node scripts/run-eas-variant.cjs client credentials --platform android",
     "credentials:android:driver": "node scripts/run-eas-variant.cjs driver credentials --platform android",
     "typecheck": "tsc --noEmit",
-    "test:native": "node --test tests/native-lifecycle.test.cjs tests/app-variant.test.cjs tests/location.test.cjs tests/map-selection.test.cjs tests/car-route-animation.test.cjs tests/road-match.test.cjs tests/driver-availability.test.cjs tests/permission-onboarding.test.cjs tests/push-permissions.test.cjs tests/theme.test.cjs tests/client-history.test.cjs",
+    "test:native": "node --test tests/native-lifecycle.test.cjs tests/app-variant.test.cjs tests/location.test.cjs tests/map-selection.test.cjs tests/car-route-animation.test.cjs tests/road-match.test.cjs tests/driver-availability.test.cjs tests/permission-onboarding.test.cjs tests/push-permissions.test.cjs tests/theme.test.cjs tests/client-history.test.cjs tests/chat-overlay.test.cjs",
     "test:variant": "node --test tests/app-variant.test.cjs",
     "test:api": "node --test scripts/test-api.cjs",
     "test:ui": "node --test scripts/test-ui-contracts.cjs",

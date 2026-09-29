@@ -91,6 +91,10 @@ export class MessageDto {
   @ApiProperty() @IsString() @MinLength(1) @MaxLength(1000) text!:string;
   @ApiProperty() @IsString() @MinLength(8) @MaxLength(100) clientMessageId!:string;
 }
+export class PhotoMessageDto {
+  @ApiPropertyOptional({maxLength:1000}) @IsOptional() @IsString() @MaxLength(1000) text?:string;
+  @ApiProperty() @IsString() @MinLength(8) @MaxLength(100) clientMessageId!:string;
+}
 export class RatingDto {
   @ApiProperty({minimum:1,maximum:5}) @IsInt() @Min(1) @Max(5) score!:number;
   @ApiPropertyOptional({maxLength:500}) @IsOptional() @IsString() @MaxLength(500) comment?:string;

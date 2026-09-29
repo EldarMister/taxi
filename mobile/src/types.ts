@@ -149,6 +149,7 @@ export type ChatMessage = {
   orderId: string;
   senderId: string;
   text: string;
+  photoUrl?: string | null;
   createdAt: string;
   clientMessageId?: string;
 };

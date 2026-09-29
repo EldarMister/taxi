@@ -238,6 +238,8 @@ model Message {
   sender User @relation(fields:[senderId],references:[id])
   clientMessageId String
   text String
+  imageData Bytes?
+  imageMime String?
   createdAt DateTime @default(now())
   @@unique([senderId,clientMessageId])
   @@index([orderId,createdAt])

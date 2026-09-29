@@ -81,7 +81,7 @@ test('both production app variants configure MapLibre without a legacy map key',
 });
 
 
-test('profile editing uses the gallery while only the driver registration build receives camera access', () => {
+test('profile editing uses the gallery and both chat builds can access the camera', () => {
   const config = read('app.config.ts');
   const manifest = read('android/app/src/main/AndroidManifest.xml');
   const gradle = read('android/app/build.gradle');
@@ -89,14 +89,14 @@ test('profile editing uses the gallery while only the driver registration build 
   assert.match(account, /user\.role !== 'DRIVER'/);
   assert.match(account, /launchImageLibraryAsync/);
   assert.doesNotMatch(account, /launchCameraAsync|Фотография — ссылка HTTPS/);
-  assert.match(config, /cameraPermission: variant === 'driver'/);
-  assert.match(config, /variant === 'client' \? \['android\.permission\.CAMERA'\] : \[\]/);
+  assert.match(config, /permissions: \[[^\]]*'CAMERA'/);
+  assert.match(config, /cameraPermission: 'Камера нужна для съёмки фото профиля, документов и отправки в чате\.'/);
   assert.match(gradle, /\["ACCESS_BACKGROUND_LOCATION", "FOREGROUND_SERVICE_LOCATION", "CAMERA"\]/);
   for (const permission of ['READ_EXTERNAL_STORAGE', 'WRITE_EXTERNAL_STORAGE']) {
     assert.match(config, new RegExp(`blockedPermissions:[\\s\\S]*android\\.permission\\.${permission}`));
     assert.match(manifest, new RegExp(`android\\.permission\\.${permission}[^>]+tools:node="remove"`));
   }
-  assert.match(manifest, /android\.permission\.CAMERA[^>]+tools:node="remove"/);
+  assert.match(manifest, /android\.permission\.CAMERA"\/>/);
 });
 
 test('an ambiguous driver accept keeps the offer until authoritative reconciliation', () => {
