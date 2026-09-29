@@ -1412,7 +1412,7 @@ function TaxiApp() {
         <View style={{ height: insets.bottom, backgroundColor: palette.surface }} />
       )}
       {!driver && <View pointerEvents={showingServices ? 'auto' : 'none'} style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, zIndex: 20, display: showingServices ? 'flex' : 'none' }}>
-        <FoodExperience key={user.id} userId={user.id} language={user.language} contentRevision={contentRevision} orderRevision={foodOrderRevision} active={showingServices} entry={foodEntry} defaultAddress={pickup?.address || ''} savedPlaces={savedPlaces} onSavedPlace={openSavedPlace} onEditSavedPlace={editSavedPlace} onTaxi={() => { setService('taxi'); setError(''); }} onTruck={() => { setDeliveryKind('DELIVERY_TRUCK'); setService('delivery'); setError(''); }} onTaxiSearch={() => { setService('taxi'); setAddressField('dropoff'); setError(''); }} onMenu={() => setDrawer(true)} />
+        <FoodExperience key={user.id} userId={user.id} language={user.language} contentRevision={contentRevision} orderRevision={foodOrderRevision} active={showingServices} entry={foodEntry} defaultAddress={pickup?.address || ''} savedPlaces={savedPlaces} onSavedPlace={openSavedPlace} onEditSavedPlace={editSavedPlace} onTaxi={() => { setService('taxi'); setError(''); }} onDelivery={() => { setDeliveryKind('DELIVERY_CAR'); setService('delivery'); setError(''); }} onTruck={() => { setDeliveryKind('DELIVERY_TRUCK'); setService('delivery'); setError(''); }} onTaxiSearch={() => { setService('taxi'); setAddressField('dropoff'); setError(''); }} onChangeAddress={() => { setSavedPlaceEditing(null); setAddressField('pickup'); setError(''); }} onMenu={() => setDrawer(true)} />
       </View>}
       </View>
       <Modal

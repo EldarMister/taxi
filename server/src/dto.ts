@@ -15,6 +15,9 @@ export class ProfileDto {
   @ApiPropertyOptional() @IsOptional() @IsBoolean() notifications?:boolean;
   @ApiPropertyOptional({enum:['ru','ky']}) @IsOptional() @IsIn(['ru','ky']) language?:string;
 }
+export class ReadNotificationsDto {
+  @ApiProperty() @IsISO8601() through!:string;
+}
 export class PointDto {
   @ApiProperty({example:42.875}) @IsNumber() @Min(-90) @Max(90) latitude!:number;
   @ApiProperty({example:74.603}) @IsNumber() @Min(-180) @Max(180) longitude!:number;

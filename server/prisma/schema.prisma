@@ -431,8 +431,10 @@ model PushJob {
   attempts Int @default(0)
   availableAt DateTime @default(now())
   sentAt DateTime?
+  readAt DateTime?
   createdAt DateTime @default(now())
   @@index([sentAt,availableAt])
+  @@index([userId,readAt,createdAt])
 }
 
 enum FoodOrderStatus {

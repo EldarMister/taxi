@@ -32,6 +32,8 @@ SMS-код действителен 5 минут. Лимиты хранятся 
 
 `GET/PATCH /users/me`: через PATCH редактируются только `name`, `notifications`, `language` (`ru` или `ky`). Телефон, роль и `photoUrl` таким запросом не меняются; неизвестные поля отклоняются. Для клиента фотография профиля отключена.
 
+`GET /users/me/notifications` возвращает до 50 последних событий текущего пользователя за 30 дней: `{asOf,hasUnread,items:[{id,event,orderId,title,body,createdAt,readAt}]}`. Тексты берутся из того же шаблона, что и push. `POST /users/me/notifications/read {through}` отмечает просмотренными только события этого пользователя, созданные не позже переданного ISO-времени `asOf`.
+
 `POST /users/me/avatar` доступен только водителю и принимает `multipart/form-data` с единственным полем-файлом `avatar`. Допустимы JPEG, PNG и WEBP размером до 5 МБ; сервер сверяет MIME с сигнатурой, полностью декодирует изображение с лимитом 20 Мп, удаляет метаданные и сохраняет безопасный JPEG 720×720. Бинарник, MIME и время версии хранятся в PostgreSQL; устаревшие внешние URL аватаров удалены из схемы. Ответ — обновлённый пользователь с относительным cache-busting URL вида `/avatars/:id?v=:timestamp`. Публичный `GET /avatars/:id` возвращает изображение; мобильное приложение добавляет этот путь к базовому URL API. URL с актуальным `v` кэшируется как immutable, без актуальной версии требует повторной проверки.
 
 `GET /tariffs` возвращает `{id,name,description,basePrice,pricePerKm,pricePerMinute,minimumPrice,commissionBps,active}[]`. `GET /config` — номер поддержки, валюту и признак development. `GET /health` проверяет доступность PostgreSQL.
