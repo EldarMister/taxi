@@ -21,3 +21,4 @@ mobile/builds/
 artifacts/
 .local/
 *.tgz
+*.apk

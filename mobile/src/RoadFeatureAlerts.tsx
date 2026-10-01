@@ -25,7 +25,7 @@ export function RoadFeatureAlerts({ features, along, top, language = 'ru' }: { f
   return <View testID="road-feature-alerts" pointerEvents="none" style={[styles.position, { top }]}>
     {features.map(feature => {
       const distance = Math.round(feature.along - along);
-      return <View key={feature.id} testID={`road-feature-${feature.kind}`} accessibilityLabel={`${t(names[feature.kind])}, ${distance > 0 ? language === 'ky' ? `${distance} метрден кийин` : `через ${distance} метров` : distance < -10 ? t('уже позади') : t('рядом')}`}
+      return <View key={feature.id} testID={`road-feature-${feature.kind}`} accessibilityLabel={`${t(names[feature.kind])}, ${distance > 0 ? language === 'ky' ? `${distance} метрден кийин` : language === 'en' ? `in ${distance} meters` : `через ${distance} метров` : distance < -10 ? t('уже позади') : t('рядом')}`}
         style={[styles.card, theme.isDark && styles.cardDark]}>
         <Image source={images[feature.kind]} resizeMode="contain" style={styles.image}/>
         <Text style={[styles.distance, theme.isDark && styles.distanceDark]}>{roadFeatureDistanceLabel(feature, along, language)}</Text>

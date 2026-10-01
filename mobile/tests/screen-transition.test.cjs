@@ -72,7 +72,7 @@ function StatefulPage({ name, lifecycle }) {
   return React.createElement('Page', { name, count, increment: () => setCount(value => value + 1) });
 }
 
-test('restaurants stays mounted and stateful while a detail page is removed after back transition', async t => {
+test('restaurants stays mounted below the dish sheet and restores its state on close', async t => {
   const lifecycle = [];
   const { ScreenTransition, animations } = loadTransition(false);
   const screen = (routeKey, direction, name) => React.createElement(
@@ -91,15 +91,14 @@ test('restaurants stays mounted and stateful while a detail page is removed afte
   await act(async () => renderer.update(screen('dish:sushi-roll:philadelphia', 'forward', 'dish')));
   assert.ok(page('restaurants'), 'the restaurants page must remain mounted below its detail');
   assert.ok(page('dish'), 'the detail page must be mounted for the forward transition');
-  assert.equal(animations.length, 1);
-  await act(async () => animations[0].finish());
+  const underlay = renderer.root.findAllByType('AnimatedView').find(node => node.findAllByType('Page').some(item => item.props.name === 'restaurants'));
+  assert.equal(underlay.props.style.some(style => style?.display === 'none'), false, 'the catalog remains visible under the dish sheet');
+  assert.equal(animations.length, 0, 'the dish sheet provides its own entrance animation');
   assert.equal(page('restaurants').props.count, 1, 'hidden catalog state must survive the forward transition');
   assert.equal(lifecycle.filter(event => event === 'mount:restaurants').length, 1);
 
   await act(async () => renderer.update(screen('restaurants', 'back', 'restaurants')));
-  assert.ok(page('dish'), 'the detail page must remain only while its back transition is running');
-  assert.equal(animations.length, 2);
-  await act(async () => animations[1].finish());
+  assert.equal(animations.length, 0);
 
   assert.equal(page('restaurants').props.count, 1, 'returning must reveal the original stateful instance');
   assert.equal(lifecycle.filter(event => event === 'mount:restaurants').length, 1);
@@ -126,4 +125,21 @@ test('Reduce Motion removes a nonpersistent previous page without retaining a le
   assert.equal(pages.length, 1, 'the outgoing page must not remain as a hidden/leaving layer');
   assert.equal(pages[0].props.name, 'cart');
   assert.equal(lifecycle.filter(event => event === 'unmount:dish').length, 1);
+});
+
+test('opening the cart keeps the current catalog visible beneath its own bottom sheet', async t => {
+  const lifecycle = [];
+  const { ScreenTransition, animations } = loadTransition(false);
+  const screen = (routeKey, name) => React.createElement(ScreenTransition, { routeKey, direction: 'forward' },
+    React.createElement(StatefulPage, { name, lifecycle }));
+  let renderer;
+  await act(async () => { renderer = create(screen('restaurant:sushi-roll', 'restaurant')); });
+  t.after(async () => act(async () => renderer.unmount()));
+  await act(async () => renderer.update(screen('cart', 'cart')));
+  const underlay = renderer.root.findAllByType('AnimatedView').find(node => node.findAllByType('Page').some(page => page.props.name === 'restaurant'));
+  assert.ok(underlay);
+  assert.equal(underlay.props.style.some(style => style?.display === 'none'), false);
+  assert.equal(animations.length, 0, 'the bottom panel provides the cart entrance animation');
+  await act(async () => renderer.update(screen('restaurant:sushi-roll', 'restaurant')));
+  assert.equal(lifecycle.filter(event => event === 'mount:restaurant').length, 1);
 });

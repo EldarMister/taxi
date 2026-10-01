@@ -24,7 +24,7 @@ function RoutePins() {
 
 export function ClientHistoryRow({ order, user, onPress }: { order: Order; user: User; onPress: () => void }) {
   const { palette } = useTheme();
-  const time = new Date(order.createdAt).toLocaleTimeString(user.language === 'ky' ? 'ky-KG' : 'ru-RU', { hour: '2-digit', minute: '2-digit' });
+  const time = new Date(order.createdAt).toLocaleTimeString(user.language === 'ky' ? 'ky-KG' : user.language === 'en' ? 'en-US' : 'ru-RU', { hour: '2-digit', minute: '2-digit' });
   return <Pressable accessibilityRole="button" accessibilityLabel={`${tr(user.language)('Детали поездки')}: ${order.pickup.address} — ${order.dropoff.address}`} onPress={onPress} style={({ pressed }) => [styles.listCard, { backgroundColor: palette.surface, borderColor: palette.line, opacity: pressed ? .72 : 1 }]}>
     <View style={styles.listTop}>
       <View style={[styles.listTimeColumn, { borderColor: palette.line }]}><Text style={[styles.listTime, { color: palette.ink }]}>{time}</Text></View>
@@ -47,7 +47,7 @@ function InfoRow({ label, value, strong = false }: { label: string; value: strin
 export function ClientTripHistoryDetail({ order, user, onError, onMapInteractionChange }: { order: Order; user: User; onError: (message: string) => void; onMapInteractionChange?: (active: boolean) => void }) {
   const { palette } = useTheme();
   const t = tr(user.language);
-  const locale = user.language === 'ky' ? 'ky-KG' : 'ru-RU';
+  const locale = user.language === 'ky' ? 'ky-KG' : user.language === 'en' ? 'en-US' : 'ru-RU';
   const date = new Date(order.createdAt).toLocaleDateString(locale, { day: 'numeric', month: 'long', year: 'numeric' });
   const orderTime = new Date(order.createdAt).toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit' });
   const completedTime = order.completedAt ? new Date(order.completedAt).toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit' }) : null;
@@ -75,7 +75,7 @@ export function ClientTripHistoryDetail({ order, user, onError, onMapInteraction
       <InfoRow label={t('Время заказа')} value={orderTime}/>
       {completedTime && <InfoRow label={t('Время завершения')} value={completedTime}/>}
       <InfoRow label={t('Расстояние')} value={km(order.distanceMeters)}/>
-      <InfoRow label={order.status === 'COMPLETED' && order.actualDurationSeconds != null ? user.language === 'ky' ? 'Жолдогу убакыт' : 'Время в пути' : t('Расчётное время в пути')} value={mins(order.status === 'COMPLETED' ? order.actualDurationSeconds ?? order.durationSeconds : order.durationSeconds, user.language)}/>
+      <InfoRow label={order.status === 'COMPLETED' && order.actualDurationSeconds != null ? user.language === 'ky' ? 'Жолдогу убакыт' : t('Время в пути') : t('Расчётное время в пути')} value={mins(order.status === 'COMPLETED' ? order.actualDurationSeconds ?? order.durationSeconds : order.durationSeconds, user.language)}/>
       <View style={styles.infoRow}><Text style={[styles.infoLabel, { color: palette.muted }]}>{t('Статус')}</Text><Status order={order} language={user.language}/></View>
     </Card>
     <Card title={t('Оплата')}>

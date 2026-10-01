@@ -4,6 +4,10 @@ const path = require('node:path');
 const vm = require('node:vm');
 const { test } = require('node:test');
 const ts = require('typescript');
+const addressExports = {};
+vm.runInNewContext(ts.transpileModule(fs.readFileSync(path.join(__dirname, '../src/address.ts'), 'utf8'), {
+  compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
+}).outputText, { exports: addressExports });
 const React = require('react');
 const { create, act } = require('react-test-renderer');
 
@@ -81,6 +85,7 @@ async function setup(t, options = {}) {
         if (id === '../design/theme') return { useTheme: () => ({ isDark: !!options.dark, palette: { background: options.dark ? '#050505' : '#F4F8FD' } }) };
         if (id === '../api') return { api, ApiError, messageOf: error => error.message, requestId: () => `request-${++nextId}` };
         if (id === '../ui') return { tr: () => text => text };
+        if (id === '../address') return addressExports;
         if (id === './cart') return load('cart.ts');
         if (id === './storage') return {
           readFoodState: async userId => clone(values.get(userId) ?? null),
@@ -94,6 +99,7 @@ async function setup(t, options = {}) {
           },
         };
         if (id === './ScreenTransition') return { ScreenTransition: props => React.createElement('ScreenTransition', props, props.children) };
+        if (id === './DeliveryInfoSheet') return { DeliveryInfoSheet: props => React.createElement('DeliveryInfoSheet', props) };
         if (id === './i18n') return { FoodLanguageProvider: props => props.children };
         if (['./HomeScreen', './CatalogScreens', './FavoritesScreen', './CheckoutScreens', './OrderScreens'].includes(id)) return screens;
         throw new Error(`Unexpected dependency ${id}`);
@@ -168,6 +174,26 @@ test('configured banners open their actual restaurant, food catalog, or taxi ser
   await h.change({ entry: { screen: 'home', key: 2 } });
   await h.press('onBanner', { actionType: 'FOOD' });
   assert.equal(h.screen, 'RestaurantsScreen');
+});
+
+test('delivery terms open from the catalog dock with the checkout address and current cart', async t => {
+  const h = await setup(t);
+  await h.press('onFood');
+  await h.press('onRestaurant', restaurant);
+  await h.press('onAdd', mainDish);
+  await h.press('onDeliveryInfo');
+  const sheet = h.renderer.root.findByType('DeliveryInfoSheet');
+  assert.equal(sheet.props.restaurant.id, restaurant.id);
+  assert.equal(sheet.props.deliveryAddress, 'ул. Ленина 12');
+  assert.deepEqual(clone(sheet.props.lines), [{ dishId: mainDish.id, quantity: 1, optionIds: [] }]);
+  await act(async () => sheet.props.onClose());
+  assert.equal(h.renderer.root.findAllByType('DeliveryInfoSheet').length, 0);
+  await h.change({ defaultAddress: 'ул. Манаса 50' });
+  await h.press('onDeliveryInfo');
+  assert.equal(h.renderer.root.findByType('DeliveryInfoSheet').props.deliveryAddress, 'ул. Манаса 50');
+  await act(async () => h.renderer.root.findByType('DeliveryInfoSheet').props.onClose());
+  await h.press('onCart');
+  assert.equal(h.view.comment, undefined, 'order wishes are edited at checkout, not in the cart');
 });
 
 test('food favorites list saved restaurants and dishes and return to the list after opening either', async t => {
@@ -289,6 +315,14 @@ test('a failed submission retains the cart and retry uses exactly the original r
   assert.equal(h.screen, 'FoodOrderScreen');
 });
 
+test('checkout sends only street, house, apartment and city for a long saved address', async t => {
+  const h = await setup(t, { props: { defaultAddress: 'Кыргызстан, Чуйская область, Ленинский район, 720001, Бишкек, улица Киевская, 77, кв. 4' } });
+  await checkout(h);
+  await h.press('onSubmit');
+  assert.equal(h.posts[0].body.address, 'улица Киевская, 77, кв. 4, Бишкек');
+  await h.resolvePost(0, order());
+});
+
 test('saved cart, address and favorites restore before navigation and survive quantity changes', async t => {
   const saved = { restaurantId: 'sushi-roll', lines: [{ dishId: 'philadelphia', quantity: 3, optionIds: ['ginger'] }], favorites: ['sushi-roll'], favoriteDishes: ['sushi-roll:philadelphia'], address: 'ул. Советская 24' };
   const h = await setup(t, { saved: { 'client-a': saved } });
@@ -304,6 +338,18 @@ test('saved cart, address and favorites restore before navigation and survive qu
   assert.equal(h.values.get('client-a').lines[0].quantity, 4);
   await h.press('onCheckout');
   assert.equal(h.view.details.address, 'ул. Советская 24');
+});
+
+test('an interrupted signed-in checkout resumes after the same account signs in again', async t => {
+  const first = await setup(t);
+  await checkout(first, { quantity: 2, optionIds: ['ginger'] });
+  const saved = clone(first.values.get('client-a'));
+  assert.equal(saved.resumeCheckout, true);
+  await first.unmount();
+  const next = await setup(t, { saved: { 'client-a': saved } });
+  assert.equal(next.screen, 'CheckoutScreen');
+  assert.equal(next.view.lines[0].quantity, 2);
+  assert.equal(next.view.details.address, 'ул. Ленина 12');
 });
 
 test('checkout typing is debounced and persists only the latest address and comment', async t => {
@@ -415,6 +461,37 @@ test('cart quantity controls remove zero lines, cap quantities and clear only af
   assert.equal(h.values.get('client-a').restaurantId, null);
 });
 
+test('cart keeps modified variants separate and quick recommendations add only the chosen dish', async t => {
+  const extended = clone(catalog);
+  extended.restaurants[0].dishes.push({ ...mainDish, id: 'california', name: 'Калифорния', price: 410, optionIds: [] });
+  const h = await setup(t, { request: url => url === '/food/catalog' ? extended : undefined });
+  await h.press('onFood'); await h.press('onRestaurant', restaurant);
+  await h.press('onAdd', mainDish);
+  await h.press('onAdd', mainDish);
+  await h.press('onDish', mainDish);
+  await h.press('onAdd', mainDish, 1, ['ginger']);
+  assert.equal(h.screen, 'CartScreen');
+  assert.deepEqual(clone(h.view.lines.map(line => [line.optionIds.join(','), line.quantity])), [['', 2], ['ginger', 1]]);
+  await h.press('onQuantity', 'philadelphia:ginger', 0);
+  assert.deepEqual(clone(h.view.lines), [{ dishId: 'philadelphia', quantity: 2, optionIds: [] }]);
+  await h.press('onAddRecommendation', extended.restaurants[0].dishes[1]);
+  assert.deepEqual(clone(h.view.lines.map(line => line.dishId)), ['philadelphia', 'california']);
+  assert.equal(h.values.get('client-a').lines.length, 2);
+});
+
+test('catalog availability blocks checkout but leaves the saved cart available for correction', async t => {
+  let currentCatalog = clone(catalog);
+  const h = await setup(t, { request: url => url === '/food/catalog' ? currentCatalog : undefined });
+  await h.press('onFood'); await h.press('onRestaurant', restaurant); await h.press('onAdd', mainDish); await h.press('onCart');
+  currentCatalog = clone(catalog); currentCatalog.restaurants[0].dishes[0].available = false;
+  await h.change({ contentRevision: 1 });
+  await h.press('onCheckout');
+  assert.equal(h.screen, 'CartScreen');
+  assert.equal(h.view.lines.length, 1);
+  await h.press('onQuantity', 'philadelphia:', 0);
+  assert.deepEqual(clone(h.view.lines), []);
+});
+
 test('removing an option never silently drops dishes when matching lines would exceed the quantity limit', async t => {
   const saved = { restaurantId: 'sushi-roll', lines: [{ dishId: 'philadelphia', quantity: 20, optionIds: ['soy'] }, { dishId: 'philadelphia', quantity: 20, optionIds: [] }], favorites: [], favoriteDishes: [], address: 'ул. Ленина 12' };
   const h = await setup(t, { saved: { 'client-a': saved } });
@@ -471,7 +548,7 @@ test('retrying after restart keeps delivery-only fulfillment, comment and reques
   const original = first.posts[0].body;
   await first.unmount();
   const next = await setup(t, { saved: { 'client-a': saved } });
-  await next.press('onFood'); await next.press('onRestaurant', restaurant); await next.press('onCart'); await next.press('onCheckout');
+  assert.equal(next.screen, 'CheckoutScreen');
   assert.equal(next.view.details.fulfillment, 'DELIVERY');
   assert.equal(next.view.details.comment, 'Буду через полчаса');
   await next.press('onSubmit');

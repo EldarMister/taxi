@@ -7,6 +7,7 @@ import { fonts } from '../design/typography';
 import { useTheme } from '../design/theme';
 import { useFoodColors, useFoodStyles } from './foodTheme';
 import { useFoodT } from './i18n';
+import { selectedLanguage } from '../auth/languageStore';
 
 export const foodColors = {
   ink: palette.ink,
@@ -18,7 +19,17 @@ export const foodColors = {
   white: palette.white,
 };
 
-export const money = (amount: number) => `${amount.toLocaleString('ru-RU')} сом`;
+export const money = (amount: number) => `${amount.toLocaleString(selectedLanguage() === 'en' ? 'en-US' : 'ru-RU')} ${selectedLanguage() === 'en' ? 'som' : 'сом'}`;
+
+// Actions placed over a restaurant or dish photo share one readable surface.
+export const foodHeroActionStyle = {
+  width: 48,
+  height: 48,
+  borderRadius: 24,
+  backgroundColor: 'rgba(35,39,45,.55)',
+  borderWidth: 1,
+  borderColor: 'rgba(255,255,255,.45)',
+} as const;
 
 export function FoodButton({ label, onPress, disabled, busy, secondary, style }: {
   label: string;
@@ -92,7 +103,7 @@ const baseStyles = StyleSheet.create({
   secondaryButton: { backgroundColor: palette.blueSoft, shadowOpacity: 0, elevation: 0 },
   buttonText: { color: foodColors.white, fontFamily: fonts.bold, fontSize: 17, lineHeight: 23, textAlign: 'center' },
   iconButton: { width: 42, height: 42, borderRadius: 21, alignItems: 'center', justifyContent: 'center' },
-  favoriteButton: { width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(35,39,45,.52)', borderWidth: 1, borderColor: 'rgba(255,255,255,.35)' },
+  favoriteButton: { ...foodHeroActionStyle, alignItems: 'center', justifyContent: 'center' },
   header: { height: 64, marginHorizontal: 12, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   headerTitle: { flex: 1, textAlign: 'center', color: foodColors.ink, fontFamily: fonts.bold, fontSize: 21, letterSpacing: -.55, paddingHorizontal: 3 },
   headerRight: { width: 42, minHeight: 42, alignItems: 'center', justifyContent: 'center' },

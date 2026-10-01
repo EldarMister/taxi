@@ -7,11 +7,12 @@ import { Reveal, SpringPressable } from '../design/motion';
 import { palette, radii } from '../design/tokens';
 import { fonts } from '../design/typography';
 import { useTheme } from '../design/theme';
-import { FoodButton, FoodFavoriteButton, FoodHeader, FoodIconButton, foodColors as c, money } from './components';
+import { FoodButton, FoodFavoriteButton, FoodHeader, FoodIconButton, foodColors as c, foodHeroActionStyle, money } from './components';
 import { useFoodColors, useFoodStyles } from './foodTheme';
 import { foodImage } from './assets';
-import { MAX_FOOD_QUANTITY } from './cart';
-import type { FoodDish, FoodRestaurant } from './types';
+import { cartSummary, MAX_FOOD_QUANTITY } from './cart';
+import { NumberTicker } from './NumberTicker';
+import type { CartLine, FoodDish, FoodRestaurant } from './types';
 import { useFoodT } from './i18n';
 
 function SearchField({ value, onChange, placeholder, inputRef }: {
@@ -41,26 +42,31 @@ function EmptyState({ title, subtitle, dishes = false }: { title: string; subtit
   </View>;
 }
 
-function CartHeaderButton({ count, onPress }: { count: number; onPress: () => void }) {
+function CartDock({ lines, restaurant, onPress, onDeliveryInfo, bottom = 14 }: { lines: CartLine[]; restaurant?: FoodRestaurant; onPress: () => void; onDeliveryInfo: () => void; bottom?: number }) {
   const t = useFoodT();
   const s = useFoodStyles(baseStyles);
   const c = useFoodColors();
-  return <View style={s.cartHeaderWrap}>
-    <FoodIconButton name={count ? 'bag-handle' : 'bag-handle-outline'} color={count ? c.blue : c.ink} label={count ? `${t('Открыть корзину')}, ${count} ${t('товаров')}` : t('Открыть корзину')} onPress={onPress} size={26} />
-    {count > 0 && <View style={s.cartBadge}><Text style={s.cartBadgeText}>{count > 99 ? '99+' : count}</Text></View>}
-  </View>;
-}
-
-function CartDock({ count, total, restaurantName, onPress, bottom = 14 }: { count: number; total: number; restaurantName?: string; onPress: () => void; bottom?: number }) {
-  const t = useFoodT();
-  const s = useFoodStyles(baseStyles);
-  const c = useFoodColors();
-  if (!count) return null;
+  const summary = cartSummary(restaurant, lines);
+  if (!lines.length) return null;
+  const eta = restaurant ? `${restaurant.etaMin}–${restaurant.etaMax} ${t('мин')}` : t('Уточним время');
+  const remaining = restaurant?.deliveryFee && restaurant.freeDeliveryThreshold && summary.subtotal < restaurant.freeDeliveryThreshold
+    ? restaurant.freeDeliveryThreshold - summary.subtotal : 0;
   return <Reveal distance={8} style={[s.cartDock, { paddingBottom: bottom }]}>
-    <SpringPressable accessibilityRole="button" accessibilityLabel={`${t('Открыть корзину')}, ${count} ${t('товаров')} · ${money(total)}`} onPress={onPress} pressScale={.985} style={s.cartDockButton}>
-      <View style={s.cartDockIcon}><Ionicons name="bag-handle" color={c.blue} size={23} /><View style={s.cartDockCount}><Text style={s.cartDockCountText}>{count > 99 ? '99+' : count}</Text></View></View>
-      <View style={s.cartDockCopy}><Text style={s.cartDockTitle}>{t('Корзина')}</Text><Text numberOfLines={1} style={s.cartDockRestaurant}>{restaurantName || t('Ваш заказ')}</Text></View>
-      <Text style={s.cartDockTotal}>{money(total)}</Text><Ionicons name="chevron-forward" color={c.blue} size={20} />
+    <Pressable accessibilityRole="button" accessibilityLabel={t('Подробные условия доставки')} onPress={onDeliveryInfo} hitSlop={5} style={s.cartDockDeliveryButton}>
+      {!restaurant ? <Text style={s.cartDockDelivery}>{t('Уточним доставку')}</Text> : <>
+        <Text style={s.cartDockDelivery}>{t('Доставка')} </Text>
+        {summary.deliveryFee ? <NumberTicker value={summary.deliveryFee} format={money} style={s.cartDockDelivery} height={16} />
+          : <Text style={s.cartDockDelivery}>{t('бесплатно')}</Text>}
+        {remaining > 0 && <><Text style={s.cartDockDelivery}> · {t('До бесплатной')} </Text>
+          <NumberTicker value={remaining} format={money} style={s.cartDockDelivery} height={16} /></>}
+      </>}
+      <Ionicons name="chevron-forward" size={14} color={c.muted} />
+    </Pressable>
+    <SpringPressable accessibilityRole="button" accessibilityLabel={`${t('Открыть корзину')}, ${summary.count} ${t('товаров')} · ${money(summary.subtotal)}`} onPress={onPress} pressScale={.985} style={s.cartDockButton}>
+      <NumberTicker value={summary.subtotal} format={money} style={s.cartDockTotal} height={22} />
+      <Text style={s.cartDockEta} numberOfLines={1}>{eta}</Text>
+      <View style={s.cartDockImages}>{summary.items.slice(0, 3).map(item => <Image key={`${item.dish.id}:${item.optionIds.join(',')}`} source={foodImage(item.dish.id, item.dish.imageUrl, item.dish.imageKey)} style={s.cartDockImage} />)}</View>
+      <View style={s.cartDockCount}><NumberTicker value={summary.count} format={value => value > 99 ? '99+' : String(value)} style={s.cartDockCountText} height={14} /></View>
     </SpringPressable>
   </Reveal>;
 }
@@ -69,16 +75,18 @@ function reviewLabel(count: number) {
   return count >= 1000 ? `${(count / 1000).toFixed(1).replace(/\.0$/, '')}K` : String(count);
 }
 
-export function RestaurantsScreen({ restaurants, onBack, onRestaurant, onFavorites, favoriteCount, onCart, cartCount, cartTotal, cartRestaurantName, loading, error, onRetry }: {
+export function RestaurantsScreen({ restaurants, onBack, onRestaurant, onFavorites, favoriteCount, onCart, onDeliveryInfo, cartCount, cartTotal, cartRestaurantName, cartLines = [], cartRestaurant, loading, error, onRetry }: {
   restaurants: FoodRestaurant[];
   onBack: () => void;
   onRestaurant: (restaurant: FoodRestaurant) => void;
   onFavorites: () => void;
   favoriteCount: number;
   onCart: () => void;
+  onDeliveryInfo: () => void;
   cartCount: number;
   cartTotal: number;
   cartRestaurantName?: string;
+  cartLines?: CartLine[]; cartRestaurant?: FoodRestaurant;
   loading?: boolean;
   error?: string | null;
   onRetry?: () => void;
@@ -104,22 +112,24 @@ export function RestaurantsScreen({ restaurants, onBack, onRestaurant, onFavorit
   const restaurantImageHeight = restaurantTwoColumns ? restaurantCardWidth * .82 : Math.min(210, restaurantCardWidth * .58);
 
   return <SafeAreaView style={s.screen} edges={['top', 'left', 'right']}>
-    <Reveal><FoodHeader title={t('Рестораны')} onBack={onBack} right={<CartHeaderButton count={cartCount} onPress={onCart} />} /></Reveal>
+    <Reveal><FoodHeader title={t('Рестораны')} onBack={onBack} right={
+      <SpringPressable accessibilityRole="button" accessibilityLabel={`${t('Избранное')}: ${favoriteCount}`}
+        onPress={onFavorites} hitSlop={8} pressScale={.92} style={s.favoritesHeaderButton}>
+        <Ionicons name={favoriteCount ? 'heart' : 'heart-outline'} size={24} color={c.ink} />
+        {favoriteCount > 0 && <View style={s.favoritesHeaderCount}>
+          <Text style={s.favoritesHeaderCountText}>{favoriteCount > 9 ? '9+' : favoriteCount}</Text>
+        </View>}
+      </SpringPressable>
+    } /></Reveal>
     <Reveal delay={35} style={s.catalogSearch}><SearchField value={search} onChange={setSearch} placeholder={t('Ресторан, кухня или блюдо')} /></Reveal>
-    <Reveal delay={50} style={s.favoritesEntryWrap}><SpringPressable accessibilityRole="button" accessibilityLabel={`${t('Избранное')}: ${favoriteCount}`} onPress={onFavorites} pressScale={.98} style={s.favoritesEntry}>
-      <View style={s.favoritesEntryIcon}><Ionicons name="heart" size={20} color={c.blue} /></View>
-      <Text style={s.favoritesEntryTitle}>{t('Избранное')}</Text>
-      {favoriteCount > 0 && <View style={s.favoritesEntryCount}><Text style={s.favoritesEntryCountText}>{favoriteCount}</Text></View>}
-      <Ionicons name="chevron-forward" size={20} color={c.muted} />
-    </SpringPressable></Reveal>
-    <Reveal delay={65} style={s.filtersWrap}><ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.filters}>
+    <Reveal delay={50} style={s.filtersWrap}><ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.filters}>
       {categories.map(item => <Pressable key={item} accessibilityRole="button" accessibilityState={{ selected: item === category }} onPress={() => setCategory(item)} style={[s.filter, item === category && s.filterActive]}>
         <Text style={[s.filterText, item === category && s.filterTextActive]}>{t(item)}</Text>
       </Pressable>)}
     </ScrollView></Reveal>
     {loading && !restaurants.length ? <View style={s.empty}><ActivityIndicator color={c.blue} size="large" /><Text style={s.emptySubtitle}>{t('Ищем рестораны…')}</Text></View> : error && !restaurants.length ? <View style={s.empty}>
       <Text style={s.emptyTitle}>{t('Не удалось загрузить рестораны')}</Text><Text style={s.emptySubtitle}>{error}</Text>{onRetry && <FoodButton label={t('Повторить')} onPress={onRetry} />}
-    </View> : <ScrollView style={s.flex} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled" contentContainerStyle={[s.restaurantList, { paddingBottom: cartCount ? 106 + insets.bottom : Math.max(insets.bottom, 20) }]}>
+    </View> : <ScrollView style={s.flex} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled" contentContainerStyle={[s.restaurantList, { paddingBottom: cartLines.length ? 106 + insets.bottom : Math.max(insets.bottom, 20) }]}>
       <Reveal delay={95} style={s.restaurantGrid}>
         {filtered.map(restaurant => <View key={restaurant.id} style={[s.restaurantCard, { width: restaurantCardWidth }]}>
           <SpringPressable accessibilityRole="button" accessibilityLabel={`Открыть ${restaurant.name}`} onPress={() => onRestaurant(restaurant)} style={s.restaurantCardSurface}>
@@ -142,20 +152,22 @@ export function RestaurantsScreen({ restaurants, onBack, onRestaurant, onFavorit
       </Reveal>
       {!filtered.length && <EmptyState title={t(!restaurants.length ? 'Рестораны скоро появятся' : 'Ничего не найдено')} subtitle={t(!restaurants.length ? 'Мы готовим каталог. Загляните немного позже.' : 'Попробуйте другую кухню или измените запрос.')} />}
     </ScrollView>}
-    <CartDock count={cartCount} total={cartTotal} restaurantName={cartRestaurantName} onPress={onCart} bottom={Math.max(insets.bottom, 14)} />
+    <CartDock lines={cartLines} restaurant={cartRestaurant} onPress={onCart} onDeliveryInfo={onDeliveryInfo} bottom={Math.max(insets.bottom, 14)} />
   </SafeAreaView>;
 }
 
-export function RestaurantScreen({ restaurant, onBack, onDish, onAdd, onDecrease, onCart, cartCount, cartTotal, cartRestaurantName, dishQuantities = {}, favorite, onFavorite }: {
+export function RestaurantScreen({ restaurant, onBack, onDish, onAdd, onDecrease, onCart, onDeliveryInfo, cartCount, cartTotal, cartRestaurantName, cartLines = [], cartRestaurant, dishQuantities = {}, favorite, onFavorite }: {
   restaurant: FoodRestaurant;
   onBack: () => void;
   onDish: (dish: FoodDish) => void;
   onAdd: (dish: FoodDish) => void;
   onDecrease: (dish: FoodDish) => void;
   onCart: () => void;
+  onDeliveryInfo: () => void;
   cartCount: number;
   cartTotal: number;
   cartRestaurantName?: string;
+  cartLines?: CartLine[]; cartRestaurant?: FoodRestaurant;
   dishQuantities?: Record<string, number>;
   favorite: boolean;
   onFavorite: () => void;
@@ -189,15 +201,15 @@ export function RestaurantScreen({ restaurant, onBack, onDish, onAdd, onDecrease
 
   return <View style={s.screen}>
     <View accessibilityElementsHidden={showInfo} importantForAccessibility={showInfo ? 'no-hide-descendants' : 'auto'} style={s.flex}>
-    <ScrollView ref={scroll} style={s.flex} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled" contentContainerStyle={{ paddingBottom: cartCount ? 10 : Math.max(insets.bottom, 14) }}>
+    <ScrollView ref={scroll} style={s.flex} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled" contentContainerStyle={{ paddingBottom: cartLines.length ? 10 : Math.max(insets.bottom, 14) }}>
       <View style={{ height: Math.max(width * .62, insets.top + 165), backgroundColor: '#050906' }}>
         {!restaurant.heroImageUrl && !restaurant.imageUrl && restaurant.heroImageKey === 'sushi-hero' && <Image source={foodImage('sushi-hero')} blurRadius={25} style={[s.heroImage, { position: 'absolute', opacity: .2 }]} resizeMode="cover" />}
         <Image fadeDuration={160} source={foodImage(restaurant.heroImageKey || restaurant.imageKey, restaurant.heroImageUrl || restaurant.imageUrl)} style={[s.heroImage, !restaurant.heroImageUrl && !restaurant.imageUrl && restaurant.heroImageKey === 'sushi-hero' && { height: width * 222 / 764 + 20, position: 'absolute', bottom: 0 }]} resizeMode="cover" />
         <View style={[s.heroNav, { top: insets.top + 12, left: Math.max(insets.left, 14), right: Math.max(insets.right, 14) }]}>
-          <FoodIconButton name="chevron-back" label={t('Назад')} color="white" backgroundColor="rgba(80,80,80,.55)" onPress={onBack} size={30} />
+          <FoodIconButton name="chevron-back" label={t('Назад')} color="white" onPress={onBack} size={28} style={foodHeroActionStyle} />
           <View style={s.heroNavRight}>
             <FoodFavoriteButton favorite={favorite} item="ресторан" onPress={onFavorite} />
-            <FoodIconButton name="search-outline" label={t('Поиск по меню')} color="white" backgroundColor="rgba(255,255,255,.45)" onPress={() => { setShowSearch(value => !value); setSearch(''); scroll.current?.scrollTo({ y: width * .4, animated: true }); }} size={29} />
+            <FoodIconButton name="search-outline" label={t('Поиск по меню')} color="white" onPress={() => { setShowSearch(value => !value); setSearch(''); scroll.current?.scrollTo({ y: width * .4, animated: true }); }} size={28} style={foodHeroActionStyle} />
           </View>
         </View>
       </View>
@@ -208,9 +220,13 @@ export function RestaurantScreen({ restaurant, onBack, onDish, onAdd, onDecrease
           <View style={s.metaDivider} /><Text style={s.detailEta}>{restaurant.etaMin}–{restaurant.etaMax} {t('мин')}</Text>
           <FoodIconButton name="information-circle-outline" label={t('Информация о ресторане')} onPress={() => setShowInfo(true)} size={29} style={{ marginLeft: 'auto', marginRight: -5 }} />
         </View>
-        <Text style={[s.deliveryLabel, restaurant.deliveryFee === 0 && { color: c.green }]}>{restaurant.deliveryFee === 0 ? t('Бесплатная доставка') : `${t('Доставка')} ${money(restaurant.deliveryFee)}`}</Text>
-        {!!restaurant.deliveryFee && !!restaurant.freeDeliveryThreshold && <Text style={s.freeDeliveryLabel}>{t('Бесплатная доставка от')} {money(restaurant.freeDeliveryThreshold)}</Text>}
-        <View style={s.restaurantAddressRow}><Ionicons name="location-outline" size={17} color={c.muted} /><Text style={s.restaurantAddress} numberOfLines={2}>{t('Адрес')}: {restaurant.address}</Text></View>
+        <View style={s.restaurantServiceRow}>
+          <View style={s.restaurantDeliveryInfo}>
+            <Text style={[s.deliveryLabel, restaurant.deliveryFee === 0 && { color: c.green }]}>{restaurant.deliveryFee === 0 ? t('Бесплатная доставка') : `${t('Доставка')} ${money(restaurant.deliveryFee)}`}</Text>
+            {!!restaurant.deliveryFee && !!restaurant.freeDeliveryThreshold && <Text style={s.freeDeliveryLabel}>{t('Бесплатная доставка от')} {money(restaurant.freeDeliveryThreshold)}</Text>}
+          </View>
+          <View style={s.restaurantAddressRow}><Ionicons name="location-outline" size={17} color={c.muted} /><Text style={s.restaurantAddress} numberOfLines={3}>{t('Адрес')}: {restaurant.address}</Text></View>
+        </View>
         {showSearch && <View style={{ marginTop: 14 }}><SearchField inputRef={searchInput} value={search} onChange={setSearch} placeholder={t('Поиск по меню')} /></View>}
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.menuTabs} style={s.menuTabsFrame}>
           {restaurant.menuCategories.map(item => <Pressable key={item} accessibilityRole="tab" accessibilityState={{ selected: category === item }} onPress={() => { setCategory(item); setSearch(''); }} style={[s.menuTab, category === item && s.menuTabSelected]}>
@@ -226,21 +242,21 @@ export function RestaurantScreen({ restaurant, onBack, onDish, onAdd, onDecrease
               <View style={[s.dishCopy, quantity > 0 && s.dishCopyWithStepper]}>
                 <Text style={s.dishName} numberOfLines={2}>{dish.name}</Text>
               <Text style={s.dishPortion} numberOfLines={1}>{t(dish.portion)}</Text>
-                <Text style={[s.dishPrice, quantity > 0 && { paddingRight: 0 }]}>{money(dish.price)}</Text>
+                <View style={[s.dishPricePlacement, quantity > 0 && { paddingRight: 0 }]}><NumberTicker value={dish.price} format={money} style={s.dishPrice} height={21} /></View>
               </View>
             </SpringPressable>
             {quantity > 0 ? <View style={s.dishStepper}>
-              <SpringPressable accessibilityRole="button" accessibilityLabel={`Уменьшить ${dish.name}`} onPress={() => onDecrease(dish)} pressScale={.86} style={s.dishStepperButton}><Ionicons name="remove" color={c.white} size={21} /></SpringPressable>
+              <SpringPressable accessibilityRole="button" accessibilityLabel={`Уменьшить ${dish.name}`} onPress={() => onDecrease(dish)} pressScale={.86} style={s.dishStepperButton}><Ionicons name="remove" color={c.ink} size={21} /></SpringPressable>
               <Text accessibilityLabel={`${quantity} порций`} style={s.dishStepperCount}>{quantity}</Text>
-              <SpringPressable accessibilityRole="button" accessibilityLabel={`Увеличить ${dish.name}`} accessibilityState={{ disabled: quantity >= MAX_FOOD_QUANTITY }} disabled={quantity >= MAX_FOOD_QUANTITY} onPress={() => onAdd(dish)} pressScale={.86} style={s.dishStepperButton}><Ionicons name="add" color={quantity >= MAX_FOOD_QUANTITY ? '#9CC9FF' : c.white} size={21} /></SpringPressable>
-            </View> : <SpringPressable accessibilityRole="button" accessibilityLabel={`Добавить ${dish.name} в корзину`} disabled={!dish.available} accessibilityState={{ disabled: !dish.available }} onPress={() => onAdd(dish)} pressScale={.88} containerStyle={s.dishAddTarget} style={[s.dishAdd, !dish.available && { backgroundColor: palette.line }]}><Ionicons name="add" color={dish.available ? c.blue : c.muted} size={24} /></SpringPressable>}
+              <SpringPressable accessibilityRole="button" accessibilityLabel={`Увеличить ${dish.name}`} accessibilityState={{ disabled: quantity >= MAX_FOOD_QUANTITY }} disabled={quantity >= MAX_FOOD_QUANTITY} onPress={() => onAdd(dish)} pressScale={.86} style={s.dishStepperButton}><Ionicons name="add" color={quantity >= MAX_FOOD_QUANTITY ? c.muted : c.ink} size={21} /></SpringPressable>
+            </View> : <SpringPressable accessibilityRole="button" accessibilityLabel={`Добавить ${dish.name} в корзину`} disabled={!dish.available} accessibilityState={{ disabled: !dish.available }} onPress={() => onAdd(dish)} pressScale={.88} containerStyle={s.dishAddTarget} style={[s.dishAdd, { backgroundColor: '#FFFFFF' }, !dish.available && { backgroundColor: palette.line }]}><Ionicons name="add" color={dish.available ? '#101010' : c.muted} size={24} /></SpringPressable>}
           </View>;
           })}
           {!dishes.length && <EmptyState dishes title={t('Блюда не найдены')} subtitle={t(query ? 'Измените запрос.' : 'Выберите другую категорию.')} />}
         </Reveal>
       </Reveal>
     </ScrollView>
-    <CartDock count={cartCount} total={cartTotal} restaurantName={cartRestaurantName} onPress={onCart} bottom={Math.max(insets.bottom, 14)} />
+    <CartDock lines={cartLines} restaurant={cartRestaurant} onPress={onCart} onDeliveryInfo={onDeliveryInfo} bottom={Math.max(insets.bottom, 14)} />
     </View>
     {showInfo && <BottomPanel closeRequested={closingInfo} onClose={() => { setShowInfo(false); setClosingInfo(false); }} label={t('Закрыть информацию о ресторане')}>
       <View style={s.infoCard}>
@@ -268,34 +284,28 @@ export function DishScreen({ dish, restaurant, onBack, onAdd, favorite, onFavori
   const c = useFoodColors();
   const theme = useTheme();
   const insets = useSafeAreaInsets();
-  const { width } = useWindowDimensions();
+  const { height } = useWindowDimensions();
+  const [closing, setClosing] = useState(false);
   const [quantity, setQuantity] = useState(1);
   const [selectedOptions, setSelectedOptions] = useState<string[]>(() => dish.optionIds.includes('soy') ? ['soy'] : []);
   const options = restaurant.options.filter(option => dish.optionIds.includes(option.id));
   const price = (dish.price + options.filter(option => selectedOptions.includes(option.id)).reduce((sum, option) => sum + option.price, 0)) * quantity;
-  return <View style={s.screen}>
-    <ScrollView style={s.flex} showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 16 }}>
-      <View style={{ height: Math.max(width * .98, insets.top + 265), backgroundColor: '#080A09' }}>
-        {!dish.heroImageUrl && !dish.imageUrl && dish.heroImageKey === 'philadelphia-hero' && <Image source={foodImage('philadelphia-hero')} blurRadius={25} style={[s.heroImage, { position: 'absolute', opacity: .22 }]} resizeMode="cover" />}
-        <Image fadeDuration={160} source={foodImage(dish.heroImageKey || dish.imageKey, dish.heroImageUrl || dish.imageUrl)} style={s.heroImage} resizeMode="cover" />
-        <View style={[s.heroNav, { top: insets.top + 15, left: Math.max(insets.left, 18), right: Math.max(insets.right, 18) }]}>
-          <FoodIconButton name="chevron-back" label={t('Назад')} color="white" backgroundColor="rgba(210,210,214,.65)" onPress={onBack} size={30} />
-          <FoodFavoriteButton favorite={favorite} item="блюдо" onPress={onFavorite} />
+  return <BottomPanel expanded edgeToEdge topGap={0} bottomPadding={0} closeRequested={closing} onClose={onBack} label={t('Назад')}>
+    <View style={[s.dishPanel, { backgroundColor: theme.palette.background }]}>
+      <ScrollView style={s.flex} showsVerticalScrollIndicator={false} contentContainerStyle={s.dishPanelContent}>
+        <View style={[s.dishModalHero, { height: Math.min(450, Math.max(290, height * .42)), backgroundColor: theme.palette.surface }]}>
+          <Image fadeDuration={160} source={foodImage(dish.heroImageKey || dish.imageKey, dish.heroImageUrl || dish.imageUrl)} style={s.dishModalImage} resizeMode="cover" />
+          <View style={[s.dishModalActions, { top: insets.top + 12 }]}>
+            <FoodIconButton name="close" label={t('Назад')} onPress={() => setClosing(true)} size={25} backgroundColor={theme.palette.surface} style={s.dishModalClose} />
+            <FoodFavoriteButton favorite={favorite} item="блюдо" onPress={onFavorite} />
+          </View>
         </View>
-      </View>
-      <Reveal delay={35} style={[s.dishSheet, { paddingLeft: Math.max(insets.left, 21), paddingRight: Math.max(insets.right, 21) }]}>
-        <Text style={s.dishTitle}>{dish.name}</Text>
-        <Text style={s.dishDetailPortion}>{t(dish.portion)}{dish.weightGrams ? ` · ${dish.weightGrams} г` : ''}</Text>
-        <Text style={s.dishDescription}>{dish.description}</Text>
-        <Text style={s.dishDetailPrice}>{money(dish.price)}</Text>
-        <View style={s.divider} />
-        <Text style={s.quantityTitle}>{t('Выберите количество')}</Text>
-        <View style={s.quantityBar}>
-          <SpringPressable accessibilityRole="button" accessibilityLabel="Уменьшить количество" accessibilityState={{ disabled: quantity <= 1 }} disabled={quantity <= 1} onPress={() => setQuantity(value => Math.max(1, value - 1))} pressScale={.88} style={s.quantityMinus}><Ionicons name="remove" color={theme.isDark ? c.ink : '#3B4861'} size={25} /></SpringPressable>
-          <Text accessibilityLiveRegion="polite" style={s.quantityValue}>{quantity}</Text>
-          <SpringPressable accessibilityRole="button" accessibilityLabel="Увеличить количество" accessibilityState={{ disabled: quantity >= MAX_FOOD_QUANTITY }} disabled={quantity >= MAX_FOOD_QUANTITY} onPress={() => setQuantity(value => Math.min(MAX_FOOD_QUANTITY, value + 1))} pressScale={.88} style={s.quantityPlus}><Ionicons name="add" color={c.white} size={28} /></SpringPressable>
+        <View style={[s.dishIntroCard, { backgroundColor: theme.palette.surface }]}>
+          <Text style={s.dishTitle}>{dish.name}</Text>
+          <Text style={s.dishDescription}>{dish.description}</Text>
+          <Text style={s.dishDetailPortion}>{t(dish.portion)}{dish.weightGrams ? ` · ${dish.weightGrams} г` : ''}</Text>
         </View>
-        {options.length > 0 && <View style={s.modifierSection}>
+        {options.length > 0 && <View style={[s.dishOptionsCard, { backgroundColor: theme.palette.surface }]}>
           <View style={s.modifierHeader}><Text style={s.modifierTitle}>{t('Комплектация и добавки')}</Text><Text style={s.modifierHint}>{t('По желанию')}</Text></View>
           <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.modifierCards} style={s.modifierFrame}>
             {options.map(option => {
@@ -309,12 +319,20 @@ export function DishScreen({ dish, restaurant, onBack, onAdd, favorite, onFavori
             })}
           </ScrollView>
         </View>}
-      </Reveal>
-    </ScrollView>
-    <Reveal distance={8} style={[s.footer, { paddingBottom: Math.max(insets.bottom, 16), paddingLeft: Math.max(insets.left, 21), paddingRight: Math.max(insets.right, 21) }]}>
-      <FoodButton label={dish.available ? `${t('Добавить в корзину')} ${money(price)}` : t('Блюдо временно недоступно')} disabled={!dish.available} onPress={() => onAdd(dish, quantity, selectedOptions)} />
-    </Reveal>
-  </View>;
+      </ScrollView>
+      <View style={[s.dishModalFooter, { backgroundColor: theme.palette.surface, paddingBottom: Math.max(insets.bottom, 14) }]}>
+        <View style={[s.dishModalQuantity, { backgroundColor: theme.palette.elevated }]}>
+          <SpringPressable accessibilityRole="button" accessibilityLabel={t('Уменьшить количество')} accessibilityState={{ disabled: quantity <= 1 }} disabled={quantity <= 1} onPress={() => setQuantity(value => Math.max(1, value - 1))} pressScale={.88} style={s.dishModalQuantityButton}><Ionicons name="remove" color={c.ink} size={22} /></SpringPressable>
+          <Text accessibilityLiveRegion="polite" style={s.dishModalQuantityValue}>{quantity}</Text>
+          <SpringPressable accessibilityRole="button" accessibilityLabel={t('Увеличить количество')} accessibilityState={{ disabled: quantity >= MAX_FOOD_QUANTITY }} disabled={quantity >= MAX_FOOD_QUANTITY} onPress={() => setQuantity(value => Math.min(MAX_FOOD_QUANTITY, value + 1))} pressScale={.88} style={s.dishModalQuantityButton}><Ionicons name="add" color={c.ink} size={23} /></SpringPressable>
+        </View>
+        <SpringPressable accessibilityRole="button" accessibilityLabel={`${t('Добавить в корзину')} ${money(price)}`} disabled={!dish.available} accessibilityState={{ disabled: !dish.available }} onPress={() => onAdd(dish, quantity, selectedOptions)} containerStyle={{ flex: 1 }} style={[s.dishModalAdd, { backgroundColor: theme.palette.accent }]}>
+          <Text style={[s.dishModalAddText, { color: theme.palette.accentText }]}>{dish.available ? t('Добавить') : t('Блюдо временно недоступно')}</Text>
+          {dish.available && <NumberTicker value={price} format={money} style={[s.dishModalAddText, { color: theme.palette.accentText }]} height={22} />}
+        </SpringPressable>
+      </View>
+    </View>
+  </BottomPanel>;
 }
 
 const baseStyles = StyleSheet.create({
@@ -324,12 +342,10 @@ const baseStyles = StyleSheet.create({
   searchInput: { flex: 1, paddingVertical: 11, color: c.ink, fontFamily: fonts.regular, fontSize: 16, lineHeight: 22 },
   searchClear: { width: 26, height: 28 },
   catalogSearch: { paddingHorizontal: 16, paddingTop: 3 },
-  favoritesEntryWrap: { paddingHorizontal: 16, paddingTop: 10 },
-  favoritesEntry: { minHeight: 48, flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 12, borderRadius: 16, backgroundColor: palette.blueSoft },
-  favoritesEntryIcon: { width: 30, height: 30, borderRadius: 10, alignItems: 'center', justifyContent: 'center', backgroundColor: c.white },
-  favoritesEntryTitle: { flex: 1, color: c.ink, fontFamily: fonts.bold, fontSize: 15 },
-  favoritesEntryCount: { minWidth: 22, height: 22, borderRadius: 11, paddingHorizontal: 5, alignItems: 'center', justifyContent: 'center', backgroundColor: c.blue },
-  favoritesEntryCountText: { color: c.white, fontFamily: fonts.bold, fontSize: 12 },
+  favoritesHeaderButton: { ...foodHeroActionStyle, width: 42, height: 42, borderRadius: 21, backgroundColor: palette.white, borderWidth: 0, alignItems: 'center', justifyContent: 'center' },
+  favoritesHeaderCount: { position: 'absolute', top: 0, right: -2, minWidth: 17, height: 17, borderRadius: 9,
+    paddingHorizontal: 3, alignItems: 'center', justifyContent: 'center', backgroundColor: c.blue, borderWidth: 1.5, borderColor: c.white },
+  favoritesHeaderCountText: { color: c.white, fontFamily: fonts.bold, fontSize: 9, lineHeight: 11 },
   filtersWrap: { paddingTop: 13, paddingBottom: 16 },
   filters: { gap: 8, paddingHorizontal: 16 },
   filter: { minHeight: 40, justifyContent: 'center', paddingHorizontal: 16, borderRadius: radii.pill, backgroundColor: palette.surface },
@@ -344,9 +360,6 @@ const baseStyles = StyleSheet.create({
   restaurantImage: { width: '100%', height: '100%' },
   restaurantCopy: { flex: 1, paddingHorizontal: 13, paddingTop: 11, paddingBottom: 13 },
   restaurantName: { paddingRight: 5, color: c.ink, fontFamily: fonts.bold, fontSize: 17, lineHeight: 22, letterSpacing: -.35 },
-  cartHeaderWrap: { position: 'relative' },
-  cartBadge: { position: 'absolute', right: -3, top: -2, minWidth: 19, height: 19, paddingHorizontal: 4, alignItems: 'center', justifyContent: 'center', borderRadius: 10, backgroundColor: '#FF5B56', borderWidth: 2, borderColor: palette.canvas },
-  cartBadgeText: { color: c.white, fontFamily: fonts.bold, fontSize: 10, lineHeight: 12 },
   restaurantMeta: { minHeight: 21, marginTop: 8, flexDirection: 'row', alignItems: 'center', gap: 6 },
   rating: { flexDirection: 'row', alignItems: 'center', gap: 4 },
   ratingText: { color: palette.inkSoft, fontFamily: fonts.medium, fontSize: 13, lineHeight: 18 },
@@ -371,9 +384,11 @@ const baseStyles = StyleSheet.create({
   detailReview: { color: palette.inkSoft, fontFamily: fonts.regular },
   metaDivider: { height: 16, width: 1, backgroundColor: c.line },
   detailEta: { color: palette.inkSoft, fontFamily: fonts.medium, fontSize: 15 },
-  deliveryLabel: { marginTop: 2, marginBottom: 3, color: c.muted, fontFamily: fonts.semibold, fontSize: 14 },
-  freeDeliveryLabel: { color: c.green, fontFamily: fonts.semibold, fontSize: 14, lineHeight: 19, marginBottom: 5 },
-  restaurantAddressRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 6, marginBottom: 15 },
+  restaurantServiceRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 12, marginTop: 2, marginBottom: 15 },
+  restaurantDeliveryInfo: { flex: 1, minWidth: 0 },
+  deliveryLabel: { marginBottom: 3, color: c.muted, fontFamily: fonts.semibold, fontSize: 14 },
+  freeDeliveryLabel: { color: c.green, fontFamily: fonts.semibold, fontSize: 14, lineHeight: 19 },
+  restaurantAddressRow: { flex: 1, minWidth: 0, flexDirection: 'row', alignItems: 'flex-start', gap: 6 },
   restaurantAddress: { flex: 1, color: c.muted, fontFamily: fonts.regular, fontSize: 13, lineHeight: 18 },
   menuTabsFrame: { marginHorizontal: -20 },
   menuTabs: { gap: 8, paddingHorizontal: 20, paddingVertical: 5 },
@@ -390,28 +405,47 @@ const baseStyles = StyleSheet.create({
   dishCopyWithStepper: { minHeight: 132, paddingBottom: 53 },
   dishName: { minHeight: 36, paddingRight: 2, color: c.ink, fontFamily: fonts.regular, fontSize: 15, lineHeight: 18 },
   dishPortion: { marginTop: 3, color: c.muted, fontFamily: fonts.regular, fontSize: 12, lineHeight: 17 },
-  dishPrice: { marginTop: 'auto', paddingTop: 5, paddingRight: 43, color: c.ink, fontFamily: fonts.medium, fontSize: 16, lineHeight: 21 },
+  dishPricePlacement: { marginTop: 'auto', paddingTop: 5, paddingRight: 43 },
+  dishPrice: { color: c.ink, fontFamily: fonts.medium, fontSize: 16, lineHeight: 21 },
   dishAddTarget: { position: 'absolute', right: 10, bottom: 10 },
   dishAdd: { width: 40, height: 38, alignItems: 'center', justifyContent: 'center', borderRadius: radii.small, backgroundColor: c.white, shadowColor: '#27313F', shadowOpacity: .05, shadowRadius: 6, shadowOffset: { width: 0, height: 2 }, elevation: 1 },
-  dishStepper: { position: 'absolute', left: 9, right: 9, bottom: 9, height: 40, flexDirection: 'row', alignItems: 'center', borderRadius: 13, overflow: 'hidden', backgroundColor: c.blue, shadowColor: c.blue, shadowOpacity: .2, shadowRadius: 7, shadowOffset: { width: 0, height: 3 }, elevation: 3 },
-  dishStepperButton: { width: 42, height: 40, alignItems: 'center', justifyContent: 'center' },
-  dishStepperCount: { flex: 1, color: c.white, fontFamily: fonts.bold, fontSize: 15, textAlign: 'center' },
-  cartDock: { paddingTop: 10, paddingHorizontal: 16, backgroundColor: c.white, borderTopLeftRadius: radii.large, borderTopRightRadius: radii.large, shadowColor: '#132449', shadowOpacity: .1, shadowOffset: { width: 0, height: -5 }, shadowRadius: 18, elevation: 7 },
-  cartDockButton: { minHeight: 62, paddingHorizontal: 13, flexDirection: 'row', alignItems: 'center', gap: 10, borderRadius: 18, backgroundColor: palette.blueSoft, borderWidth: 1, borderColor: '#CFE3FF' },
+  dishStepper: { position: 'absolute', left: 9, right: 9, bottom: 9, height: 40, flexDirection: 'row', alignItems: 'center', borderRadius: 13, overflow: 'hidden', backgroundColor: c.white, borderWidth: 1, borderColor: palette.line, shadowColor: '#27313F', shadowOpacity: .05, shadowRadius: 6, shadowOffset: { width: 0, height: 2 }, elevation: 1 },
+  dishStepperButton: { width: 42, height: 40, alignItems: 'center', justifyContent: 'center', backgroundColor: c.white },
+  dishStepperCount: { flex: 1, color: c.ink, fontFamily: fonts.bold, fontSize: 15, textAlign: 'center' },
+  cartDock: { paddingTop: 8, paddingHorizontal: 16, backgroundColor: c.white, borderTopLeftRadius: radii.large, borderTopRightRadius: radii.large, shadowColor: '#132449', shadowOpacity: .1, shadowOffset: { width: 0, height: -5 }, shadowRadius: 18, elevation: 7 },
+  cartDockDeliveryButton: { minHeight: 24, marginBottom: 5, flexDirection: 'row', alignItems: 'center', gap: 2 },
+  cartDockDelivery: { flexShrink: 1, color: c.muted, fontFamily: fonts.medium, fontSize: 12 },
+  cartDockEta: { flex: 1, color: c.white, fontFamily: fonts.semibold, fontSize: 13, textAlign: 'center' },
+  cartDockImages: { flexDirection: 'row', marginLeft: 'auto', paddingLeft: 8 },
+  cartDockImage: { width: 36, height: 36, marginLeft: -8, borderRadius: 10, borderWidth: 2, borderColor: c.white },
+  cartDockButton: { minHeight: 62, paddingHorizontal: 16, flexDirection: 'row', alignItems: 'center', gap: 10, borderRadius: 18, backgroundColor: c.blue },
   cartDockIcon: { width: 42, height: 42, alignItems: 'center', justifyContent: 'center', borderRadius: 14, backgroundColor: c.white },
-  cartDockCount: { position: 'absolute', right: -5, top: -5, minWidth: 20, height: 20, paddingHorizontal: 4, alignItems: 'center', justifyContent: 'center', borderRadius: 10, backgroundColor: c.blue, borderWidth: 2, borderColor: palette.blueSoft },
+  cartDockCount: { position: 'absolute', right: 8, top: 4, minWidth: 20, height: 20, paddingHorizontal: 4, alignItems: 'center', justifyContent: 'center', borderRadius: 10, backgroundColor: c.ink, borderWidth: 2, borderColor: c.blue },
   cartDockCountText: { color: c.white, fontFamily: fonts.bold, fontSize: 10 },
   cartDockCopy: { flex: 1 },
   cartDockTitle: { color: c.ink, fontFamily: fonts.bold, fontSize: 16, lineHeight: 21 },
   cartDockRestaurant: { marginTop: 1, color: c.muted, fontFamily: fonts.regular, fontSize: 12, lineHeight: 16 },
-  cartDockTotal: { color: c.blue, fontFamily: fonts.bold, fontSize: 16 },
+  cartDockTotal: { color: c.white, fontFamily: fonts.bold, fontSize: 16 },
   footer: { paddingTop: 11, borderTopLeftRadius: radii.large, borderTopRightRadius: radii.large, backgroundColor: c.white, shadowColor: '#132449', shadowOpacity: .08, shadowOffset: { width: 0, height: -5 }, shadowRadius: 18, elevation: 5 },
   infoCard: { paddingHorizontal: 20, paddingTop: 4, paddingBottom: 18, gap: 12, backgroundColor: c.white },
   infoHeading: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   infoTitle: { flex: 1, color: c.ink, fontFamily: fonts.bold, fontSize: 23 },
   infoText: { color: palette.inkSoft, fontFamily: fonts.regular, fontSize: 15, lineHeight: 22 },
   demoNote: { color: c.muted, fontFamily: fonts.regular, fontSize: 13, lineHeight: 19 },
-  dishSheet: { marginTop: -24, paddingTop: 20, borderTopLeftRadius: radii.hero, borderTopRightRadius: radii.hero, backgroundColor: palette.canvas },
+  dishPanel: { flex: 1 },
+  dishPanelContent: { paddingBottom: 16 },
+  dishModalHero: { justifyContent: 'center' },
+  dishModalImage: { width: '100%', height: '100%' },
+  dishModalActions: { position: 'absolute', top: 24, left: 18, right: 18, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  dishModalClose: { width: 42, height: 42, borderRadius: 21 },
+  dishIntroCard: { marginHorizontal: 18, marginTop: 10, paddingHorizontal: 20, paddingVertical: 20, borderRadius: 22 },
+  dishOptionsCard: { marginHorizontal: 18, marginTop: 14, paddingHorizontal: 18, paddingVertical: 18, borderRadius: 22 },
+  dishModalFooter: { flexDirection: 'row', gap: 12, alignItems: 'center', paddingTop: 12, paddingHorizontal: 18, borderTopLeftRadius: 22, borderTopRightRadius: 22, shadowColor: '#132449', shadowOpacity: .08, shadowOffset: { width: 0, height: -5 }, shadowRadius: 18, elevation: 5 },
+  dishModalQuantity: { width: 154, height: 58, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', padding: 5, borderRadius: 18 },
+  dishModalQuantityButton: { width: 43, height: 48, alignItems: 'center', justifyContent: 'center', borderRadius: 14, backgroundColor: c.white },
+  dishModalQuantityValue: { color: c.ink, fontFamily: fonts.bold, fontSize: 17 },
+  dishModalAdd: { minHeight: 58, paddingHorizontal: 16, borderRadius: 18, backgroundColor: c.blue, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 10 },
+  dishModalAddText: { color: c.white, fontFamily: fonts.bold, fontSize: 16 },
   dishTitle: { color: c.ink, fontFamily: fonts.extraBold, fontSize: 28, letterSpacing: -.9, lineHeight: 34 },
   dishDetailPortion: { marginTop: 4, color: c.muted, fontFamily: fonts.regular, fontSize: 15, lineHeight: 22 },
   dishDescription: { marginTop: 8, color: palette.inkSoft, fontFamily: fonts.regular, fontSize: 16, lineHeight: 23 },
@@ -419,8 +453,8 @@ const baseStyles = StyleSheet.create({
   divider: { height: 1, backgroundColor: c.line },
   quantityTitle: { marginTop: 16, marginBottom: 9, color: c.ink, fontFamily: fonts.semibold, fontSize: 16, lineHeight: 22 },
   quantityBar: { height: 60, paddingHorizontal: 12, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', borderRadius: radii.medium, backgroundColor: c.white, borderWidth: 1, borderColor: palette.line },
-  quantityMinus: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center', borderRadius: radii.small, backgroundColor: palette.surface },
-  quantityPlus: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center', borderRadius: radii.small, backgroundColor: c.blue },
+  quantityMinus: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center', borderRadius: radii.small, backgroundColor: c.white },
+  quantityPlus: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center', borderRadius: radii.small, backgroundColor: c.white },
   quantityValue: { color: c.ink, fontFamily: fonts.semibold, fontSize: 19 },
   modifierSection: { marginTop: 22 },
   modifierHeader: { marginBottom: 10, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12 },

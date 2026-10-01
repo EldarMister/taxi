@@ -11,7 +11,7 @@ export function WrongAppScreen({ language, onContinue }: { language: Language; o
   const { isDark } = useTheme();
   const copy = roleMismatchCopy(language);
   return <SafeAreaView style={[s.screen, isDark && s.darkScreen]}>
-    <View style={s.brand}><Logo large /><Text style={[s.variant, isDark && s.darkMuted]}>{appVariant === 'driver' ? (language === 'ky' ? 'АЙДООЧУЛАР ҮЧҮН' : 'ДЛЯ ВОДИТЕЛЕЙ') : (language === 'ky' ? 'ЖҮРГҮНЧҮЛӨР ҮЧҮН' : 'ДЛЯ ПАССАЖИРОВ')}</Text></View>
+    <View style={s.brand}><Logo large /><Text style={[s.variant, isDark && s.darkMuted]}>{appVariant === 'driver' ? (language === 'ky' ? 'АЙДООЧУЛАР ҮЧҮН' : language === 'en' ? 'FOR DRIVERS' : 'ДЛЯ ВОДИТЕЛЕЙ') : (language === 'ky' ? 'ЖҮРГҮНЧҮЛӨР ҮЧҮН' : language === 'en' ? 'FOR PASSENGERS' : 'ДЛЯ ПАССАЖИРОВ')}</Text></View>
     <View style={s.body}>
       <View style={[s.icon, isDark && s.darkIcon]}><Icon name="swap-horizontal-outline" size={34} color={isDark ? '#FFFFFF' : colors.blue} /></View>
       <Text accessibilityRole="header" style={[s.title, isDark && s.darkTitle]}>{copy.title}</Text>

@@ -215,6 +215,8 @@ test('every BottomPanel caller hides its underlying accessibility tree', () => {
     'DriverPanel.tsx',
     'food/CatalogScreens.tsx',
     'food/CheckoutScreens.tsx',
+    'food/DeliveryInfoSheet.tsx',
+    'food/HomeScreen.tsx',
   ]);
 
   const expectations = [

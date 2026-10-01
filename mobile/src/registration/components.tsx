@@ -1,11 +1,12 @@
 import React from 'react';
 import { useState } from 'react';
-import { ActivityIndicator, Image, Modal, Platform, Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, View, type ImageSourcePropType, type ImageStyle } from 'react-native';
+import { ActivityIndicator, Image, Modal, Platform, Pressable, ScrollView, StyleSheet, Switch, TextInput, View, type ImageSourcePropType, type ImageStyle } from 'react-native';
 import DateTimePicker, { DateTimePickerAndroid, type DateTimePickerEvent } from '@react-native-community/datetimepicker';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { api } from '../api';
 import { useTheme } from '../design/theme';
 import { Icon, colors } from '../ui';
+import { LocalizedText as Text, translateInterfaceText } from '../auth/LocalizedText';
 import type { RegistrationUpload, VerificationStatus } from './types';
 
 export function RegistrationHeader({ onBack, onHelp, step, total, title }: { onBack?: () => void; onHelp: () => void; step?: number; total?: number; title?: string }) {
@@ -37,7 +38,7 @@ export function SecondaryButton({ label, onPress, danger, disabled }: { label: s
 
 export function FormInput({ label, value, onChangeText, placeholder, error, optional, keyboardType, autoCapitalize = 'sentences', maxLength, multiline, disabled }: { label: string; value: string; onChangeText: (value: string) => void; placeholder?: string; error?: string; optional?: boolean; keyboardType?: React.ComponentProps<typeof TextInput>['keyboardType']; autoCapitalize?: React.ComponentProps<typeof TextInput>['autoCapitalize']; maxLength?: number; multiline?: boolean; disabled?: boolean }) {
   const { palette } = useTheme();
-  return <View style={[c.field, disabled && c.readOnly]}><Text style={[c.label, { color: error ? colors.danger : palette.muted }]}>{label}{optional ? ' · необязательно' : ' *'}{disabled ? ' · только чтение' : ''}</Text><TextInput editable={!disabled} value={value} onChangeText={onChangeText} placeholder={placeholder} placeholderTextColor={palette.muted} keyboardType={keyboardType} autoCapitalize={autoCapitalize} maxLength={maxLength} multiline={multiline} returnKeyType={multiline ? 'default' : 'done'} style={[c.input, multiline && c.multiline, { color: palette.ink, borderColor: error ? colors.danger : palette.line, backgroundColor: palette.surface }]}/>{error ? <Text accessibilityRole="alert" style={c.fieldError}>{error}</Text> : null}</View>;
+  return <View style={[c.field, disabled && c.readOnly]}><Text style={[c.label, { color: error ? colors.danger : palette.muted }]}>{label}{optional ? ' · необязательно' : ' *'}{disabled ? ' · только чтение' : ''}</Text><TextInput editable={!disabled} value={value} onChangeText={onChangeText} placeholder={placeholder ? translateInterfaceText(placeholder) : undefined} placeholderTextColor={palette.muted} keyboardType={keyboardType} autoCapitalize={autoCapitalize} maxLength={maxLength} multiline returnKeyType={multiline ? 'default' : 'done'} style={[c.input, multiline && c.multiline, { color: palette.ink, borderColor: error ? colors.danger : palette.line, backgroundColor: palette.surface }]}/>{error ? <Text accessibilityRole="alert" style={c.fieldError}>{error}</Text> : null}</View>;
 }
 
 export function SelectInput({ label, value, placeholder, onPress, error, optional, disabled }: { label: string; value?: string; placeholder: string; onPress: () => void; error?: string; optional?: boolean; disabled?: boolean }) {

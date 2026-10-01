@@ -4,7 +4,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { SuccessCelebration } from './SuccessCelebration';
 import { useMotionPreference } from './design/motion';
 import { useTheme } from './design/theme';
-import { Icon, colors, money, shortAddress } from './ui';
+import { Icon, colors, localize, money, shortAddress } from './ui';
 import { useSheetDragToClose } from './useSheetDragToClose';
 import { useSheetStageTransition } from './useSheetStageTransition';
 import type { Order, User } from './types';
@@ -40,7 +40,7 @@ export function ClientCompletionPanel({ order, user, busy, onDone, onRating, onH
   const insets = useSafeAreaInsets();
   const ky = user.language === 'ky';
   const delivery = order.kind !== undefined && order.kind !== 'RIDE';
-  const say = (ru: string, kyrgyz: string) => ky ? kyrgyz : ru;
+  const say = (ru: string, kyrgyz: string) => localize(user.language, ru, kyrgyz);
   const { stage, navigate: navigateStage, reset: resetStage, exit: exitStage, translateY: stageTranslateY } = useSheetStageTransition<Stage>(order.rating ? 'thankYou' : 'success');
   const [score, setScore] = useState(5);
   const [selected, setSelected] = useState<string[]>([]);

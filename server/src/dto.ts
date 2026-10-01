@@ -15,6 +15,9 @@ export class ProfileDto {
   @ApiPropertyOptional() @IsOptional() @IsBoolean() notifications?:boolean;
   @ApiPropertyOptional({enum:['ru','ky']}) @IsOptional() @IsIn(['ru','ky']) language?:string;
 }
+export class ReadNotificationsDto {
+  @ApiProperty() @IsISO8601() through!:string;
+}
 export class PointDto {
   @ApiProperty({example:42.875}) @IsNumber() @Min(-90) @Max(90) latitude!:number;
   @ApiProperty({example:74.603}) @IsNumber() @Min(-180) @Max(180) longitude!:number;
@@ -89,6 +92,10 @@ export class DriverRegisterDto {
 }
 export class MessageDto {
   @ApiProperty() @IsString() @MinLength(1) @MaxLength(1000) text!:string;
+  @ApiProperty() @IsString() @MinLength(8) @MaxLength(100) clientMessageId!:string;
+}
+export class PhotoMessageDto {
+  @ApiPropertyOptional({maxLength:1000}) @IsOptional() @IsString() @MaxLength(1000) text?:string;
   @ApiProperty() @IsString() @MinLength(8) @MaxLength(100) clientMessageId!:string;
 }
 export class RatingDto {

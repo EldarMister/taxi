@@ -7,8 +7,9 @@ import { getNotificationPermissionState, openNotificationSettings, registerPushN
 import { useTheme } from './design/theme';
 import type { ThemePreference } from './design/theme';
 import type { AppConfig, Balance, Language, Order, User } from './types';
-import { Avatar, Button, Car, colors, Empty, Icon, km, mins, money, Route, s as lightUi, shortAddress, ToggleSwitch, tr } from './ui';
+import { Avatar, Button, Car, colors, Empty, Icon, km, localize, mins, money, Route, s as lightUi, shortAddress, ToggleSwitch, tr } from './ui';
 import { ClientHistoryRow, ClientTripHistoryDetail } from './ClientTripHistory';
+import { writeSelectedLanguage } from './auth/languageStore';
 
 export type Page = 'home' | 'profile' | 'history' | 'balance' | 'settings' | 'support' | 'payment' | 'registration';
 const completedOrders = (orders: Order[]) => orders.filter(order => order.status === 'COMPLETED');
@@ -28,7 +29,7 @@ function HistoryRow({ order, user, expanded, onPress }: { order: Order; user: Us
   const done = order.status === 'COMPLETED';
   return <View style={styles.historyCard}>
     <Pressable accessibilityRole="button" accessibilityLabel={`${t('Детали поездки')}: ${order.pickup.address} — ${order.dropoff.address}`} accessibilityState={{ expanded }} onPress={onPress} style={({ pressed }) => [styles.historyRow, pressed && { opacity: .65 }]}>
-      <View style={styles.timeColumn}><Text style={styles.historyTime}>{new Date(order.createdAt).toLocaleTimeString(user.language === 'ky' ? 'ky-KG' : 'ru-RU', { hour: '2-digit', minute: '2-digit' })}</Text></View>
+      <View style={styles.timeColumn}><Text style={styles.historyTime}>{new Date(order.createdAt).toLocaleTimeString(user.language === 'ky' ? 'ky-KG' : user.language === 'en' ? 'en-US' : 'ru-RU', { hour: '2-digit', minute: '2-digit' })}</Text></View>
       <View style={styles.historyRoute}>
         <View style={styles.routePins}><Icon name="radio-button-on" color={palette.accent} size={15}/><View style={styles.routeDash}/><Icon name="location" color={palette.ink} size={16}/></View>
         <View style={{ flex: 1, gap: 5 }}><Text style={styles.historyAddress} numberOfLines={1}>{shortAddress(order.pickup.address)}</Text><Text style={styles.historyAddress} numberOfLines={1}>{shortAddress(order.dropoff.address)}</Text><Text style={styles.historyMeta}>{km(order.distanceMeters)} · {mins(order.status === 'COMPLETED' ? order.actualDurationSeconds ?? order.durationSeconds : order.durationSeconds, user.language)}</Text></View>
@@ -44,7 +45,7 @@ export function AccountScreen({ page, user, config, onUser, onError, onOnline, o
   const styles = useAccountStyles();
   const s = useAccountUi();
   const t = tr(user.language);
-  const local = (ru: string, ky: string) => user.language === 'ky' ? ky : ru;
+  const local = (ru: string, ky: string) => localize(user.language, ru, ky);
   const { isDark, palette } = useTheme();
   const [name, setName] = useState(user.name || '');
   const [editing, setEditing] = useState(false);
@@ -99,7 +100,13 @@ export function AccountScreen({ page, user, config, onUser, onError, onOnline, o
         }
         setNotificationPermission(true);
       }
-      onUser(await api.patch<User>('/users/me', patch));
+      if (patch.language) {
+        const next = patch.language === 'en'
+          ? { ...user, language: 'en' as const }
+          : await api.patch<User>('/users/me', patch);
+        await writeSelectedLanguage(patch.language);
+        onUser(next);
+      } else onUser(await api.patch<User>('/users/me', patch));
       if (patch.notifications === true) void registerPushNotifications();
       if (patch.name !== undefined) setEditing(false);
     }
@@ -141,7 +148,7 @@ export function AccountScreen({ page, user, config, onUser, onError, onOnline, o
     finally { setAvatarSaving(false); }
   }
   const completed = completedOrders(history);
-  const locale = user.language === 'ky' ? 'ky-KG' : 'ru-RU';
+  const locale = user.language === 'ky' ? 'ky-KG' : user.language === 'en' ? 'en-US' : 'ru-RU';
   const groups = history.reduce<Array<{ date: string; orders: Order[] }>>((result, order) => {
     const date = new Date(order.createdAt).toLocaleDateString(locale, { day: 'numeric', month: 'long', ...(new Date(order.createdAt).getFullYear() !== new Date().getFullYear() ? { year: 'numeric' as const } : {}) });
     const group = result[result.length - 1];
@@ -155,7 +162,7 @@ export function AccountScreen({ page, user, config, onUser, onError, onOnline, o
       <View style={styles.profileCard}>
         <Pressable accessibilityRole="button" accessibilityLabel={local('Редактировать профиль', 'Профилди түзөтүү')} accessibilityState={{ expanded: editing }} onPress={() => { setName(user.name || ''); setEditing(!editing); }} style={styles.profilePerson}>
           {user.role === 'DRIVER' && <View><Avatar user={user} size={76}/>{driverProfile && <View style={[styles.onlineDot, { backgroundColor: isDark ? driverProfile.online ? '#FFFFFF' : '#777777' : driverProfile.online ? colors.green : '#A5B3C2' }]}/>}</View>}
-          <View style={{ flex: 1, gap: 7 }}><Text style={styles.profileName} numberOfLines={2}>{user.name || t('Профиль')}</Text><Text style={styles.profilePhone}>{user.phone}</Text>{driverProfile && <View style={[s.row, { gap: 6 }]}><Icon name="star" color={palette.accent} size={19}/><Text style={styles.rating}>{driverProfile.rating == null ? '—' : Number(driverProfile.rating).toFixed(1)}</Text>{driverProfile.completedTrips != null && <Text style={s.caption}>{local(`(${driverProfile.completedTrips} поездок)`, `(${driverProfile.completedTrips} сапар)`)}</Text>}</View>}</View>
+          <View style={{ flex: 1, gap: 7 }}><Text style={styles.profileName} numberOfLines={2}>{user.name || t('Профиль')}</Text><Text style={styles.profilePhone}>{user.phone}</Text>{driverProfile && <View style={[s.row, { gap: 6 }]}><Icon name="star" color={palette.accent} size={19}/><Text style={styles.rating}>{driverProfile.rating == null ? '—' : Number(driverProfile.rating).toFixed(1)}</Text>{driverProfile.completedTrips != null && <Text style={s.caption}>{user.language === 'en' ? `(${driverProfile.completedTrips} trips)` : local(`(${driverProfile.completedTrips} поездок)`, `(${driverProfile.completedTrips} сапар)`)}</Text>}</View>}</View>
           <Icon name={editing ? 'chevron-down' : 'chevron-forward'} color={palette.muted} size={19}/>
         </Pressable>
         {driverProfile && <>
@@ -179,9 +186,9 @@ export function AccountScreen({ page, user, config, onUser, onError, onOnline, o
         <Pressable accessibilityRole="button" accessibilityLabel={t('Баланс')} onPress={() => onNavigate('balance')} style={s.row}><View style={styles.walletIcon}><Icon name="wallet-outline" color={palette.accent} size={32}/></View><View style={{ flex: 1, gap: 4 }}><Text style={s.muted}>{t('Баланс')}</Text><Text style={styles.balanceValue}>{balance ? money(balance.deposit) : '—'}</Text></View><Icon name="chevron-forward" color={palette.muted} size={19}/></Pressable>
         <View style={styles.divider}/>
         <View style={styles.earningsRow}>
-          <View style={styles.earning}><Icon name="bar-chart" color={palette.accent} size={24}/><View style={{ flex: 1, gap: 4 }}><Text style={s.caption}>{t('Сегодня')}</Text><Text style={styles.earningValue}>{earnings ? money(income(earnings.today)) : '—'}</Text><Text style={s.caption}>{earnings ? local(`${completedOrders(earnings.today).length} поездок`, `${completedOrders(earnings.today).length} сапар`) : '—'}</Text></View></View>
+          <View style={styles.earning}><Icon name="bar-chart" color={palette.accent} size={24}/><View style={{ flex: 1, gap: 4 }}><Text style={s.caption}>{t('Сегодня')}</Text><Text style={styles.earningValue}>{earnings ? money(income(earnings.today)) : '—'}</Text><Text style={s.caption}>{earnings ? user.language === 'en' ? `${completedOrders(earnings.today).length} trips` : local(`${completedOrders(earnings.today).length} поездок`, `${completedOrders(earnings.today).length} сапар`) : '—'}</Text></View></View>
           <View style={styles.statDivider}/>
-          <View style={styles.earning}><Icon name="calendar" color={palette.accent} size={24}/><View style={{ flex: 1, gap: 4 }}><Text style={s.caption}>{t('Неделя')}</Text><Text style={styles.earningValue}>{earnings ? money(income(earnings.week)) : '—'}</Text><Text style={s.caption}>{earnings ? local(`${completedOrders(earnings.week).length} поездок`, `${completedOrders(earnings.week).length} сапар`) : '—'}</Text></View></View>
+          <View style={styles.earning}><Icon name="calendar" color={palette.accent} size={24}/><View style={{ flex: 1, gap: 4 }}><Text style={s.caption}>{t('Неделя')}</Text><Text style={styles.earningValue}>{earnings ? money(income(earnings.week)) : '—'}</Text><Text style={s.caption}>{earnings ? user.language === 'en' ? `${completedOrders(earnings.week).length} trips` : local(`${completedOrders(earnings.week).length} поездок`, `${completedOrders(earnings.week).length} сапар`) : '—'}</Text></View></View>
         </View>
         <Button label={t('История операций')} onPress={() => onNavigate('balance')}/>
       </View>}
@@ -215,11 +222,17 @@ export function AccountScreen({ page, user, config, onUser, onError, onOnline, o
         </View>
       </View>}
       {driverProfile && <View style={[s.card, isDark && styles.darkSettingsCard, { gap: 4 }]}>
-        <View style={{ gap: 4, paddingBottom: 9 }}><Text style={[s.h3, isDark && styles.darkSettingsText]}>{local('Какие заказы принимать', 'Кайсы буюртмаларды кабыл алуу')}</Text><Text style={s.caption}>{local(`Назначенный класс: ${driverProfile.transportClass === 'COMFORT' ? 'Комфорт' : driverProfile.transportClass === 'TRUCK' ? 'Грузовой' : 'Эконом'}`, `Унаа классы: ${driverProfile.transportClass}`)}</Text></View>
-        {driverProfile.transportClass !== 'TRUCK' && <PreferenceRow title="Эконом" caption="Обычные поездки" value={!!driverProfile.acceptsEconomy} disabled={saving} onChange={acceptsEconomy => void updatePreferences({ acceptsEconomy })}/>}
-        <PreferenceRow title="Комфорт" caption={driverProfile.transportClass === 'COMFORT' ? local('Поездки Комфорт', 'Комфорт сапарлары') : local('Недоступен вам', 'Сиз үчүн жеткиликсиз')} value={!!driverProfile.acceptsComfort} disabled={saving || driverProfile.transportClass !== 'COMFORT'} onChange={acceptsComfort => void updatePreferences({ acceptsComfort })}/>
-        {driverProfile.transportClass !== 'TRUCK' && <PreferenceRow title="Доставка на машине" caption="Небольшие чистые грузы" value={!!driverProfile.acceptsDeliveryCar} disabled={saving} onChange={acceptsDeliveryCar => void updatePreferences({ acceptsDeliveryCar })}/>}
-        {driverProfile.transportClass === 'TRUCK' && <PreferenceRow title="Грузовая доставка" caption="Крупные грузы" value={!!driverProfile.acceptsDeliveryTruck} disabled={saving} onChange={acceptsDeliveryTruck => void updatePreferences({ acceptsDeliveryTruck })}/>}
+        <View style={{ gap: 4, paddingBottom: 9 }}>
+          <Text style={[s.h3, isDark && styles.darkSettingsText]}>{local('Какие заказы принимать', 'Кайсы буюртмаларды кабыл алуу')}</Text>
+          <Text style={s.caption}>{user.language === 'en'
+            ? `Assigned class: ${t(driverProfile.transportClass === 'COMFORT' ? 'Комфорт' : driverProfile.transportClass === 'TRUCK' ? 'Грузовой' : 'Эконом')}`
+            : local(`Назначенный класс: ${driverProfile.transportClass === 'COMFORT' ? 'Комфорт' : driverProfile.transportClass === 'TRUCK' ? 'Грузовой' : 'Эконом'}`, `Унаа классы: ${driverProfile.transportClass}`)}
+          </Text>
+        </View>
+        {driverProfile.transportClass !== 'TRUCK' && <PreferenceRow title={t('Эконом')} caption={t('Обычные поездки')} value={!!driverProfile.acceptsEconomy} disabled={saving} onChange={acceptsEconomy => void updatePreferences({ acceptsEconomy })}/>}
+        <PreferenceRow title={t('Комфорт')} caption={driverProfile.transportClass === 'COMFORT' ? local('Поездки Комфорт', 'Комфорт сапарлары') : local('Недоступен вам', 'Сиз үчүн жеткиликсиз')} value={!!driverProfile.acceptsComfort} disabled={saving || driverProfile.transportClass !== 'COMFORT'} onChange={acceptsComfort => void updatePreferences({ acceptsComfort })}/>
+        {driverProfile.transportClass !== 'TRUCK' && <PreferenceRow title={t('Доставка на машине')} caption={t('Небольшие чистые грузы')} value={!!driverProfile.acceptsDeliveryCar} disabled={saving} onChange={acceptsDeliveryCar => void updatePreferences({ acceptsDeliveryCar })}/>}
+        {driverProfile.transportClass === 'TRUCK' && <PreferenceRow title={t('Грузовая доставка')} caption={t('Крупные грузы')} value={!!driverProfile.acceptsDeliveryTruck} disabled={saving} onChange={acceptsDeliveryTruck => void updatePreferences({ acceptsDeliveryTruck })}/>}
       </View>}
       <View style={[s.card, isDark && styles.darkSettingsCard, { gap: 11 }]}>
         <View style={s.spread}>
@@ -262,14 +275,26 @@ export function AccountScreen({ page, user, config, onUser, onError, onOnline, o
       </View>
       <View style={[s.card, isDark && styles.darkSettingsCard, { gap: 15 }]}>
         <Text style={[s.h3, isDark && styles.darkSettingsText]}>{t('Язык интерфейса')}</Text>
-        {(['ru', 'ky'] as Language[]).map(language => <Pressable key={language} accessibilityRole="button" accessibilityState={{ selected: user.language === language }} onPress={() => update({ language })} disabled={saving} style={[s.spread, { paddingVertical: 8 }]}>
-          <Text style={[s.body, isDark && styles.darkSettingsText]}>{language === 'ru' ? 'Русский' : 'Кыргызча'}</Text>
+        {(['ru', 'ky', 'en'] as Language[]).map(language => <Pressable key={language} accessibilityRole="button" accessibilityState={{ selected: user.language === language }} onPress={() => update({ language })} disabled={saving} style={[s.spread, { paddingVertical: 8 }]}>
+          <Text style={[s.body, isDark && styles.darkSettingsText]}>{language === 'ru' ? 'Русский' : language === 'ky' ? 'Кыргызча' : 'English'}</Text>
           <Icon name={user.language === language ? 'radio-button-on' : 'radio-button-off'} color={isDark ? user.language === language ? '#FFFFFF' : '#888888' : user.language === language ? palette.accent : palette.muted}/>
         </Pressable>)}
       </View>
     </>}
     {page === 'payment' && <><View style={[s.card, s.row]}><View style={s.emptyIcon}><Icon name="cash" color={isDark ? '#FFFFFF' : colors.green} size={32}/></View><View style={{ flex: 1 }}><Text style={s.h2}>{t('Наличные')}</Text><Text style={s.muted}>{t('Оплата водителю')}</Text></View><Icon name="checkmark-circle" color={palette.accent}/></View><Text style={s.muted}>{t('Все поездки оплачиваются наличными в сомах после завершения. Стоимость фиксируется перед заказом.')}</Text></>}
-    {page === 'support' && <><Empty icon="headset-outline" title={t('Поддержка')} subtitle={t('Если возникла проблема с поездкой, сообщите время заказа и номер телефона аккаунта.')}/>{config?.supportPhone ? <Button label={config.supportPhone} icon="call-outline" onPress={() => void Linking.openURL(`tel:${config.supportPhone}`)}/> : <View style={s.card}><Text style={s.muted}>{t('Контакт поддержки пока не настроен. Обратитесь к диспетчеру сервиса.')}</Text></View>}<View style={[s.card, { gap: 12 }]}><Text style={s.h3}>{user.role === 'DRIVER' ? 'Atlas pro' : 'Atlas'}</Text><Text style={s.caption}>{t('Карты — OpenStreetMap, маршруты — OSRM.')}</Text><Pressable accessibilityRole="link" onPress={() => void Linking.openURL('https://www.openstreetmap.org/copyright')}><Text style={{ color: palette.accent }}>{t('© Участники OpenStreetMap ↗')}</Text></Pressable>{process.env.EXPO_PUBLIC_PRIVACY_URL && <Pressable accessibilityRole="link" onPress={() => void Linking.openURL(process.env.EXPO_PUBLIC_PRIVACY_URL!)}><Text style={{ color: palette.accent }}>{t('Политика конфиденциальности ↗')}</Text></Pressable>}</View></>}
+    {page === 'support' && <>
+      <Empty icon="headset-outline" title={t('Поддержка')} subtitle={t('Если возникла проблема с поездкой, сообщите время заказа и номер телефона аккаунта.')}/>
+      {config?.supportPhone
+        ? <Button label={config.supportPhone} icon="call-outline" onPress={() => void Linking.openURL(`tel:${config.supportPhone}`)}/>
+        : <View style={s.card}><Text style={s.muted}>{t('Контакт поддержки пока не настроен. Обратитесь к диспетчеру сервиса.')}</Text></View>}
+      <View style={[s.card, { gap: 12 }]}>
+        <Text style={s.h3}>{user.role === 'DRIVER' ? 'Atlas pro' : 'Atlas'}</Text>
+        <Text style={s.caption}>{t('Карты — OpenStreetMap, маршруты — OSRM.')}</Text>
+        <Pressable accessibilityRole="link" onPress={() => void Linking.openURL('https://www.openstreetmap.org/copyright')}><Text style={{ color: palette.accent }}>{t('© Участники OpenStreetMap ↗')}</Text></Pressable>
+        {process.env.EXPO_PUBLIC_PRIVACY_URL && <Pressable accessibilityRole="link" onPress={() => void Linking.openURL(process.env.EXPO_PUBLIC_PRIVACY_URL!)}><Text style={{ color: palette.accent }}>{t('Политика конфиденциальности ↗')}</Text></Pressable>}
+        {process.env.EXPO_PUBLIC_TERMS_URL && <Pressable accessibilityRole="link" onPress={() => void Linking.openURL(process.env.EXPO_PUBLIC_TERMS_URL!)}><Text style={{ color: palette.accent }}>{local('Условия использования ↗', 'Колдонуу шарттары ↗')}</Text></Pressable>}
+      </View>
+    </>}
   </ScrollView>;
 }
 

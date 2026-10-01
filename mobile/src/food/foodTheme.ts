@@ -46,7 +46,7 @@ function replaceColor(value: string, property: string, name: string, theme: Retu
     if (textDark.has(color)) return theme.ink;
     if (textMuted.has(color)) return theme.muted;
     if (color === '#FFFFFF' || color === 'WHITE') {
-      return /^(buttonText|filterTextActive|menuTabActive|dishStepperCount|cartDockCountText)$/.test(name) ? theme.accentText : '#FFFFFF';
+      return /^(buttonText|filterTextActive|menuTabActive|dishStepperCount|cartDockCountText|cartDockAction|cartDockTotal|cartDockEta)$/.test(name) ? theme.accentText : '#FFFFFF';
     }
     if (color === '#C8CBCF' || color === '#BBBDBE') return theme.muted;
   }

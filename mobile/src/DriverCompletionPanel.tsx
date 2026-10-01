@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { ActivityIndicator, Animated, Pressable, ScrollView, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { SuccessCelebration } from './SuccessCelebration';
-import { Icon, km, money, shortAddress, tripTime } from './ui';
+import { Icon, km, localize, money, shortAddress, tripTime } from './ui';
 import type { Order, User } from './types';
 import { useTheme } from './design/theme';
 import { useSheetDragToClose } from './useSheetDragToClose';
@@ -33,7 +33,7 @@ export function DriverCompletionPanel({ order, user, busy, onDone, onRateClient,
   const insets = useSafeAreaInsets();
   const ky = user.language === 'ky';
   const delivery = order.kind !== undefined && order.kind !== 'RIDE';
-  const say = (ru: string, kyrgyz: string) => ky ? kyrgyz : ru;
+  const say = (ru: string, kyrgyz: string) => localize(user.language, ru, kyrgyz);
   const { stage, navigate: navigateStage, reset: resetStage, exit: exitStage, translateY: stageTranslateY } = useSheetStageTransition<'success' | 'rating'>('success');
   const [score, setScore] = useState(0);
   const [rated, setRated] = useState(order.driverRating != null);
@@ -68,7 +68,7 @@ export function DriverCompletionPanel({ order, user, busy, onDone, onRateClient,
   return <View testID="driver-completion" style={s.host}>
     <View style={[s.backdrop, { backgroundColor: palette.backdrop }]}/>
     <Animated.View onLayout={event => onHeight?.(event.nativeEvent.layout.height)} style={[s.sheet, { maxHeight: screenHeight - insets.top - 16, paddingBottom: Math.max(insets.bottom, 14), transform: [{ translateY: stageTranslateY }, { translateY: drag.translateY }] }]}>
-      <View {...drag.panHandlers} style={s.handleTouch}><Pressable accessibilityRole="button" accessibilityLabel={stage === 'rating' ? say('Назад к заказу', 'Буюртмага кайтуу') : say('Закрыть', 'Жабуу')} accessibilityState={{ disabled: busy || submitting }} disabled={busy || submitting} onPress={stage === 'rating' ? () => navigateStage('success') : closeCompletion} hitSlop={8}><View style={s.handle}/></Pressable></View>
+      <View {...drag.panHandlers} style={s.handleTouch}><Pressable accessibilityRole="button" accessibilityLabel={stage === 'rating' ? say('Назад к заказу', 'Буюртмага кайтуу') : rated ? say('Закрыть', 'Жабуу') : say('Пропустить оценку', 'Баалоону өткөрүп жиберүү')} accessibilityState={{ disabled: busy || submitting }} disabled={busy || submitting} onPress={stage === 'rating' ? () => navigateStage('success') : closeCompletion} hitSlop={8}><View style={s.handle}/></Pressable></View>
       <ScrollView contentContainerStyle={stage === 'success' ? s.successContent : s.ratingContent} showsVerticalScrollIndicator={false} bounces={false} style={{ flexGrow: 0 }}>
         {stage === 'success' ? <>
           <SuccessCelebration key={`driver-success-${order.id}`} size={132} testID="driver-success-celebration"/>
@@ -86,7 +86,7 @@ export function DriverCompletionPanel({ order, user, busy, onDone, onRateClient,
           </View>
           <View style={s.fareCard}><Icon name="cash" size={25} color={isDark ? '#FFFFFF' : palette.accent}/><Text style={s.fareLabel} numberOfLines={1}>{say('Наличные', 'Накталай')} · {order.tariff?.name || say('Стандарт', 'Стандарт')}</Text><Text style={s.price}>{money(order.price)}</Text></View>
           {!rated && <MainButton label={say(delivery ? 'Оценить заказчика' : 'Оценить пассажира', 'Жүргүнчүнү баалоо')} onPress={() => { setScore(0); setRatingError(false); navigateStage('rating'); }} busy={busy}/>}
-          <Pressable accessibilityRole="button" accessibilityLabel={say('Закрыть', 'Жабуу')} accessibilityState={{ disabled: busy }} disabled={busy} onPress={closeCompletion} style={s.close}><Text style={s.closeText}>{say('Закрыть', 'Жабуу')}</Text></Pressable>
+          <Pressable accessibilityRole="button" accessibilityLabel={say(rated ? 'Закрыть' : 'Пропустить оценку', rated ? 'Жабуу' : 'Баалоону өткөрүп жиберүү')} accessibilityState={{ disabled: busy }} disabled={busy} onPress={closeCompletion} style={s.close}><Text style={s.closeText}>{say(rated ? 'Закрыть' : 'Пропустить оценку', rated ? 'Жабуу' : 'Баалоону өткөрүп жиберүү')}</Text></Pressable>
         </> : <>
           <Text style={s.ratingTitle}>{say('Как всё прошло?', 'Баары кандай өттү?')}</Text>
           <Text style={s.ratingSubtitle}>{say(delivery ? 'Оцените заказчика' : 'Оцените пассажира', 'Жүргүнчүнү баалаңыз')}</Text>

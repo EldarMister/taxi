@@ -174,21 +174,21 @@ export function useDriverNavigation({ userId, order, enabled, locationEnabled, m
           activeSpeechCue.current = null;
           if (speechTimer.current) clearTimeout(speechTimer.current);
           if (currentCue) spoken.current.delete(currentCue.key);
-          setVoiceError(language === 'ky' ? 'Не удалось включить кыргызский голос. Проверьте языки озвучки телефона.' : 'TTS недоступен. Проверьте интернет и повторите.');
+          setVoiceError(language === 'ky' ? 'Не удалось включить кыргызский голос. Проверьте языки озвучки телефона.' : language === 'en' ? 'Voice guidance is unavailable. Check your connection and try again.' : 'TTS недоступен. Проверьте интернет и повторите.');
         } });
       if (speechBusy.current) speechTimer.current = setTimeout(() => {
         if (version !== speechVersion.current) return;
         speechBusy.current = false; pendingSpeech.current = null;
       }, 38000);
     }).catch(() => {
-      if (version === speechVersion.current) { speechBusy.current = false; pendingSpeech.current = null; setVoiceError('Озвучка недоступна на этом устройстве.'); }
+      if (version === speechVersion.current) { speechBusy.current = false; pendingSpeech.current = null; setVoiceError(language === 'en' ? 'Voice guidance is unavailable on this device.' : 'Озвучка недоступна на этом устройстве.'); }
     });
     return true;
   }, [language]);
   const testVoice = useCallback(() => {
-    if (!voiceRef.current) { setVoiceError('Включите голосовые подсказки для проверки.'); return; }
+    if (!voiceRef.current) { setVoiceError(language === 'en' ? 'Turn on voice guidance to test it.' : 'Включите голосовые подсказки для проверки.'); return; }
     stopSpeech();
-    say(language === 'ky' ? 'Үн текшерүүсү. Кийинки бурулушта көрсөтмө угасыз.' : 'Проверка голоса. Перед следующим поворотом вы услышите подсказку.');
+    say(language === 'ky' ? 'Үн текшерүүсү. Кийинки бурулушта көрсөтмө угасыз.' : language === 'en' ? 'Voice test. You will hear guidance before the next turn.' : 'Проверка голоса. Перед следующим поворотом вы услышите подсказку.');
   }, [language, say, stopSpeech]);
   useEffect(() => {
     const subscription = AppState.addEventListener('change', state => {
@@ -287,7 +287,7 @@ export function useDriverNavigation({ userId, order, enabled, locationEnabled, m
     const version = ++requestVersion.current;
     lastRequest.current = Date.now(); setLoading(true); setRouteError('');
     setRerouteReason(reason);
-    if (rerouting) { stopSpeech(); say(language === 'ky' ? 'Маршрутту кайра куруп жатам.' : 'Перестраиваю маршрут.'); }
+    if (rerouting) { stopSpeech(); say(language === 'ky' ? 'Маршрутту кайра куруп жатам.' : language === 'en' ? 'Recalculating the route.' : 'Перестраиваю маршрут.'); }
     try {
       let origin = { latitude: fix.latitude, longitude: fix.longitude };
       let bearing = fix.heading != null && (fix.speed ?? 0) >= 1.5 ? fix.heading : undefined;
@@ -312,7 +312,7 @@ export function useDriverNavigation({ userId, order, enabled, locationEnabled, m
         } catch { /* A delayed matcher must never block the reroute. */ }
         finally { clearTimeout(timeout); }
       }
-      const basicRequest = { pickup: { ...origin, address: 'Положение водителя' }, dropoff: target, language };
+      const basicRequest = { pickup: { ...origin, address: 'Положение водителя' }, dropoff: target, language: language === 'en' ? 'ru' : language };
       const advancedRequest = { ...basicRequest, ...(bearing != null ? { bearing } : {}), ...(rerouting ? { fast: true } : {}) };
       const requestRoute = (body: typeof basicRequest | typeof advancedRequest) => api.request<DrivingRoute>('/routes', {
         method: 'POST', signal: controller.signal, body: JSON.stringify(body),

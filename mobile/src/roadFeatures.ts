@@ -59,6 +59,10 @@ function russianNumber(value: number) {
   return pieces.filter(Boolean).join(' ');
 }
 export function roadFeatureAnnouncement(features: RoadFeature[], along: number, language: Language): string {
+  const englishNames: Record<RoadFeatureKind, string> = {
+    stop: 'stop sign', give_way: 'yield sign', speed_limit_60: 'speed limit sixty',
+    pedestrian_crossing: 'pedestrian crossing', speed_camera: 'speed camera', traffic_light: 'traffic light',
+  };
   const groups = new Map<number, RoadFeatureKind[]>();
   for (const feature of features) {
     const distance = Math.max(10, Math.round((feature.along - along) / 10) * 10);
@@ -67,16 +71,17 @@ export function roadFeatureAnnouncement(features: RoadFeature[], along: number, 
     groups.set(distance, kinds);
   }
   return [...groups].map(([distance, kinds]) => {
-    const names = kinds.map(kind => language === 'ky' ? kyrgyzNames[kind] : russianNames[kind]);
-    const joined = names.length < 3 ? names.join(language === 'ky' ? ' жана ' : ' и ')
-      : `${names.slice(0, -1).join(', ')}${language === 'ky' ? ' жана ' : ' и '}${names[names.length - 1]}`;
+    const names = kinds.map(kind => language === 'ky' ? kyrgyzNames[kind] : language === 'en' ? englishNames[kind] : russianNames[kind]);
+    const joined = names.length < 3 ? names.join(language === 'ky' ? ' жана ' : language === 'en' ? ' and ' : ' и ')
+      : `${names.slice(0, -1).join(', ')}${language === 'ky' ? ' жана ' : language === 'en' ? ' and ' : ' и '}${names[names.length - 1]}`;
     return language === 'ky'
       ? `${distance} метрден кийин ${joined}.`
+      : language === 'en' ? `In ${distance} meters, ${joined}.`
       : `Через ${russianNumber(distance)} метров ${joined}.`;
   }).join(' ');
 }
 
 export function roadFeatureDistanceLabel(feature: RoadFeature, along: number, language: Language = 'ru'): string {
   const distance = Math.round(feature.along - along);
-  return distance > 0 ? `${Math.max(0, Math.round(distance / 10) * 10)} м` : distance < -10 ? language === 'ky' ? 'артта' : 'позади' : '0 м';
+  return distance > 0 ? `${Math.max(0, Math.round(distance / 10) * 10)} ${language === 'en' ? 'm' : 'м'}` : distance < -10 ? language === 'ky' ? 'артта' : language === 'en' ? 'passed' : 'позади' : language === 'en' ? '0 m' : '0 м';
 }

@@ -27,6 +27,10 @@ export function cartSummary(restaurant: FoodRestaurant | undefined, lines: CartL
   const subtotal = items.reduce((sum, item) => sum + item.total, 0);
   const count = items.reduce((sum, item) => sum + item.quantity, 0);
   const deliveryFee = count && fulfillment === 'DELIVERY' && !(restaurant?.freeDeliveryThreshold && subtotal >= restaurant.freeDeliveryThreshold) ? restaurant?.deliveryFee || 0 : 0;
-  const invalid = lines.length !== items.length || items.some(item => !item.dish.available || item.quantity < 1 || item.quantity > MAX_FOOD_QUANTITY || !Number.isInteger(item.quantity) || item.optionIds.some(id => !item.dish.optionIds.includes(id) || !restaurant!.options.some(option => option.id === id)));
+  const invalid = lines.length !== items.length || lines.length > 50 || count > 99 || !Number.isSafeInteger(subtotal + deliveryFee) || subtotal + deliveryFee > 1_000_000 || items.some(item =>
+    !item.dish.available || item.quantity < 1 || item.quantity > MAX_FOOD_QUANTITY || !Number.isInteger(item.quantity) ||
+    !Number.isSafeInteger(item.dish.price) || item.dish.price < 0 || item.optionIds.length > 10 ||
+    new Set(item.optionIds).size !== item.optionIds.length || item.optionIds.some(id => !item.dish.optionIds.includes(id) || !restaurant!.options.some(option => option.id === id)) ||
+    item.options.some(option => !Number.isSafeInteger(option.price) || option.price < 0));
   return { items, subtotal, count, deliveryFee, total: subtotal + deliveryFee, invalid };
 }

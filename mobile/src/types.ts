@@ -1,4 +1,4 @@
-export type Language = "ru" | "ky";
+export type Language = "ru" | "ky" | "en";
 export type Point = { latitude: number; longitude: number; address: string };
 export type Coordinate = {
   latitude: number;
@@ -149,6 +149,7 @@ export type ChatMessage = {
   orderId: string;
   senderId: string;
   text: string;
+  photoUrl?: string | null;
   createdAt: string;
   clientMessageId?: string;
 };

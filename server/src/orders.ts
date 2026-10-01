@@ -10,6 +10,13 @@ import { RoutingService } from './providers';
 import { visibleDriverLocation } from './tracking';
 import { nextDriver, OFFER_SECONDS, POSITION_MAX_AGE_MS, IDLE_POSITION_MAX_AGE_MS } from './dispatch-ranking';
 import { driverCanTake } from './driver-eligibility';
+import { detectMediaMime, normalizeContentImage } from './content-domain';
+
+const chatMessageFields = {id:true,orderId:true,senderId:true,clientMessageId:true,text:true,createdAt:true,imageMime:true} as const;
+function chatMessageView(row:{id:string;orderId:string;senderId:string;clientMessageId:string;text:string;createdAt:Date;imageMime:string|null}) {
+  return {id:row.id,orderId:row.orderId,senderId:row.senderId,clientMessageId:row.clientMessageId,text:row.text,createdAt:row.createdAt,
+    photoUrl:row.imageMime?`/orders/${row.orderId}/messages/${row.id}/photo`:null};
+}
 
 @Injectable()
 export class OrdersService {
@@ -250,25 +257,42 @@ export class OrdersService {
       if(!order.driverId)return [];
       const assignment=await tx.statusHistory.findFirst({where:{orderId:id,status:'ASSIGNED'},orderBy:{createdAt:'desc'}});
       // A replacement driver sees only the conversation for their own assignment.
-      return tx.message.findMany({where:{orderId:id,senderId:{in:this.participants(order)},createdAt:{gte:assignment?.createdAt}},orderBy:{createdAt:'asc'},take:500});
+      const rows=await tx.message.findMany({where:{orderId:id,senderId:{in:this.participants(order)},createdAt:{gte:assignment?.createdAt}},orderBy:{createdAt:'asc'},take:500,select:chatMessageFields});
+      return rows.map(chatMessageView);
     });
   }
-  async sendMessage(actor:Actor,id:string,dto:MessageDto) {
+  async sendMessage(actor:Actor,id:string,dto:MessageDto,photo?:{buffer:Buffer;mimetype:string}) {
     await this.limits.take(`chat:${actor.id}`,40,60);
+    const text=dto.text.trim();
+    if(!text&&!photo)throw new BadRequestException('Сообщение пустое');
+    const image=photo?await normalizeContentImage(photo.buffer,photo.mimetype):null;
     const message = await this.db.$transaction(async tx=>{
       const order = await this.lockOrder(tx,id);
       if(!this.participants(order).includes(actor.id)) throw new ForbiddenException();
       if(!ASSIGNED_STATUSES.includes(order.status)) throw new BadRequestException('Чат доступен во время активной поездки');
-      if(!dto.text.trim()) throw new BadRequestException('Сообщение пустое');
       const existing = await tx.message.findUnique({where:{senderId_clientMessageId:{senderId:actor.id,clientMessageId:dto.clientMessageId}}});
       if(existing) {
-        if(existing.orderId!==id||existing.text!==dto.text.trim()) throw new ConflictException('Ключ сообщения уже использован');return existing;
+        if(existing.orderId!==id||existing.text!==text||Boolean(existing.imageData)!==Boolean(image)
+          || image&&existing.imageData&&!Buffer.from(existing.imageData).equals(image.data))throw new ConflictException('Ключ сообщения уже использован');
+        return chatMessageView(existing);
       }
-      const created = await tx.message.create({data:{orderId:id,senderId:actor.id,text:dto.text.trim(),clientMessageId:dto.clientMessageId}});
-      await this.push(tx,this.participants(order).filter(userId=>userId!==actor.id),'chat:message',id);return created;
+      const created = await tx.message.create({data:{orderId:id,senderId:actor.id,text,clientMessageId:dto.clientMessageId,imageData:image?Uint8Array.from(image.data):null,imageMime:image?.mime??null},select:chatMessageFields});
+      await this.push(tx,this.participants(order).filter(userId=>userId!==actor.id),'chat:message',id);return chatMessageView(created);
     });
     const order = await this.db.order.findUniqueOrThrow({where:{id}});
     this.events.publish(this.participants(order),'chat:message',message);return message;
+  }
+  async messagePhoto(actor:Actor,id:string,messageId:string) {
+    return this.db.$transaction(async tx=>{
+      const order=await this.lockOrder(tx,id);
+      if(!this.participants(order).includes(actor.id)||!order.driverId)throw new ForbiddenException('Нет доступа к чату');
+      const assignment=await tx.statusHistory.findFirst({where:{orderId:id,status:'ASSIGNED'},orderBy:{createdAt:'desc'}});
+      const row=await tx.message.findUnique({where:{id:messageId},select:{orderId:true,senderId:true,createdAt:true,imageData:true,imageMime:true}});
+      if(!row||row.orderId!==id||!this.participants(order).includes(row.senderId)
+        ||assignment&&row.createdAt<assignment.createdAt||!row.imageData||row.imageMime!=='image/webp'
+        ||detectMediaMime(row.imageData)!==row.imageMime)throw new NotFoundException('Фотография не найдена');
+      return {data:row.imageData,mime:row.imageMime};
+    });
   }
   async rate(actor:Actor,id:string,score:number,comment?:string) {
     const normalizedComment=comment?.trim()??'';

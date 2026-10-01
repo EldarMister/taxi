@@ -156,6 +156,34 @@ test('closing a trip fences late socket, sync, and rating responses for its orde
   assert.match(done, /dismissedOrderIds\.current\.add\(current\.id\)[\s\S]*await writeLastOrderId\(null\)[\s\S]*applyOrder\(null\)/);
 });
 
+test('driver tabs stay hidden from a new offer through the active trip', () => {
+  const source = read('App.tsx');
+  const syntax = ts.createSourceFile('App.tsx', source, ts.ScriptTarget.ES2022, true, ts.ScriptKind.TSX);
+  const declaration = syntax.statements.find(node => ts.isFunctionDeclaration(node) && node.name?.text === 'shouldShowDriverTabs');
+  assert.ok(declaration);
+  const compiled = ts.transpileModule(`${declaration.getText(syntax)}\nexports.showTabs = shouldShowDriverTabs;`, {
+    compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
+  }).outputText;
+  const types = {};
+  vm.runInNewContext(ts.transpileModule(read('src/types.ts'), {
+    compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
+  }).outputText, { exports: types });
+  const result = {};
+  vm.runInNewContext(compiled, { exports: result, isActive: types.isActive });
+  const showTabs = result.showTabs;
+  assert.equal(showTabs(null), true);
+  assert.equal(showTabs(null, { id: 'new-offer' }), false);
+  for (const status of ['ASSIGNED', 'ARRIVED', 'IN_PROGRESS']) {
+    assert.equal(showTabs({ status }), false, status);
+  }
+  assert.equal(showTabs({ status: 'COMPLETED', driverRating: null }), false, 'completion sheet still requires rating or skip');
+  assert.equal(showTabs({ status: 'COMPLETED', driverRating: 5 }), true, 'rating restores the tabs');
+  for (const status of ['CANCELLED', 'NO_DRIVER']) {
+    assert.equal(showTabs({ status }), true, status);
+  }
+  assert.match(source, /\{driver && showDriverTabs \?/);
+});
+
 test('Expo, EAS and the checked-in Android project use the same build variant', () => {
   const expoConfig = read('app.config.ts');
   const runtime = read('src/appVariant.ts');

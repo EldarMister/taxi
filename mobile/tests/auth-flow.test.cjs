@@ -47,10 +47,11 @@ async function setup(t, options = {}) {
       parallel: children => ({ start: () => children.forEach(child => child.start()), stop: () => children.forEach(child => child.stop()) }),
       sequence: children => ({ start: () => children.forEach(child => child.start()), stop: () => children.forEach(child => child.stop()) }),
     },
-    Linking: { openURL: async () => {} }, Platform: { OS: options.platform || 'android' },
+    Linking: { openURL: async () => {} }, Alert: { alert() {} }, Platform: { OS: options.platform || 'android' },
     StyleSheet: { create: styles => styles, absoluteFillObject: {} },
     useWindowDimensions: () => ({ width: 390, height: 844 }),
     ...Object.fromEntries(['ActivityIndicator', 'Image', 'KeyboardAvoidingView', 'Pressable', 'ScrollView', 'Text', 'TextInput', 'View'].map(name => [name, name])),
+    Modal: ({ visible, children }) => visible ? React.createElement('Modal', {}, children) : null,
   };
   const ui = {
     ...Object.fromEntries(['CityArt', 'Icon', 'IconButton', 'Logo'].map(name => [name, name])),
@@ -70,6 +71,11 @@ async function setup(t, options = {}) {
       if (id === 'react' || id === 'react/jsx-runtime') return require(id);
       if (id === 'react-native') return native;
       if (id === 'react-native-safe-area-context') return { SafeAreaView: 'SafeAreaView', useSafeAreaInsets: () => ({ top: 24, bottom: 24, left: 0, right: 0 }) };
+      if (id === 'expo-status-bar') return { StatusBar: 'StatusBar' };
+      if (id === './auth/languageStore') return {
+        readSelectedLanguage: async () => options.savedLanguage || 'ru',
+        writeSelectedLanguage: async language => { options.savedLanguage = language; },
+      };
       if (id === './auth/AuthMotion') {
         const motionExports = {};
         const motion = ts.transpileModule(fs.readFileSync(path.join(__dirname, '../src/auth/AuthMotion.tsx'), 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX, esModuleInterop: true } }).outputText;
@@ -93,15 +99,15 @@ async function setup(t, options = {}) {
     renderer = create(React.createElement(exports.AuthScreen, { onLogin: async (session, language) => {
       logins.push({ session, language });
       if (options.onLogin) await options.onLogin(session, language);
-    } }), { createNodeMock: () => ({ focus() {}, blur() {}, scrollTo() {} }) });
+    } }), { createNodeMock: () => ({ focus() {}, blur() {}, scrollTo() {}, measureInWindow(callback) { callback(24, 700, 342, 62); } }) });
   });
   t.after(async () => { await act(async () => renderer.unmount()); assert.equal(intervals.size, 0); assert.equal(timeouts.size, 0); assert.equal(backHandlers.size, 0); assert.equal(keyboardHandlers.size, 0); assert.equal(motionHandlers.size, 0); });
   const h = {
     calls, logins, animations, renderer,
     hasInput: id => renderer.root.findAllByProps({ testID: id }).length > 0,
     input: id => renderer.root.findByProps({ testID: id }),
-    button: () => renderer.root.findByType('Button'),
-    buttons: () => renderer.root.findAllByType('Button'),
+    button: () => renderer.root.findByProps({ testID: 'auth-continue' }),
+    buttons: () => renderer.root.findAllByProps({ testID: 'auth-continue' }),
     codeCells: () => renderer.root.find(node => node.type?.name === 'CodeCells').props,
     keyboardAvoider: () => renderer.root.findByType('KeyboardAvoidingView'),
     text: () => textOf(renderer.toJSON()),
@@ -148,13 +154,13 @@ test('initial screen accepts only a complete national phone number and normalize
 
 test('dark login keeps phone and SMS code fields legible', async t => {
   const h = await setup(t, { dark: true });
-  assert.equal(h.renderer.root.findByType('SafeAreaView').props.style[1].backgroundColor, '#050505');
-  assert.equal(h.input('auth-phone').props.style[1].color, '#FFFFFF');
-  assert.equal(h.renderer.root.findByType('Button').props.label, 'Продолжить');
+  assert.equal(h.renderer.root.findByType('SafeAreaView').props.style.backgroundColor, '#050505');
+  assert.equal(h.input('auth-phone').props.style.color, '#FFFFFF');
+  assert.match(h.text(), /Продолжить/);
   await h.change('auth-phone', '700123456');
   await h.submit();
   assert.equal(h.renderer.root.findByProps({ testID: 'auth-digit-0' }).props.style[1].backgroundColor, '#202020');
-  assert.equal(h.renderer.root.findByType('SafeAreaView').props.style[1].backgroundColor, '#050505');
+  assert.equal(h.renderer.root.findByType('SafeAreaView').props.style.backgroundColor, '#050505');
 });
 
 test('successful SMS request replaces the phone form with a separate code form', async t => {
@@ -196,7 +202,8 @@ test('failed SMS request keeps the phone screen, displays the error and allows r
 test('the sixth code digit automatically verifies and passes the session and selected language', async t => {
   const session = { accessToken: 'access', refreshToken: 'refresh', user: { id: 'client-1', role: 'CLIENT' } };
   const h = await setup(t, { post: async endpoint => endpoint.endsWith('verify-code') ? session : { retryAfterSeconds: 60 } });
-  await h.press('KG');
+  await h.press('Русский');
+  await h.press('Кыргызский');
   await h.change('auth-phone', '555123456');
   await h.submit();
   await h.change('auth-code', '12a34');
@@ -208,6 +215,34 @@ test('the sixth code digit automatically verifies and passes the session and sel
   assert.equal(h.input('auth-code').props.value, '123456');
   assert.deepEqual(h.calls[1], { endpoint: '/auth/verify-code', body: { phone: '+996555123456', code: '123456' } });
   assert.deepEqual(h.logins, [{ session, language: 'ky' }]);
+});
+
+test('English selection opens above the footer, persists, and is passed through OTP', async t => {
+  const options = { post: async endpoint => endpoint.endsWith('verify-code') ? session : { retryAfterSeconds: 60 } };
+  const session = { accessToken: 'access', refreshToken: 'refresh', user: { id: 'client-1', role: 'CLIENT' } };
+  const h = await setup(t, options);
+  await h.press('Русский');
+  assert.equal(h.renderer.root.findAllByType('Modal').length, 1);
+  await h.press('English');
+  assert.match(h.text(), /English/);
+  assert.equal(options.savedLanguage, 'en');
+  await h.change('auth-phone', '700123456');
+  await h.submit();
+  await h.change('auth-code', '123456');
+  assert.deepEqual(h.logins, [{ session, language: 'en' }]);
+  await h.unmount();
+  const restored = await setup(t, options);
+  assert.match(restored.text(), /English/);
+});
+
+test('language menu closes on an outside tap and legal links remain visible without configured URLs', async t => {
+  const h = await setup(t);
+  assert.match(h.text(), /Политикой конфиденциальности/);
+  assert.match(h.text(), /Условиями использования/);
+  await h.press('Русский');
+  assert.equal(h.renderer.root.findAllByType('Modal').length, 1);
+  await act(async () => h.renderer.root.findByProps({ accessibilityLabel: 'Закрыть выбор языка' }).props.onPress());
+  assert.equal(h.renderer.root.findAllByType('Modal').length, 0);
 });
 
 test('invalid verification stays on the code screen and editing clears the error before retry', async t => {
@@ -297,10 +332,10 @@ test('development code is labelled as a test login and is never shown without th
   assert.match(h.text(), /Отправили SMS на номер/);
 });
 
-test('Android auth keeps the code input focused without decorative artwork', async t => {
+test('Android auth keeps the code input focused and shows the logo only on the phone step', async t => {
   const h = await setup(t);
-  assert.equal(h.keyboardAvoider().props.behavior, 'padding');
-  assert.equal(h.renderer.root.findAllByType('Image').length, 0);
+  assert.equal(h.keyboardAvoider().props.behavior, undefined);
+  assert.equal(h.renderer.root.findAllByType('Image').length, 1);
   await h.change('auth-phone', '700123456'); await h.submit();
   assert.equal(h.renderer.root.findAllByType('Image').length, 0);
   assert.equal(h.input('auth-code').props.autoFocus, true);

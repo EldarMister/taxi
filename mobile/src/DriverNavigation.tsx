@@ -49,7 +49,7 @@ export function DriverNavigation({ navigation, top, onLocation, onHeight, langua
     <View style={styles.guidance}>
       <View style={[styles.turn, theme.isDark && { backgroundColor: theme.palette.accent, shadowColor: '#000000' }]}>{loading ? <ActivityIndicator color={theme.isDark ? theme.palette.accentText : 'white'}/> : <TurnArrow maneuver={maneuver} arrived={progress?.arrived} color={theme.isDark ? theme.palette.accentText : 'white'}/>}</View>
       <View style={[styles.instruction, theme.isDark && { backgroundColor: '#111111' }]}>
-        <Text style={[styles.distance, theme.isDark && { color: theme.palette.ink, textShadowColor: '#000000' }]}>{ready ? progress.arrived ? '0 м' : displayDistance(progress.maneuverDistance) : '—'}</Text>
+        <Text style={[styles.distance, theme.isDark && { color: theme.palette.ink, textShadowColor: '#000000' }]}>{ready ? progress.arrived ? language === 'en' ? '0 m' : '0 м' : displayDistance(progress.maneuverDistance, language) : '—'}</Text>
         <Text numberOfLines={2} style={[styles.title, theme.isDark && { color: theme.palette.muted, textShadowColor: '#000000' }]}>{title}</Text>
       </View>
     </View>

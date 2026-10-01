@@ -7,7 +7,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { api } from '../api';
 import { BISHKEK, MapPoint, reverseGeocode } from './mapkit';
 import { getCurrentPosition } from './location';
-import { accuracyCircle, isMapPoint, routeFrame } from './routeFrame';
+import { accuracyCircle, centerPointInVisibleArea, isMapPoint, routeFrame } from './routeFrame';
 import { matchedCarRoutePath, sampleCarRoutePath, trustedCarDirectPath, trustedCarRoutePath } from './carRouteAnimation';
 import { pointAlongRoad, remainingRoad, roadHeadingAt, snapCarToRoad } from './roadMatch';
 import { darkRasterMapFallback, mapStyleForLanguage, rasterMapFallback } from './taxiMapStyle';
@@ -41,6 +41,7 @@ export interface TaxiMapProps {
   onUserLocation?: (point: MapPoint) => void;
   contentTopInset?: number;
   contentBottomInset?: number;
+  centerInVisibleArea?: boolean;
   selecting?: boolean;
   driverPosition?: (MapPoint & { heading?: number; accuracy?: number; accuracyM?: number | null;
     snappedLatitude?: number; snappedLongitude?: number; routeAlong?: number; routeIndex?: number; routeProgress?: number;
@@ -69,6 +70,8 @@ function pointFromFeature(feature: GeoJSON.Feature): MapPoint | null {
 
 type DriverPoint = NonNullable<TaxiMapProps['driverPosition']>;
 type DisplayDriverPoint = DriverPoint & { roadAlong?: number; authoritativePosition?: boolean };
+type MapRoadFeature = { id: string; kind: 'traffic_light' | 'pedestrian_crossing'; latitude: number; longitude: number; bearing?: number };
+type MapBounds = { south: number; west: number; north: number; east: number };
 const EMPTY_CAR_ROUTE: MapPoint[] = [];
 const trackingDiagnosticsEnabled = typeof process !== 'undefined' && process.env.EXPO_PUBLIC_TRACKING_DIAGNOSTICS === '1';
 
@@ -78,6 +81,7 @@ function metresBetween(a: MapPoint, b: MapPoint) {
     (b.longitude - a.longitude) * 111320 * Math.cos(a.latitude * Math.PI / 180),
   );
 }
+
 function pointAhead(point: MapPoint, heading: number, metres: number): MapPoint {
   const radians = heading * Math.PI / 180;
   return { latitude: point.latitude + Math.cos(radians) * metres / 111320,
@@ -271,7 +275,7 @@ export default function TaxiMap({
   language = 'ru',
   pickup, dropoff, dropoffRouteLabel, geometry, approachGeometry, routeOverview = false, onSelectPoint, onEditPoint, onSearchPoint, onPanelHeight,
   focusPoint, browsePickup = false, onPickupChange, selectionMode, selectionTitle, recenterKey,
-  showUserPosition = false, onUserLocation, contentTopInset = 0, contentBottomInset = 0, selecting = false, driverPosition, passengerView = false, cameraSession = '',
+  showUserPosition = false, onUserLocation, contentTopInset = 0, contentBottomInset = 0, centerInVisibleArea = false, selecting = false, driverPosition, passengerView = false, cameraSession = '',
   navigationActive = false, followDriver = false, onFollowDriverChange,
 }: TaxiMapProps) {
   const t = tr(language);
@@ -293,6 +297,10 @@ export default function TaxiMap({
   const [panelHeight, setPanelHeight] = useState(180);
   const [passengerFollowing, setPassengerFollowing] = useState(true);
   const [userLocation, setUserLocation] = useState<MapPoint | null>(null);
+  const [mapRoadFeatures, setMapRoadFeatures] = useState<MapRoadFeature[]>([]);
+  const mapFeatureCoverage = useRef<MapBounds | null>(null);
+  const mapFeatureRequest = useRef(0);
+  const mapFeatureTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [locationError, setLocationError] = useState('');
   const [locating, setLocating] = useState(false);
   const center = pickup ?? BISHKEK;
@@ -315,6 +323,62 @@ export default function TaxiMap({
   const driverLayerID = passengerView ? 'client-driver-car' : 'driver-navigation-arrow';
   const userLocationCallback = useRef(onUserLocation);
   userLocationCallback.current = onUserLocation;
+  const mapFeatureShape = useMemo<GeoJSON.FeatureCollection<GeoJSON.Point>>(() => ({
+    type: 'FeatureCollection',
+    features: mapRoadFeatures.filter(feature => isMapPoint(feature) && (feature.kind === 'traffic_light'
+      || feature.kind === 'pedestrian_crossing' && typeof feature.bearing === 'number'
+        && Number.isFinite(feature.bearing))).map(feature => ({
+      type: 'Feature', id: feature.id, geometry: { type: 'Point', coordinates: toCoordinate(feature) },
+      properties: { kind: feature.kind, bearing: ((feature.bearing ?? 0) % 360 + 360) % 360 },
+    })),
+  }), [mapRoadFeatures]);
+  const loadMapFeatures = async () => {
+    if (!mapView.current) return;
+    if (zoomLevel.current < 14.5) {
+      mapFeatureRequest.current++;
+      mapFeatureCoverage.current = null;
+      setMapRoadFeatures([]);
+      return;
+    }
+    const readVersion = mapFeatureRequest.current;
+    let request = readVersion;
+    try {
+      const [northEast, southWest] = await mapView.current.getVisibleBounds();
+      if (readVersion !== mapFeatureRequest.current) return;
+      const visible = { south: southWest[1], west: southWest[0], north: northEast[1], east: northEast[0] };
+      if (!Object.values(visible).every(Number.isFinite) || visible.south >= visible.north || visible.west >= visible.east) return;
+      const covered = mapFeatureCoverage.current;
+      if (covered && visible.south >= covered.south && visible.west >= covered.west
+        && visible.north <= covered.north && visible.east <= covered.east) return;
+      const latSpan = visible.north - visible.south, lonSpan = visible.east - visible.west;
+      if (latSpan >= .06 || lonSpan >= .08) return;
+      const latPad = Math.min(latSpan * .2, (.06 - latSpan) * .49);
+      const lonPad = Math.min(lonSpan * .2, (.08 - lonSpan) * .49);
+      const bounds = { south: visible.south - latPad, west: visible.west - lonPad,
+        north: visible.north + latPad, east: visible.east + lonPad };
+      if (bounds.north - bounds.south > .06 || bounds.east - bounds.west > .08) return;
+      request = ++mapFeatureRequest.current;
+      mapFeatureCoverage.current = bounds;
+      const query = Object.entries(bounds).map(([key, value]) => `${key}=${value.toFixed(6)}`).join('&');
+      const result = await api.request<{ features: MapRoadFeature[] }>(`/routes/map-features?${query}`);
+      if (request !== mapFeatureRequest.current) return;
+      setMapRoadFeatures(Array.isArray(result.features) ? result.features.filter(feature =>
+        (feature.kind === 'traffic_light' || feature.kind === 'pedestrian_crossing') && isMapPoint(feature)) : []);
+    } catch {
+      if (request === mapFeatureRequest.current) { mapFeatureCoverage.current = null; setMapRoadFeatures([]); }
+    }
+  };
+  const scheduleMapFeatures = () => {
+    if (mapFeatureTimer.current) clearTimeout(mapFeatureTimer.current);
+    mapFeatureTimer.current = setTimeout(() => { mapFeatureTimer.current = null; void loadMapFeatures(); }, 250);
+  };
+  useEffect(() => {
+    if (attached) scheduleMapFeatures();
+  }, [attached, mapReadyRevision]);
+  useEffect(() => () => {
+    if (mapFeatureTimer.current) clearTimeout(mapFeatureTimer.current);
+    mapFeatureRequest.current++;
+  }, []);
   useEffect(() => {
     if (!showUserPosition || !passengerView || !browsePickup) return;
     let live = true;
@@ -433,11 +497,14 @@ export default function TaxiMap({
     ? accuracyCircle({ ...driverPosition, accuracy: driverPosition.accuracy ?? driverPosition.accuracyM ?? undefined }) : null;
   const moveTo = (point: MapPoint, zoom = 16) => {
     zoomLevel.current = zoom;
-    cameraCenter.current = toCoordinate(point);
+    const cameraPoint = centerInVisibleArea && !picking
+      ? centerPointInVisibleArea(point, zoom, viewport.height, contentTopInset, contentBottomInset)
+      : point;
+    cameraCenter.current = toCoordinate(cameraPoint);
     if (!passengerView && navigationActive) cameraHeading.current = driverHeading;
     cameraPadding.current = { paddingTop: 0, paddingBottom: 0, paddingLeft: 0, paddingRight: 0 };
     camera.current?.setCamera({
-      centerCoordinate: toCoordinate(point), zoomLevel: zoom,
+      centerCoordinate: cameraCenter.current, zoomLevel: zoom,
       ...(!passengerView && navigationActive ? { heading: driverHeading } : {}),
       padding: cameraPadding.current,
       animationDuration: 300, animationMode: 'easeTo',
@@ -544,7 +611,7 @@ export default function TaxiMap({
         ...route, ...approachRoute,
         ...(!passengerView && driverPosition && isMapPoint(driverPosition) ? [driverPosition] : []),
         ...(pickup ? [pickup] : []), ...(dropoff ? [dropoff] : []),
-      ], viewport.width, viewport.height, contentTopInset, contentBottomInset);
+      ], viewport.width, viewport.height, contentTopInset, contentBottomInset + (centerInVisibleArea ? 80 : 0));
       if (frame) {
         cameraHeading.current = 0;
         cameraPadding.current = { paddingTop: frame.padding[0], paddingRight: frame.padding[1], paddingBottom: frame.padding[2], paddingLeft: frame.padding[3] };
@@ -552,7 +619,7 @@ export default function TaxiMap({
         camera.current?.fitBounds(frame.ne, frame.sw, frame.padding, 400);
       }
     } else moveTo(driverPosition && isMapPoint(driverPosition) ? driverPosition : userLocation ?? center, 15);
-  }, [attached, mapReadyRevision, picking, navigationActive, routeOverview, followActive, routeKey, suppliedRoute, approachRoute, serverRoute, recenterKey, viewport.width, viewport.height, contentTopInset, contentBottomInset, cameraSession.split(':')[0], driverPosition?.latitude, driverPosition?.longitude, userLocation?.latitude, userLocation?.longitude]);
+  }, [attached, mapReadyRevision, picking, navigationActive, routeOverview, followActive, routeKey, suppliedRoute, approachRoute, serverRoute, recenterKey, viewport.width, viewport.height, contentTopInset, contentBottomInset, centerInVisibleArea, cameraSession.split(':')[0], driverPosition?.latitude, driverPosition?.longitude, userLocation?.latitude, userLocation?.longitude]);
 
   useEffect(() => { if (followActive) { followPaused.current = false; manualCamera.current = false; } }, [followActive, recenterKey]);
   useEffect(() => {
@@ -622,23 +689,28 @@ export default function TaxiMap({
   // A driver offer can leave a short map above its detail card. Keep all three
   // targets visible by laying the same controls in one row on short viewports.
   const controlsBottomGap = navigationActive ? 16 : passengerView ? (selectionMode ? panelHeight + 24 : 100) : 92;
-  const compactControls = viewport.height > 0 && viewport.height - contentBottomInset - contentTopInset < (passengerView ? 216 : 297);
+  const deliveryPickupCrop = centerInVisibleArea && browsePickup && !selectionMode ? Math.max(0, contentBottomInset * .6) : 0;
+  const visibleBottomInset = Math.max(0, contentBottomInset - deliveryPickupCrop);
+  const compactControls = viewport.height > 0 && viewport.height - visibleBottomInset - contentTopInset < (passengerView ? 216 : 297);
   const controlsHeight = compactControls ? 60 : 193;
   const controlsTop = viewport.height > 0
     ? Math.min(
-      Math.max(insets.top + 54, contentTopInset + 10, viewport.height - contentBottomInset - controlsHeight - controlsBottomGap),
-      Math.max(insets.top + 54, viewport.height - contentBottomInset - controlsHeight - 12),
+      Math.max(insets.top + 54, contentTopInset + 10, viewport.height - visibleBottomInset - controlsHeight - controlsBottomGap),
+      Math.max(insets.top + 54, viewport.height - visibleBottomInset - controlsHeight - 12),
     )
     : contentTopInset + 56;
+  const activeMapStyle = rasterFallback ? dark ? darkRasterMapFallback : rasterMapFallback : mapStyleForLanguage(language, dark);
+  const featureLayerBelow = typeof activeMapStyle === 'string' || rasterFallback
+    ? driverLayerID : 'current-osm-street-major';
 
   return <View style={styles.root}>
-    <View testID="map-viewport" onLayout={({ nativeEvent: { layout } }) => setViewport(previous => previous.width === layout.width && previous.height === layout.height ? previous : { width: layout.width, height: layout.height })} style={[StyleSheet.absoluteFill, { bottom: selectionMode ? panelHeight : 0 }]}>
+    <View testID="map-viewport" onLayout={({ nativeEvent: { layout } }) => setViewport(previous => previous.width === layout.width && previous.height === layout.height ? previous : { width: layout.width, height: layout.height })} style={[StyleSheet.absoluteFill, { bottom: selectionMode ? panelHeight : deliveryPickupCrop }]}>
       <MapView
         ref={mapView}
         preferredFramesPerSecond={Device.isDevice ? undefined : 30}
         key={`${attempt}:${rasterFallback ? 'raster' : 'vector'}`}
         style={StyleSheet.absoluteFill}
-        mapStyle={rasterFallback ? dark ? darkRasterMapFallback : rasterMapFallback : mapStyleForLanguage(language, dark)}
+        mapStyle={activeMapStyle}
         pitchEnabled={navigationActive}
         rotateEnabled
         logoEnabled={false}
@@ -656,6 +728,7 @@ export default function TaxiMap({
           if (regionCenter) cameraCenter.current = toCoordinate(regionCenter);
           if (Number.isFinite(feature.properties.heading)) cameraHeading.current = feature.properties.heading;
           if (Number.isFinite(feature.properties.zoomLevel)) zoomLevel.current = feature.properties.zoomLevel;
+          scheduleMapFeatures();
           if (picking) { setMoving(false); const point = pointFromFeature(feature); if (point) setCandidate(point); }
         }}
         onPress={selectFeature}
@@ -673,6 +746,21 @@ export default function TaxiMap({
           <LineLayer id="approach-route-outline" belowLayerID={driverLayerID} style={{ lineColor: dark ? '#9B5D00' : '#B77908', lineWidth: 9, lineCap: 'round', lineJoin: 'round' }} />
           <LineLayer id="approach-route-line" belowLayerID={driverLayerID} style={{ lineColor: dark ? '#FFBC4B' : '#FFD54A', lineWidth: 6, lineCap: 'round', lineJoin: 'round' }} />
         </ShapeSource>}
+        <ShapeSource id="map-road-features" shape={mapFeatureShape}>
+          <SymbolLayer id="map-traffic-lights" belowLayerID={featureLayerBelow}
+            filter={['==', ['get', 'kind'], 'traffic_light']}
+            minZoomLevel={14.5}
+            style={{ iconImage: require('../../assets/road-signs/traffic-light.png'),
+              iconSize: ['interpolate', ['linear'], ['zoom'], 14.5, .014, 18, .025],
+              iconAllowOverlap: true, iconIgnorePlacement: false }}/>
+          <SymbolLayer id="map-pedestrian-crossings" belowLayerID={featureLayerBelow}
+            filter={['==', ['get', 'kind'], 'pedestrian_crossing']}
+            minZoomLevel={14.5}
+            style={{ iconImage: require('../../assets/map-crossing-zebra.png'),
+              iconSize: ['interpolate', ['linear'], ['zoom'], 14.5, .22, 16, .34, 19, .62],
+              iconRotate: ['get', 'bearing'], iconRotationAlignment: 'map', iconPitchAlignment: 'map',
+              iconAllowOverlap: true, iconIgnorePlacement: false }}/>
+        </ShapeSource>
         {debugAccuracyShape && <ShapeSource id="driver-accuracy" shape={debugAccuracyShape}>
           <FillLayer id="driver-accuracy-fill" belowLayerID={driverLayerID} style={{ fillColor: '#FF7A00', fillOpacity: .13 }}/>
           <LineLayer id="driver-accuracy-outline" belowLayerID={driverLayerID} style={{ lineColor: '#FF7A00', lineWidth: 1.5 }}/>
@@ -747,8 +835,8 @@ export default function TaxiMap({
       </Pressable>
       <Button label={t('Готово')} disabled={!attached || moving} busy={selecting} onPress={() => onSelectPoint?.(candidate)}/>
     </View>}
-    {(!attached || loadTimeout) && <View style={[styles.loading, dark && styles.darkLoading, { top: contentTopInset + 55 }]}>{loadTimeout ? <><Text style={[styles.noticeText, dark && styles.darkNoticeText]}>Не удалось открыть карту. Повторите попытку.</Text><Pressable accessibilityRole="button" onPress={retry} style={[styles.retry, dark && styles.darkRetry]}><Text style={{ color: dark ? '#FFFFFF' : colors.blue }}>Повторить загрузку</Text></Pressable></> : <ActivityIndicator color={dark ? '#FFFFFF' : colors.blue}/>}</View>}
-    {routeError && !navigationActive && <View pointerEvents="none" style={[styles.notice, dark && styles.darkNotice, { top: contentTopInset + 58 }]}><Text style={[styles.noticeText, dark && styles.darkNoticeText]}>Маршрут временно недоступен</Text></View>}
+    {(!attached || loadTimeout) && <View style={[styles.loading, dark && styles.darkLoading, { top: contentTopInset + 55 }]}>{loadTimeout ? <><Text style={[styles.noticeText, dark && styles.darkNoticeText]}>{t('Не удалось открыть карту. Повторите попытку.')}</Text><Pressable accessibilityRole="button" onPress={retry} style={[styles.retry, dark && styles.darkRetry]}><Text style={{ color: dark ? '#FFFFFF' : colors.blue }}>{t('Повторить загрузку')}</Text></Pressable></> : <ActivityIndicator color={dark ? '#FFFFFF' : colors.blue}/>}</View>}
+    {routeError && !navigationActive && <View pointerEvents="none" style={[styles.notice, dark && styles.darkNotice, { top: contentTopInset + 58 }]}><Text style={[styles.noticeText, dark && styles.darkNoticeText]}>{t('Маршрут временно недоступен')}</Text></View>}
   </View>;
 }
 

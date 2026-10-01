@@ -185,7 +185,7 @@ export function DriverPanel({ user, order, offer, busy, coming, onAccept, onRate
   const currentDestination = order?.status === 'ASSIGNED' ? order.pickup : order?.status === 'IN_PROGRESS' ? order.dropoff : null;
   const approximateDistance = showNavigationMetrics && currentDestination && navigation?.position
     ? distanceBetween(navigation.position, currentDestination) : null;
-  const arrivalClock = (seconds: number) => new Date(Date.now() + seconds * 1000).toLocaleTimeString(user.language === 'ky' ? 'ky-KG' : 'ru-RU', { hour: '2-digit', minute: '2-digit' });
+  const arrivalClock = (seconds: number) => new Date(Date.now() + seconds * 1000).toLocaleTimeString(user.language === 'ky' ? 'ky-KG' : user.language === 'en' ? 'en-US' : 'ru-RU', { hour: '2-digit', minute: '2-digit' });
   const arrival = progress ? arrivalClock(progress.remainingSeconds) : '—';
 
   if (complete && order) return <DriverCompletionPanel order={order} user={user} busy={busy} onRateClient={onRateClient} onDone={onDone} onHeight={onCompletionHeight}/>;
@@ -226,7 +226,7 @@ export function DriverPanel({ user, order, offer, busy, coming, onAccept, onRate
           <Text numberOfLines={1} style={[d.address, { flex: 1, fontSize: 14 }]}>{shortAddress(currentDestination.address)}</Text>
         </View>}
         {showNavigationMetrics && <View testID="driver-trip-metrics" style={[d.liveStats, compactPassengerPickup && d.compactLiveStats]}>
-          <View style={d.liveStat}><Text numberOfLines={1} adjustsFontSizeToFit style={d.liveValue}>{progress ? displayDistance(progress.remainingMeters) : approximateDistance != null ? `≈${displayDistance(approximateDistance)}` : '—'}</Text><Text style={d.liveLabel}>{t(order?.status === 'ASSIGNED' ? 'до клиента' : progress ? 'до цели' : 'по прямой')}</Text></View>
+          <View style={d.liveStat}><Text numberOfLines={1} adjustsFontSizeToFit style={d.liveValue}>{progress ? displayDistance(progress.remainingMeters, user.language) : approximateDistance != null ? `≈${displayDistance(approximateDistance, user.language)}` : '—'}</Text><Text style={d.liveLabel}>{t(order?.status === 'ASSIGNED' ? 'до клиента' : progress ? 'до цели' : 'по прямой')}</Text></View>
           <View style={d.liveDivider}/>
           <View style={d.liveStat}><Text numberOfLines={1} adjustsFontSizeToFit style={d.liveValue}>{arrival}</Text><Text style={d.liveLabel}>{t('прибытие ≈')}</Text></View>
         </View>}

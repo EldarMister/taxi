@@ -420,6 +420,24 @@ test('arrival, coming, chat, restoration, cash income and idempotent commission'
   await api.post(`/api/orders/${order.id}/messages`).set(headers(driver1)).send({text:'Жду у входа',clientMessageId:randomUUID()}).expect(201);
   assert.equal((await replyEvent).text,'Жду у входа');
   assert.deepEqual((await db.pushJob.findMany({where:{orderId:order.id,event:'chat:message'},select:{userId:true}})).map(job=>job.userId).sort(),[client.user.id,driver1.user.id].sort());
+  const chatPhoto=await sharp({create:{width:32,height:24,channels:3,background:'#2266bb'}}).png().toBuffer();
+  const photoId=randomUUID();const photoEvent=once(driverSocket,'chat:message');
+  const sentPhoto=await api.post(`/api/orders/${order.id}/messages/photo`).set(headers(client))
+    .field('clientMessageId',photoId).field('text','')
+    .attach('image',chatPhoto,{filename:'photo.png',contentType:'image/png'}).expect(201);
+  assert.equal(sentPhoto.body.text,'');
+  assert.match(sentPhoto.body.photoUrl,new RegExp(`^/orders/${order.id}/messages/[a-f0-9-]+/photo$`));
+  assert.equal((await photoEvent).photoUrl,sentPhoto.body.photoUrl);
+  assert.equal((await api.get(`/api/orders/${order.id}/messages`).set(headers(driver1)).expect(200)).body.at(-1).photoUrl,sentPhoto.body.photoUrl);
+  await api.get(`/api${sentPhoto.body.photoUrl}`).expect(401);
+  await api.get(`/api${sentPhoto.body.photoUrl}`).set(headers(client2)).expect(403);
+  const servedPhoto=await api.get(`/api${sentPhoto.body.photoUrl}`).set(headers(driver1)).expect(200).expect('Content-Type',/image\/webp/);
+  assert.equal((await sharp(servedPhoto.body).metadata()).format,'webp');
+  const duplicatePhoto=await api.post(`/api/orders/${order.id}/messages/photo`).set(headers(client))
+    .field('clientMessageId',photoId).field('text','')
+    .attach('image',chatPhoto,{filename:'photo.png',contentType:'image/png'}).expect(201);
+  assert.equal(duplicatePhoto.body.id,sentPhoto.body.id);
+  assert.equal(await db.message.count({where:{orderId:order.id}}),3);
   riderSocket.disconnect();const reconnected=await socket(client);
   assert.equal((await api.get('/api/orders/active').set(headers(client))).body.id,order.id);
   await api.post(`/api/orders/${order.id}/start`).set(headers(driver1)).expect(201);

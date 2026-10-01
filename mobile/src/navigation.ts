@@ -116,7 +116,7 @@ export function bestRussianVoice(voices: { identifier: string; language: string;
 }
 export function bestVoiceForLanguage(voices: { identifier: string; language: string; quality?: string }[], language: Language): string | undefined {
   if (language === 'ru') return bestRussianVoice(voices);
-  return voices.filter(voice => /^ky(?:$|[-_])/i.test(voice.language)).sort((a, b) =>
+  return voices.filter(voice => new RegExp(`^${language}(?:$|[-_])`, 'i').test(voice.language)).sort((a, b) =>
     (b.quality === 'Enhanced' ? 1 : 0) - (a.quality === 'Enhanced' ? 1 : 0))[0]?.identifier;
 }
 function project(point: Coordinate, line: Coordinate[], cumulative: number[], min = 0, max = Infinity) {
@@ -215,6 +215,19 @@ function maneuverAction(step: RouteStep, language: Language): string {
       : intensity === 'sharp' ? `Кескин ${side === 'left' ? 'солго' : 'оңго'} бурулуңуз`
       : side === 'left' ? 'Солго бурулуңуз' : 'Оңго бурулуңуз';
   }
+  if (language === 'en') {
+    if (kind === 'arrive') return 'Your destination is ahead';
+    if (kind === 'depart') return 'Start following the route';
+    if (kind === 'roundabout') return exit ? `Take exit ${exit} at the roundabout` : 'Enter the roundabout';
+    if (kind === 'exit-roundabout') return 'Exit the roundabout';
+    if (kind === 'uturn') return 'Make a U-turn';
+    if (kind === 'merge') return side === 'left' ? 'Merge left' : side === 'right' ? 'Merge right' : 'Merge into traffic';
+    if (kind === 'fork') return side === 'left' ? 'Keep left' : side === 'right' ? 'Keep right' : 'Continue straight';
+    if (kind === 'off-ramp') return side === 'left' ? 'Take the exit on the left' : side === 'right' ? 'Take the exit on the right' : 'Take the exit';
+    if (kind !== 'turn' || side === 'straight') return 'Continue straight';
+    const direction = side === 'left' ? 'left' : 'right';
+    return intensity === 'slight' ? `Bear ${direction}` : intensity === 'sharp' ? `Turn sharply ${direction}` : `Turn ${direction}`;
+  }
   if (kind === 'arrive') return 'Пункт назначения впереди';
   if (kind === 'depart') return 'Начните движение по маршруту';
   if (kind === 'roundabout') return exit ? `На круговом движении выберите съезд ${exit}` : 'Въезжайте на круговое движение';
@@ -237,6 +250,7 @@ export function maneuverText(step: RouteStep, language: Language = 'ru'): string
   if (language === 'ru' && /(?:^|\s)(?:көч(?:ө|өсү)?|жолу|көч\.|аянты)(?:\s|$)/iu.test(name)) return action;
   if (language === 'ky' && /^(?:ул(?:ица)?\.?|проспект|пр-т|переулок|бульвар|шоссе)\s/iu.test(name)) return action;
   if (language === 'ky') return `${action}: ${name}`;
+  if (language === 'en') return `${action} ${['depart', 'continue', 'new name', 'notification'].includes(step.maneuver.type) ? 'along' : 'onto'} ${name}`;
   const along = ['depart', 'continue', 'new name', 'notification'].includes(step.maneuver.type);
   const types: { pattern: RegExp; along: string; onto: string }[] = [
     { pattern: /^(?:ул(?:ица)?\.?)\s+/iu, along: 'по улице', onto: 'на улицу' },
@@ -275,14 +289,14 @@ export function routeProgress(prepared: PreparedRoute, fix: NavigationFix, previ
     maneuverDistance: Math.max(0, offsets[stepIndex] - along), maneuverPassed: along > offsets[stepIndex] + 2,
     speedMps: fix.speed,
     pendingStepIndex, pendingStepCount,
-    instruction: arrived ? language === 'ky' ? 'Жеттиңиз' : 'Вы прибыли' : maneuverText(route.steps[stepIndex], language), arrived };
+    instruction: arrived ? language === 'ky' ? 'Жеттиңиз' : language === 'en' ? 'You have arrived' : 'Вы прибыли' : maneuverText(route.steps[stepIndex], language), arrived };
 }
-export function displayDistance(meters: number) {
-  return meters >= 1000 ? `${(meters / 1000).toFixed(1)} км` : `${Math.max(0, Math.round(meters / 10) * 10)} м`;
+export function displayDistance(meters: number, language: Language = 'ru') {
+  return meters >= 1000 ? `${(meters / 1000).toFixed(1)} ${language === 'en' ? 'km' : 'км'}` : `${Math.max(0, Math.round(meters / 10) * 10)} ${language === 'en' ? 'm' : 'м'}`;
 }
 export function distantManeuverInstruction(progress: NavigationProgress, language: Language = 'ru'): string {
   return !progress.arrived && progress.maneuverDistance > 200
-    ? language === 'ky' ? 'Түз жүрүңүз' : 'Двигайтесь прямо'
+    ? language === 'ky' ? 'Түз жүрүңүз' : language === 'en' ? 'Continue straight' : 'Двигайтесь прямо'
     : progress.instruction;
 }
 export function shouldReroute(fixes: number, since: number, now: number, travelled: number): boolean {
@@ -291,7 +305,7 @@ export function shouldReroute(fixes: number, since: number, now: number, travell
 export type GuidanceCue = { key: string; text: string; priority: number; stage: number; supersedes: string[] };
 export function guidanceCue(progress: NavigationProgress, language: Language = 'ru', routeVersion = 0, legIndex = 0): GuidanceCue | null {
   const prefix = `${routeVersion}:${legIndex}:${progress.stepIndex}`;
-  if (progress.arrived) return { key: `${prefix}:arrived`, text: language === 'ky' ? 'Бара турган жериңизге жеттиңиз.' : 'Вы прибыли в пункт назначения.', priority: 4, stage: 0, supersedes: [`${prefix}:600`, `${prefix}:200`, `${prefix}:0`] };
+  if (progress.arrived) return { key: `${prefix}:arrived`, text: language === 'ky' ? 'Бара турган жериңизге жеттиңиз.' : language === 'en' ? 'You have arrived at your destination.' : 'Вы прибыли в пункт назначения.', priority: 4, stage: 0, supersedes: [`${prefix}:600`, `${prefix}:200`, `${prefix}:0`] };
   if (progress.maneuverPassed || progress.offRouteMeters > navigationConfig.offRouteMeters) return null;
   const meters = progress.maneuverDistance;
   if (meters > 750) return null;
@@ -301,9 +315,10 @@ export function guidanceCue(progress: NavigationProgress, language: Language = '
   const stage = meters <= nearThreshold ? 0 : meters <= approachThreshold ? 200 : 600;
   const distance = meters >= 100 ? Math.round(meters / 50) * 50 : Math.max(50, Math.round(meters / 10) * 10);
   const supersedes = stage === 0 ? [`${prefix}:600`, `${prefix}:200`] : stage === 200 ? [`${prefix}:600`] : [];
-  const text = stage === 600 ? language === 'ky' ? `${distance} метр түз жүрүңүз.` : `${distance} метров прямо.`
+  const text = stage === 600 ? language === 'ky' ? `${distance} метр түз жүрүңүз.` : language === 'en' ? `Continue straight for ${distance} meters.` : `${distance} метров прямо.`
     : stage === 0 ? `${progress.instruction}.`
       : language === 'ky' ? `${distance} метрден кийин ${progress.instruction[0].toLowerCase() + progress.instruction.slice(1)}.`
-        : `Через ${distance} метров ${progress.instruction[0].toLocaleLowerCase('ru') + progress.instruction.slice(1)}.`;
+        : language === 'en' ? `In ${distance} meters, ${progress.instruction[0].toLowerCase() + progress.instruction.slice(1)}.`
+          : `Через ${distance} метров ${progress.instruction[0].toLocaleLowerCase('ru') + progress.instruction.slice(1)}.`;
   return { key: `${prefix}:${stage}`, text, priority: stage === 0 ? 3 : stage === 200 ? 2 : 1, stage, supersedes };
 }

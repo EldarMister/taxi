@@ -6,6 +6,14 @@ const ts = require('typescript');
 const exportsObject = {};
 vm.runInNewContext(ts.transpileModule(fs.readFileSync(require.resolve('../src/navigation.ts'), 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText, { exports: exportsObject, Date });
 const { prepareRoute, routeProgress, guidanceCue, maneuverText, normalizeManeuver, bearingDelta, usableNavigationFix, stableNavigationFix, bestRussianVoice, bestVoiceForLanguage, navigationDestination, distanceBetween } = exportsObject;
+test('English navigation uses English instructions, distances and a matching system voice', () => {
+  const turn = { maneuver: { type: 'turn', modifier: 'right' }, name: 'Main Street' };
+  assert.equal(maneuverText(turn, 'en'), 'Turn right onto Main Street');
+  assert.equal(exportsObject.displayDistance(250, 'en'), '250 m');
+  assert.equal(exportsObject.displayDistance(1250, 'en'), '1.3 km');
+  assert.equal(guidanceCue({ arrived: true, stepIndex: 1 }, 'en').text, 'You have arrived at your destination.');
+  assert.equal(bestVoiceForLanguage([{ identifier: 'ru', language: 'ru-RU' }, { identifier: 'en', language: 'en-US' }], 'en'), 'en');
+});
 test('bearing interpolation takes the short path across north in both directions', () => {
   assert.equal(exportsObject.interpolateBearing(350, 10, .5), 0);
   assert.equal(exportsObject.interpolateBearing(10, 350, .5), 0);

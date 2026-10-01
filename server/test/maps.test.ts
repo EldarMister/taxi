@@ -14,7 +14,8 @@ const photonFeature = {type:'Feature',geometry:{type:'Point',coordinates:[72.179
 
 test('Photon preserves coordinates and OSM identity, deduplicates labels and never invents house numbers',()=>{
   const result=parsePhotonPlace(photonFeature);
-  assert.deepEqual(result,{id:'osm-way-27339503',address:'улица Ленина, Шамалды-Сай, Кыргызстан',latitude:41.2033565,longitude:72.1795757});
+  assert.deepEqual(result,{id:'osm-way-27339503',address:'улица Ленина, Шамалды-Сай',latitude:41.2033565,longitude:72.1795757});
+  assert.equal(parsePhotonPlace({...photonFeature,properties:{...photonFeature.properties,housenumber:'25',postcode:'720001',district:'Ноокатский район',state:'Ошская область',unit:'кв. 7'}}).address,'улица Ленина, 25, кв. 7, Шамалды-Сай');
   for(const value of [null,{...photonFeature,geometry:{type:'Point',coordinates:[181,41]}},{...photonFeature,properties:{osm_type:'X',osm_id:2,name:'Test'}}])assert.throws(()=>parsePhotonPlace(value));
 });
 
@@ -77,7 +78,7 @@ test('Photon missing local house falls back to the real street without manufactu
     return Response.json({type:'FeatureCollection',features:u.searchParams.get('q')==='ленина'?[{...photonFeature,properties:{...photonFeature.properties,type:'street'}}]:[]});
   });
   const result=await new PhotonSearch('http://photon.example.test').search('Ленина 10',{latitude:41.199,longitude:72.180});
-  assert.equal(calls.length,3);assert.equal(result[0].address,'улица Ленина, Шамалды-Сай, Кыргызстан');
+  assert.equal(calls.length,3);assert.equal(result[0].address,'улица Ленина, Шамалды-Сай');
 });
 
 test('OSRM GeoJSON and maneuver locations keep longitude/latitude order and instructions',()=>{
@@ -197,7 +198,8 @@ test('reverse geocoder cannot substitute a different road for the routed segment
 });
 
 test('Nominatim parser validates coordinates and preserves an OSM identity',()=>{
-  assert.deepEqual(parseNominatimPlace(place),{id:'osm-way-123',latitude:42.8756,longitude:74.604,address:place.display_name});
+  assert.deepEqual(parseNominatimPlace(place),{id:'osm-way-123',latitude:42.8756,longitude:74.604,address:'Площадь Ала-Тоо, Бишкек'});
+  assert.equal(parseNominatimPlace({...place,display_name:'25, улица Ленина, Ош, Ошская область, 723500, Кыргызстан',address:{road:'улица Ленина',house_number:'25',flat:'кв. 7',city:'Ош',postcode:'723500',state:'Ошская область',country:'Кыргызстан'}}).address,'улица Ленина, 25, кв. 7, Ош');
   for(const value of [null,{...place,lat:null},{...place,lat:''},{...place,lon:'181'},{...place,display_name:''}])assert.throws(()=>parseNominatimPlace(value));
 });
 
@@ -214,7 +216,7 @@ test('Nominatim shares one paced queue, identifies application, caches and dedup
   const [first,duplicate,reverse] = await Promise.all([service.search(' Ала-Тоо '),service.search('Ала-Тоо'),service.reverse(pickup)]);
   assert.deepEqual(first,duplicate);assert.equal(starts.length,2);assert.ok(starts[1]-starts[0]>=990);
   assert.equal(reverse.latitude,pickup.latitude);assert.equal(reverse.longitude,pickup.longitude);
-  first[0].address='mutated';assert.equal((await service.search('Ала-Тоо'))[0].address,place.display_name);
+  first[0].address='mutated';assert.equal((await service.search('Ала-Тоо'))[0].address,'Площадь Ала-Тоо, Бишкек');
   assert.equal(starts.length,2);
 });
 

@@ -6,7 +6,7 @@ import { motion } from './design/tokens';
 import { useTheme } from './design/theme';
 
 /** A panel in the map screen's own view tree; the map and draft stay mounted. */
-export function BottomPanel({ children, onClose, expanded = false, label = 'Закрыть панель', closeRequested = false }: PropsWithChildren<{ onClose: () => void; expanded?: boolean; label?: string; closeRequested?: boolean }>) {
+export function BottomPanel({ children, onClose, expanded = false, topGap, bottomPadding, edgeToEdge = false, label = 'Закрыть панель', closeRequested = false }: PropsWithChildren<{ onClose: () => void; expanded?: boolean; topGap?: number; bottomPadding?: number; edgeToEdge?: boolean; label?: string; closeRequested?: boolean }>) {
   const { isDark, palette } = useTheme();
   const insets = useSafeAreaInsets();
   const reducedMotion = useMotionPreference();
@@ -204,9 +204,9 @@ export function BottomPanel({ children, onClose, expanded = false, label = 'За
     <Animated.View style={[StyleSheet.absoluteFill, p.backdrop, isDark && { backgroundColor: palette.background }, { opacity: backdropOpacity }]}>
       <Pressable accessibilityRole="button" accessibilityLabel={label} onPress={closePanel} style={StyleSheet.absoluteFill}/>
     </Animated.View>
-    <View pointerEvents="box-none" style={[p.panelDock, { paddingTop: insets.top + (expanded ? 24 : 20), paddingBottom: keyboardLift }]}>
-      <Animated.View onLayout={handlePanelLayout} accessibilityViewIsModal style={[p.panel, expanded && p.expanded, isDark && { backgroundColor: palette.surface }, { paddingBottom: Math.max(insets.bottom, 10), transform: [{ translateY }] }]}>
-        <View {...drag.panHandlers} style={p.handleTouch}><Pressable accessibilityRole="button" accessibilityLabel={label} onPress={closePanel} hitSlop={8}><View style={[p.handle, isDark && { backgroundColor: palette.line }]}/></Pressable></View>
+    <View pointerEvents="box-none" style={[p.panelDock, { paddingTop: topGap ?? insets.top + (expanded ? 24 : 20), paddingBottom: keyboardLift }]}>
+      <Animated.View onLayout={handlePanelLayout} accessibilityViewIsModal style={[p.panel, expanded && p.expanded, edgeToEdge && p.edgeToEdge, isDark && { backgroundColor: palette.surface }, { paddingBottom: bottomPadding ?? Math.max(insets.bottom, 10), transform: [{ translateY }] }]}>
+        {!edgeToEdge && <View {...drag.panHandlers} style={p.handleTouch}><Pressable accessibilityRole="button" accessibilityLabel={label} onPress={closePanel} hitSlop={8}><View style={[p.handle, isDark && { backgroundColor: palette.line }]}/></Pressable></View>}
         {children}
       </Animated.View>
     </View>
@@ -223,6 +223,7 @@ const p = StyleSheet.create({
   panelDock: { flex: 1, justifyContent: 'flex-end' },
   panel: { backgroundColor: 'white', borderTopLeftRadius: 26, borderTopRightRadius: 26, maxHeight: '100%', overflow: 'hidden' },
   expanded: { flex: 1 },
+  edgeToEdge: { borderTopLeftRadius: 0, borderTopRightRadius: 0 },
   handleTouch: { height: 20, alignItems: 'center', justifyContent: 'center' },
   handle: { width: 34, height: 4, borderRadius: 3, backgroundColor: '#D4D6DA' },
 });

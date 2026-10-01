@@ -31,7 +31,7 @@ const native = {
 };
 let pickedContact = null;
 const contacts = { isAvailableAsync: async () => true, requestPermissionsAsync: async () => ({ granted: true }), presentContactPickerAsync: async () => pickedContact };
-const ui = { Car: 'Car', Avatar: 'Avatar', Icon: 'Icon', Button: 'Button', Route: 'Route', PickupIcon: 'PickupIcon', ToggleSwitch: 'ToggleSwitch', s: {}, colors: { blue: '#087FFF', muted: '#63718D' }, tr: () => x => x, shortAddress: x => x || '', km: x => String(x), mins: x => String(x), tripTime: x => String(x), money: x => String(x) };
+const ui = { Car: 'Car', Avatar: 'Avatar', Icon: 'Icon', Button: 'Button', Route: 'Route', PickupIcon: 'PickupIcon', ToggleSwitch: 'ToggleSwitch', s: {}, colors: { blue: '#087FFF', muted: '#63718D' }, tr: () => x => x, localize: (language, ru, ky) => language === 'ky' ? ky : ru, shortAddress: x => x || '', km: x => String(x), mins: x => String(x), tripTime: x => String(x), money: x => String(x) };
 let darkTheme = false;
 const lightPalette = { background: '#F4F8FD', surface: '#FFFFFF', elevated: '#F3F7FF', ink: '#101D38', muted: '#63718D', line: '#E5EDF6', accent: '#087FFF', accentText: '#FFFFFF', backdrop: 'rgba(16,29,56,.42)' };
 const darkPalette = { background: '#050505', surface: '#111111', elevated: '#1D1D1D', ink: '#FFFFFF', muted: '#B0B0B0', line: '#353535', accent: '#FFFFFF', accentText: '#050505', backdrop: 'rgba(0,0,0,.68)' };
@@ -586,7 +586,7 @@ test('pulling a review panel down restores the previous completion panel', async
   assert.ok(button(client, 'Оценить поездку'));
   assert.ok(button(driver, 'Оценить пассажира'));
   await tap(client, 'Закрыть');
-  await tap(driver, 'Закрыть');
+  await tap(driver, 'Пропустить оценку');
   assert.equal(clientClosed, 1);
   assert.equal(driverClosed, 1);
 });
@@ -711,7 +711,11 @@ test('delivery redesign has two price choices, a payment selector and only three
   assert.match(source, /Запланировать поездку/);
   assert.match(source, /От двери до двери/);
   assert.match(source, /Комментарий водителю/);
-  assert.match(source, /serviceImageFrame: \{ width: '100%', height: 83/);
+  assert.match(source, /serviceImageFrame: \{ width: '100%', height: 68/);
+  assert.match(source, /service: \{ flex: 1, minHeight: 124/);
+  assert.match(source, /truckImage: \{ width: 112, height: 112 \}/);
+  assert.doesNotMatch(source, /scaleX: 1\.38/);
+  assert.doesNotMatch(source, /deliveryMark/);
   assert.match(source, /car-economy\.png/);
   assert.doesNotMatch(source, /delivery-van-blue\.png/);
   assert.doesNotMatch(source, /taxi-yellow\.png/);

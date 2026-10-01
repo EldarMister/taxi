@@ -7,10 +7,11 @@ import sharp from 'sharp';
 import { Actor, AuthGuard, AuthService, RateLimits } from './auth';
 import { AppConfig } from './config';
 import { DriverService } from './driver';
-import { CreateOrderDto, DriverPositionDto, DriverPreferencesDto, HistoryDto, MessageDto, OnlineDto, PhoneDto, ProfileDto, PushTokenDto, QuoteDto, RatingDto, RefreshDto, RemovePushTokenDto, TopupDto, VerifyDriverDto, VerifyDto } from './dto';
+import { CreateOrderDto, DriverPositionDto, DriverPreferencesDto, HistoryDto, MessageDto, PhotoMessageDto, OnlineDto, PhoneDto, ProfileDto, PushTokenDto, QuoteDto, RatingDto, ReadNotificationsDto, RefreshDto, RemovePushTokenDto, TopupDto, VerifyDriverDto, VerifyDto } from './dto';
 import { OrdersService } from './orders';
 import { PrismaService } from './prisma.service';
 import { AdminGuard } from './admin.security';
+import { pushPresentation } from './pushPresentation';
 type AuthedRequest=Request&{actor:Actor};
 type AvatarFile={buffer:Buffer;mimetype:string;size:number};
 export const MAX_AVATAR_BYTES=5*1024*1024;
@@ -68,6 +69,25 @@ export class UsersController {
   @Get('me') me(@Req() req:AuthedRequest) {return this.auth.user(req.actor.id);}
   @Patch('me') async update(@Req() req:AuthedRequest,@Body() dto:ProfileDto) {
     await this.db.user.update({where:{id:req.actor.id},data:{...dto,...(dto.name!==undefined?{name:dto.name.trim()}:{})}});return this.auth.user(req.actor.id);
+  }
+  @Get('me/notifications') async notifications(@Req() req:AuthedRequest) {
+    const asOf=new Date();
+    const since=new Date(asOf.getTime()-30*86400000);
+    const where={userId:req.actor.id,createdAt:{gte:since}};
+    const [jobs,unread]=await Promise.all([
+      this.db.pushJob.findMany({where,orderBy:{createdAt:'desc'},take:50,select:{id:true,event:true,orderId:true,createdAt:true,readAt:true}}),
+      this.db.pushJob.count({where:{...where,readAt:null}}),
+    ]);
+    return {asOf,hasUnread:unread>0,items:jobs.map(job=>{
+      const {title,body}=pushPresentation(job.event,req.actor.role);
+      return {id:job.id,event:job.event,orderId:job.orderId,createdAt:job.createdAt,readAt:job.readAt,title,body};
+    })};
+  }
+  @Post('me/notifications/read') async readNotifications(@Req() req:AuthedRequest,@Body() dto:ReadNotificationsDto) {
+    const through=new Date(dto.through);
+    if(through.getTime()>Date.now()+5000)throw new BadRequestException('Некорректное время просмотра уведомлений.');
+    await this.db.pushJob.updateMany({where:{userId:req.actor.id,readAt:null,createdAt:{lte:through}},data:{readAt:new Date()}});
+    return {ok:true};
   }
   @Post('me/avatar') @ApiConsumes('multipart/form-data')
   @ApiBody({schema:{type:'object',required:['avatar'],properties:{avatar:{type:'string',format:'binary'}}}})
@@ -127,6 +147,24 @@ export class OrdersController {
   @Post(':id/coming') coming(@Req() req:AuthedRequest,@Param('id',ParseUUIDPipe) id:string) {return this.orders.coming(req.actor,id);}
   @Get(':id/messages') messages(@Req() req:AuthedRequest,@Param('id',ParseUUIDPipe) id:string) {return this.orders.messages(req.actor,id);}
   @Post(':id/messages') message(@Req() req:AuthedRequest,@Param('id',ParseUUIDPipe) id:string,@Body() dto:MessageDto) {return this.orders.sendMessage(req.actor,id,dto);}
+  @Post(':id/messages/photo') @ApiConsumes('multipart/form-data')
+  @ApiBody({schema:{type:'object',required:['image','clientMessageId'],properties:{image:{type:'string',format:'binary'},text:{type:'string'},clientMessageId:{type:'string'}}}})
+  @UseInterceptors(FileInterceptor('image',{limits:{fileSize:8*1024*1024,files:1,fields:2},fileFilter:(_request,file,callback)=>{
+    if(!['image/jpeg','image/png','image/webp'].includes(file.mimetype.toLowerCase()))return callback(new BadRequestException('Разрешены фотографии JPEG, PNG и WEBP.'),false);
+    callback(null,true);
+  }}))
+  photoMessage(@Req() req:AuthedRequest,@Param('id',ParseUUIDPipe) id:string,@Body() dto:PhotoMessageDto,@UploadedFile() file?:AvatarFile) {
+    if(!file?.buffer)throw new BadRequestException('Выберите фотографию.');
+    return this.orders.sendMessage(req.actor,id,{text:dto.text??'',clientMessageId:dto.clientMessageId},file);
+  }
+  @Get(':id/messages/:messageId/photo') async messagePhoto(@Req() req:AuthedRequest,@Param('id',ParseUUIDPipe) id:string,@Param('messageId',ParseUUIDPipe) messageId:string,@Res() response:Response) {
+    const photo=await this.orders.messagePhoto(req.actor,id,messageId);
+    response.setHeader('Content-Type',photo.mime);
+    response.setHeader('Content-Length',String(photo.data.length));
+    response.setHeader('Cache-Control','private, max-age=3600');
+    response.setHeader('X-Content-Type-Options','nosniff');
+    return response.send(Buffer.from(photo.data));
+  }
   @Post(':id/rating') rate(@Req() req:AuthedRequest,@Param('id',ParseUUIDPipe) id:string,@Body() dto:RatingDto) {return this.orders.rate(req.actor,id,dto.score,dto.comment);}
   @Post(':id/client-rating') rateClient(@Req() req:AuthedRequest,@Param('id',ParseUUIDPipe) id:string,@Body() dto:RatingDto) {return this.orders.rateClient(req.actor,id,dto.score,dto.comment);}
 }

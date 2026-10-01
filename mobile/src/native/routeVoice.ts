@@ -113,7 +113,7 @@ async function synthesize(text: string, item: ActiveSpeech): Promise<File> {
 function speakWithSystem(text: string, options: RouteVoiceOptions, item: ActiveSpeech) {
   if (active !== item || generation !== item.generation) return;
   Speech.speak(text, {
-    language: options.language === 'ky' ? 'ky-KG' : Platform.OS === 'android' ? 'ru' : 'ru-RU',
+    language: options.language === 'ky' ? 'ky-KG' : options.language === 'en' ? 'en-US' : Platform.OS === 'android' ? 'ru' : 'ru-RU',
     voice: options.systemVoice,
     rate: .9,
     volume: 1,

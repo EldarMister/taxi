@@ -24,7 +24,7 @@ export function foodOrderTitle(order: FoodOrder) {
     case 'CANCELLED': return 'Заказ отменён';
   }
 }
-const time = (value: string, language: 'ru' | 'ky') => new Date(value).toLocaleTimeString(language === 'ky' ? 'ky-KG' : 'ru-RU', { hour: '2-digit', minute: '2-digit' });
+const time = (value: string, language: 'ru' | 'ky' | 'en') => new Date(value).toLocaleTimeString(language === 'ky' ? 'ky-KG' : language === 'en' ? 'en-US' : 'ru-RU', { hour: '2-digit', minute: '2-digit' });
 
 export function FoodOrderScreen({ order, onBack, error, onRetry }: { order: FoodOrder; onBack: () => void; error: string; onRetry: () => void }) {
   const t = useFoodT();
@@ -105,7 +105,7 @@ export function FoodHistoryScreen({ orders, loading, error, onBack, onOrder, onR
       {loading && !orders.length && <ActivityIndicator size="large" color={c.blue} style={{ marginTop: 40 }} />}
       {!!error && <View style={s.notice}><Text style={[s.muted, { textAlign: 'center', marginBottom: 12 }]}>{error}</Text><FoodButton label={t('Повторить')} onPress={onRetry} secondary /></View>}
       {!loading && !error && !orders.length && <View style={s.empty}><Icon name="receipt-outline" color={c.blue} size={64} /><Text style={{ color: c.ink, fontFamily: fonts.bold, fontSize: 23 }}>{t('Заказов пока нет')}</Text><Text style={[s.muted, { textAlign: 'center' }]}>{t('Здесь появятся ваши заказы из ресторанов.')}</Text></View>}
-      <Reveal delay={45}>{orders.map(order => <Pressable accessibilityRole="button" key={order.id} onPress={() => onOrder(order)} style={s.historyRow}><Image source={foodImage(order.restaurant.imageKey, order.restaurant.imageUrl)} style={s.restaurantImage} /><View style={{ flex: 1, gap: 5 }}><Text style={s.historyName}>{order.restaurant.name}</Text><Text style={s.historyStatus}>{t(foodOrderTitle(order))}</Text><Text style={s.muted}>{new Date(order.createdAt).toLocaleDateString(language === 'ky' ? 'ky-KG' : 'ru-RU')} · {money(order.total)}</Text></View><Icon name="chevron-forward" color={c.muted} /></Pressable>)}</Reveal>
+      <Reveal delay={45}>{orders.map(order => <Pressable accessibilityRole="button" key={order.id} onPress={() => onOrder(order)} style={s.historyRow}><Image source={foodImage(order.restaurant.imageKey, order.restaurant.imageUrl)} style={s.restaurantImage} /><View style={{ flex: 1, gap: 5 }}><Text style={s.historyName}>{order.restaurant.name}</Text><Text style={s.historyStatus}>{t(foodOrderTitle(order))}</Text><Text style={s.muted}>{new Date(order.createdAt).toLocaleDateString(language === 'ky' ? 'ky-KG' : language === 'en' ? 'en-US' : 'ru-RU')} · {money(order.total)}</Text></View><Icon name="chevron-forward" color={c.muted} /></Pressable>)}</Reveal>
     </ScrollView>
   </SafeAreaView>;
 }

@@ -9,7 +9,9 @@ type CachedPage = { node: React.ReactNode };
 type LeavingPage = { routeKey: string; direction: ScreenDirection };
 
 const isRestaurantPage = (routeKey: string) => routeKey.startsWith('restaurant:');
-const preservesLocalState = (routeKey: string) => routeKey === 'restaurants' || isRestaurantPage(routeKey);
+const isDishPage = (routeKey: string) => routeKey.startsWith('dish:');
+const isSheetPage = (routeKey: string) => routeKey === 'cart' || isDishPage(routeKey);
+const preservesLocalState = (routeKey: string) => routeKey === 'restaurants' || routeKey === 'favorites' || isRestaurantPage(routeKey);
 
 /**
  * A deliberately small navigator transition. Catalog pages stay mounted while
@@ -25,11 +27,16 @@ export function ScreenTransition({ routeKey, direction, children }: {
   const progress = useRef(new Animated.Value(1)).current;
   const animation = useRef<Animated.CompositeAnimation | null>(null);
   const previousRoute = useRef(routeKey);
+  const sheetUnderlay = useRef<string | null>(null);
   const pages = useRef(new Map<string, CachedPage>([[routeKey, { node: children }]])).current;
   const [leaving, setLeaving] = useState<LeavingPage | null>(null);
   const [, requestCacheCleanup] = useState(0);
 
   pages.set(routeKey, { node: children });
+  if (isSheetPage(routeKey) && previousRoute.current !== routeKey) {
+    sheetUnderlay.current = preservesLocalState(previousRoute.current) ? previousRoute.current
+      : [...pages.keys()].reverse().find(isRestaurantPage) ?? 'restaurants';
+  }
 
   // Only one restaurant page needs to be kept alive: the one whose category
   // and scroll position the user can navigate back to.
@@ -56,6 +63,13 @@ export function ScreenTransition({ routeKey, direction, children }: {
     }
     const previous = previousRoute.current;
     if (previous === routeKey) return;
+    if (isSheetPage(routeKey) || isSheetPage(previous)) {
+      progress.setValue(1);
+      previousRoute.current = routeKey;
+      setLeaving(null);
+      requestCacheCleanup(value => value + 1);
+      return;
+    }
     previousRoute.current = routeKey;
     progress.setValue(0);
     setLeaving({ routeKey: previous, direction });
@@ -73,7 +87,8 @@ export function ScreenTransition({ routeKey, direction, children }: {
     {[...pages.entries()].map(([key, page]) => {
       const isCurrent = key === routeKey;
       const isLeaving = key === leaving?.routeKey;
-      const hidden = !isCurrent && !isLeaving;
+      const isSheetUnderlay = isSheetPage(routeKey) && key === sheetUnderlay.current;
+      const hidden = !isCurrent && !isLeaving && !isSheetUnderlay;
       const transitionDirection = leaving?.direction ?? direction;
       const incomingOffset = transitionDirection === 'forward' ? 28 : -28;
       const outgoingOffset = transitionDirection === 'forward' ? -18 : 18;
@@ -84,6 +99,7 @@ export function ScreenTransition({ routeKey, direction, children }: {
         importantForAccessibility={isCurrent ? 'auto' : 'no-hide-descendants'}
         style={[
           styles.page,
+          isSheetUnderlay && styles.sheetUnderlay,
           hidden && styles.hidden,
           isLeaving && styles.leaving,
           isLeaving && {
@@ -103,6 +119,7 @@ export function ScreenTransition({ routeKey, direction, children }: {
 const styles = StyleSheet.create({
   root: { flex: 1, overflow: 'hidden' },
   page: { flex: 1 },
+  sheetUnderlay: { ...StyleSheet.absoluteFillObject },
   leaving: { ...StyleSheet.absoluteFillObject, zIndex: 1 },
   hidden: { display: 'none' },
 });

@@ -5,7 +5,7 @@ import * as ImageManipulator from 'expo-image-manipulator';
 import * as ImagePicker from 'expo-image-picker';
 import * as Location from 'expo-location';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { BackHandler, Image, KeyboardAvoidingView, Linking, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, View, type ImageStyle } from 'react-native';
+import { BackHandler, Image, KeyboardAvoidingView, Linking, Modal, Platform, Pressable, ScrollView, StyleSheet, View, type ImageStyle } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { ApiError, api, messageOf, requestId } from './api';
 import { useTheme } from './design/theme';
@@ -18,6 +18,7 @@ import { RegistrationStepContent } from './registration/steps';
 import { MAX_ADDITIONAL_VEHICLES, additionalVehicleClientIdPattern, emptyCargoEquipmentDraft, emptyRegistrationApplication, emptyRegistrationData, emptyVehicleDraft, performerRoles, registrationStatuses, vehicleUsages, type AdditionalVehicleDraft, type PerformerRole, type RegistrationApplication, type RegistrationConfig, type RegistrationData, type RegistrationEnvelope, type RegistrationStatus, type RegistrationStepId, type RegistrationUpload } from './registration/types';
 import type { User } from './types';
 import { Icon, colors } from './ui';
+import { LocalizedText as Text } from './auth/LocalizedText';
 
 type SelectedFile = { uri: string; name: string; type: string; isImage: boolean; width?: number; height?: number };
 type UploadRequest = { slotKey: string; kind: RegistrationUpload['kind']; title: string; image: boolean; profile: boolean; role?: PerformerRole; expiresAt?: string };
@@ -379,9 +380,10 @@ function reconcileLegalConsents(application: RegistrationApplication, config: Re
 }
 
 export function DriverRegistrationScreen({ user, deepLink, statusRevision = 0, onRegistered, onLogout, onClose }: { user: User; deepLink?: { event: string; slotKey?: string } | null; statusRevision?: number; onRegistered: (user: User) => void; onLogout: () => Promise<void>; onClose?: () => void }) {
+  const registrationLanguage = user.language === 'en' ? 'ru' : user.language;
   const { palette } = useTheme();
   const insets = useSafeAreaInsets();
-  const [application, setApplicationState] = useState(() => emptyRegistrationApplication(user.language));
+  const [application, setApplicationState] = useState(() => emptyRegistrationApplication(registrationLanguage));
   const [config, setConfig] = useState(fallbackConfig);
   const [booting, setBooting] = useState(true);
   const [hydrated, setHydrated] = useState(false);
@@ -457,7 +459,7 @@ export function DriverRegistrationScreen({ user, deepLink, statusRevision = 0, o
   useEffect(() => () => { activeRef.current = false; }, []);
 
   const mergeServerMetadata = useCallback((raw: unknown, local: RegistrationApplication) => {
-    const remote = normalizeApplication(raw, user.language, local.data.uploads);
+    const remote = normalizeApplication(raw, registrationLanguage, local.data.uploads);
     return {
       ...local,
       id: remote.id || local.id,
@@ -476,7 +478,7 @@ export function DriverRegistrationScreen({ user, deepLink, statusRevision = 0, o
       roleStatuses: remote.roleStatuses.length ? remote.roleStatuses : local.roleStatuses,
       data: { ...local.data, uploads: { ...local.data.uploads, ...remote.data.uploads } },
     };
-  }, [user.language]);
+  }, [registrationLanguage]);
 
   const syncNow = useCallback(async() => {
     if (!activeRef.current || !hydratedRef.current || !onlineRef.current || !editableStatuses.has(appRef.current.status) || !appRef.current.roles.length) {
@@ -553,12 +555,12 @@ export function DriverRegistrationScreen({ user, deepLink, statusRevision = 0, o
       setConfig(nextConfig);
       configRef.current = nextConfig;
       const storedDraft = await readRegistrationDraft(user.id);
-      const storedLocal = storedDraft ? normalizeStoredApplication(storedDraft, user.language) : null;
+      const storedLocal = storedDraft ? normalizeStoredApplication(storedDraft, registrationLanguage) : null;
       const local = storedLocal ? await recoverPendingFiles(user.id, storedLocal) : null;
       let next: RegistrationApplication;
       let shouldSync = false;
       if (response.application) {
-        const remote = normalizeApplication(response.application, user.language);
+        const remote = normalizeApplication(response.application, registrationLanguage);
         const pendingUploads = local ? Object.fromEntries(Object.entries(local.data.uploads)
           .filter(([, upload]) => (upload.localUri && upload.status === 'QUEUED') || upload.pendingDelete)) : {};
         const hasPending = Object.keys(pendingUploads).length > 0;
@@ -586,7 +588,7 @@ export function DriverRegistrationScreen({ user, deepLink, statusRevision = 0, o
       } else if (local) {
         next = { ...local, localSync: { dirty: true, baseVersion: local.localSync?.baseVersion ?? local.version } };
         shouldSync = !!next.roles.length;
-      } else next = emptyRegistrationApplication(user.language);
+      } else next = emptyRegistrationApplication(registrationLanguage);
       const reconciled = reconcileLegalConsents(next, nextConfig);
       next = reconciled.application;
       if (reconciled.changed && editableStatuses.has(next.status)) shouldSync = true;
@@ -600,7 +602,7 @@ export function DriverRegistrationScreen({ user, deepLink, statusRevision = 0, o
       if (shouldSync && onlineRef.current) void syncNow();
     } catch (caught) {
       const storedDraft = await readRegistrationDraft(user.id);
-      const storedLocal = storedDraft ? normalizeStoredApplication(storedDraft, user.language) : null;
+      const storedLocal = storedDraft ? normalizeStoredApplication(storedDraft, registrationLanguage) : null;
       const local = storedLocal ? await recoverPendingFiles(user.id, storedLocal) : null;
       if (local) {
         const restored = { ...local, localSync: { dirty: true, baseVersion: local.localSync?.baseVersion ?? local.version } };
@@ -609,7 +611,7 @@ export function DriverRegistrationScreen({ user, deepLink, statusRevision = 0, o
       }
       else setError(messageOf(caught));
     } finally { refreshingRef.current = false; setBooting(false); }
-  }, [applyApplication, syncNow, user.id, user.language]);
+  }, [applyApplication, syncNow, user.id, registrationLanguage]);
 
   useEffect(() => { void refresh(); }, [refresh]);
   useEffect(() => NetInfo.addEventListener(state => {
@@ -898,7 +900,7 @@ export function DriverRegistrationScreen({ user, deepLink, statusRevision = 0, o
       // After the server accepts the application, its upload review states are
       // authoritative. Reapplying the local upload cache would show stale
       // UPLOADED badges over the server's UNDER_REVIEW states.
-      const submitted = normalizeApplication(responseApplication(response), user.language);
+      const submitted = normalizeApplication(responseApplication(response), registrationLanguage);
       const next = { ...submitted, localSync: { dirty: false, baseVersion: submitted.version } };
       applyApplication(next);
       setDirty(false); setSaveState('saved');

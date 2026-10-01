@@ -5,6 +5,7 @@ const images: Record<string, ImageSourcePropType> = {
   'homepage-car': require('../../assets/food/homepage-car.png'),
   'homepage-burger': require('../../assets/food/homepage-burger.png'),
   'home-promo': require('../../assets/food/home-promo.png'),
+  'nearby-promo': require('../../assets/home/promo-nearby-map.png'),
   'sushi-roll': require('../../assets/food/web/sushi-platter.jpg'),
   'restaurant-sushi': require('../../assets/food/web/sushi-platter.jpg'),
   kfc: require('../../assets/food/web/fried-chicken.jpg'),

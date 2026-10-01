@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from "react";
 import { Animated, Easing, Linking, Pressable, StyleSheet, Text, View } from "react-native";
-import { Avatar, Button, Car, colors, Icon, km, mins, money, Route, s as sharedStyles, shortAddress, tr } from "./ui";
+import { Avatar, Button, Car, colors, Icon, km, localize, mins, money, Route, s as sharedStyles, shortAddress, tr } from "./ui";
 import { Order, User } from "./types";
 import { useTheme } from './design/theme';
 import { useThemeStyles } from './design/themeStyles';
@@ -51,7 +51,7 @@ export function TripPanel({ order, user, busy, onAction, onChat, onDone, onRatin
   const styles = useThemeStyles(baseStyles);
   const s = useThemeStyles(sharedStyles);
   const t = tr(user.language);
-  const local = (ru: string, ky: string) => user.language === 'ky' ? ky : ru;
+  const local = (ru: string, ky: string) => localize(user.language, ru, ky);
   const driver = user.role === 'DRIVER';
   const [score, setScore] = useState(0);
   const [details, setDetails] = useState(false);

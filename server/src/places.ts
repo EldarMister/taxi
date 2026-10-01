@@ -5,6 +5,7 @@ import { IsIn, IsNumber, IsOptional, IsString, Max, MaxLength, Min, MinLength, V
 import { Actor, AuthGuard, RateLimits } from './auth';
 import { AppConfig } from './config';
 import { PhotonSearch } from './photon';
+import { cleanCity, compactAddress, formatAddress } from './address';
 
 class SearchDto {
   @ApiProperty() @Transform(({value})=>typeof value === 'string' ? value.trim() : value) @IsString() @MinLength(2) @MaxLength(250) q!: string;
@@ -35,7 +36,16 @@ export function parseNominatimPlace(value: unknown): Place {
   const id = typeof place.osm_type === 'string' && ['node','way','relation'].includes(place.osm_type) && /^\d+$/.test(String(place.osm_id))
     ? `osm-${place.osm_type}-${place.osm_id}`
     : `osm-point-${latitude}-${longitude}`;
-  return {id, address: place.display_name.trim().slice(0, 250), latitude, longitude};
+  const detail = place.address && typeof place.address === 'object' && !Array.isArray(place.address)
+    ? place.address as Record<string, unknown> : {};
+  const first = (...keys: string[]) => keys.map(key => detail[key]).find(value => typeof value === 'string' && value.trim());
+  const street = first('road', 'pedestrian', 'residential', 'footway', 'path', 'street');
+  const number = first('house_number');
+  const apartment = first('flat', 'unit', 'apartment');
+  const city = first('city', 'town', 'village', 'hamlet', 'municipality');
+  const structured = formatAddress([street || (!number ? first('name', 'amenity', 'building') : ''), number, apartment, cleanCity(city)]);
+  const address = structured || compactAddress(place.display_name);
+  return {id, address: (address || place.display_name.trim()).slice(0, 250), latitude, longitude};
 }
 
 @Injectable()

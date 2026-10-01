@@ -1,7 +1,8 @@
 import React, { useState } from 'react';
-import { Image, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Image, Pressable, StyleSheet, View } from 'react-native';
 import { useTheme } from '../design/theme';
 import { Icon } from '../ui';
+import { LocalizedText as Text } from '../auth/LocalizedText';
 import { additionalVehicleUploadSlotsForStep, additionalVehiclesForUsage, buildRegistrationSteps, configuredUploadSlotsForStep, correctionExpiryAllowed, correctionUploadDeleteAllowed, correctionVehicleFieldAllowed, performerRoleForVehicleUsage, registrationUploadSlotsForStep, validateRegistrationStep, type ConfiguredUploadSlot } from './flow';
 import {
   CheckboxRow, ChoiceCard, FormInput, InfoCard, MultiSelect, NativeDateInput, OptionSheet, SectionTitle, SelectInput, StatusBadge, ToggleRow, UploadCard,

@@ -7,6 +7,7 @@ import { ServiceHomeScreen } from './HomeScreen';
 import { DishScreen, RestaurantsScreen, RestaurantScreen } from './CatalogScreens';
 import { FavoritesScreen, type FavoriteDish } from './FavoritesScreen';
 import { CartScreen, CheckoutScreen, type CheckoutDetails } from './CheckoutScreens';
+import { DeliveryInfoSheet } from './DeliveryInfoSheet';
 import { FoodHistoryScreen, FoodOrderScreen } from './OrderScreens';
 import { addCartLine, cartLineKey, cartSummary, changeCartQuantity, MAX_FOOD_QUANTITY } from './cart';
 import { readFoodState, writeFoodState, type FoodState } from './storage';
@@ -16,6 +17,7 @@ import type { Language } from '../types';
 import type { SavedPlaceKind, SavedPlaces } from '../savedPlaces';
 import { FoodLanguageProvider } from './i18n';
 import { tr } from '../ui';
+import { shortAddress } from '../address';
 
 type Screen = 'home' | 'restaurants' | 'favorites' | 'restaurant' | 'dish' | 'cart' | 'checkout' | 'order' | 'history';
 export type FoodEntry = { screen: 'home' | 'restaurants' | 'history'; key: number };
@@ -25,8 +27,8 @@ const toggle = (values: string[], id: string) => values.includes(id) ? values.fi
 const foodError = (error: unknown) => error instanceof ApiError && error.status === 404
   ? 'Доставка временно недоступна. Попробуйте обновить раздел немного позже.' : messageOf(error);
 
-export function FoodExperience({ userId, language = 'ru', active, entry, defaultAddress, savedPlaces, onSavedPlace, onEditSavedPlace, onTaxi, onTruck, onTaxiSearch, onMenu, contentRevision = 0, orderRevision = 0 }: {
-  userId: string; language?: Language; active: boolean; entry: FoodEntry; defaultAddress: string; savedPlaces: SavedPlaces; onSavedPlace: (kind: SavedPlaceKind) => void; onEditSavedPlace: (kind: SavedPlaceKind) => void; onTaxi: () => void; onTruck: () => void; onTaxiSearch: () => void; onMenu: () => void; contentRevision?: number; orderRevision?: number;
+export function FoodExperience({ userId, language = 'ru', active, entry, defaultAddress, savedPlaces, onSavedPlace, onEditSavedPlace, onTaxi, onDelivery, onTruck, onTaxiSearch, onChangeAddress, onMenu, contentRevision = 0, orderRevision = 0 }: {
+  userId: string; language?: Language; active: boolean; entry: FoodEntry; defaultAddress: string; savedPlaces: SavedPlaces; onSavedPlace: (kind: SavedPlaceKind) => void; onEditSavedPlace: (kind: SavedPlaceKind) => void; onTaxi: () => void; onDelivery: () => void; onTruck: () => void; onTaxiSearch: () => void; onChangeAddress: () => void; onMenu: () => void; contentRevision?: number; orderRevision?: number;
 }) {
   const theme = useTheme();
   const t = tr(language);
@@ -43,6 +45,7 @@ export function FoodExperience({ userId, language = 'ru', active, entry, default
   const [favorites, setFavorites] = useState<string[]>([]);
   const [favoriteDishes, setFavoriteDishes] = useState<string[]>([]);
   const [restoredUserId, setRestoredUserId] = useState<string | null>(null);
+  const [resumeCheckout, setResumeCheckout] = useState(false);
   const [details, setDetails] = useState<CheckoutDetails>({ fulfillment: 'DELIVERY', address: defaultAddress, comment: '', paymentMethod: 'CASH' });
   const [selectedOrder, setSelectedOrder] = useState<FoodOrder | null>(null);
   const [activeOrder, setActiveOrder] = useState<FoodOrder | null>(null);
@@ -52,6 +55,7 @@ export function FoodExperience({ userId, language = 'ru', active, entry, default
   const [orderError, setOrderError] = useState('');
   const [submitError, setSubmitError] = useState('');
   const [submitting, setSubmitting] = useState(false);
+  const [deliveryInfoOpen, setDeliveryInfoOpen] = useState(false);
   const mounted = useRef(true);
   const currentUserId = useRef(userId);
   const busy = useRef(false);
@@ -68,11 +72,20 @@ export function FoodExperience({ userId, language = 'ru', active, entry, default
   const dishOrigin = useRef<'restaurant' | 'favorites'>('restaurant');
   const wantedPromo = useRef<string | null>(null);
   const defaultAddressRef = useRef(defaultAddress);
+  const previousSelectedAddress = useRef(defaultAddress);
   const persistenceTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const persistenceContext = useRef<{ userId: string; state: FoodState } | null>(null);
   const restored = restoredUserId === userId;
   currentUserId.current = userId;
   defaultAddressRef.current = defaultAddress;
+  useEffect(() => {
+    if (!restored) return;
+    const previous = previousSelectedAddress.current;
+    previousSelectedAddress.current = defaultAddress;
+    if (!defaultAddress || defaultAddress === previous) return;
+    setDetails(current => !current.address || current.address === previous
+      ? { ...current, address: defaultAddress } : current);
+  }, [defaultAddress, restored]);
   const restaurant = catalog.restaurants.find(item => item.id === selectedRestaurantId);
   const cartRestaurant = catalog.restaurants.find(item => item.id === cartRestaurantId);
   const selectedDish = restaurant?.dishes.find(item => item.id === dishId);
@@ -83,7 +96,7 @@ export function FoodExperience({ userId, language = 'ru', active, entry, default
     result[item.dish.id] = (result[item.dish.id] || 0) + item.quantity;
     return result;
   }, {});
-  const savedState = (): FoodState => ({ restaurantId: cartRestaurantId, lines, favorites, favoriteDishes, address: details.address, checkout: { fulfillment: details.fulfillment, comment: details.comment, paymentMethod: details.paymentMethod }, pending: pending.current });
+  const savedState = (): FoodState => ({ restaurantId: cartRestaurantId, lines, favorites, favoriteDishes, address: details.address, checkout: { fulfillment: details.fulfillment, comment: details.comment, paymentMethod: details.paymentMethod }, pending: pending.current, ...(screen === 'checkout' || resumeCheckout ? { resumeCheckout: true } : {}) });
   if (restored) persistenceContext.current = { userId, state: savedState() };
 
   const cancelScheduledPersistence = useCallback(() => {
@@ -98,6 +111,7 @@ export function FoodExperience({ userId, language = 'ru', active, entry, default
   }, [cancelScheduledPersistence]);
   const navigate = (next: Screen, direction: ScreenDirection = 'forward') => {
     Keyboard.dismiss();
+    setDeliveryInfoOpen(false);
     setScreenDirection(direction);
     setScreen(next);
   };
@@ -117,9 +131,11 @@ export function FoodExperience({ userId, language = 'ru', active, entry, default
       if (cancelled) return;
       if (state) {
         setCartRestaurantId(state.restaurantId); setLines(state.lines); setFavorites(state.favorites); setFavoriteDishes(state.favoriteDishes);
+        setResumeCheckout(!!state.resumeCheckout);
         setDetails({ fulfillment: 'DELIVERY', address: state.address || defaultAddressRef.current, comment: state.checkout?.comment ?? '', paymentMethod: state.checkout?.paymentMethod ?? 'CASH' });
       } else {
         setCartRestaurantId(null); setLines([]); setFavorites([]); setFavoriteDishes([]);
+        setResumeCheckout(false);
         setDetails({ fulfillment: 'DELIVERY', address: defaultAddressRef.current, comment: '', paymentMethod: 'CASH' });
       }
       pending.current = state?.pending;
@@ -127,6 +143,7 @@ export function FoodExperience({ userId, language = 'ru', active, entry, default
     }).catch(() => {
       if (!cancelled) {
         setCartRestaurantId(null); setLines([]); setFavorites([]); setFavoriteDishes([]); pending.current = undefined;
+        setResumeCheckout(false);
         setDetails({ fulfillment: 'DELIVERY', address: defaultAddressRef.current, comment: '', paymentMethod: 'CASH' });
         setRestoredUserId(userId);
       }
@@ -137,7 +154,7 @@ export function FoodExperience({ userId, language = 'ru', active, entry, default
     if (!restored) return;
     cancelScheduledPersistence();
     void writeFoodState(userId, savedState()).catch(() => undefined);
-  }, [userId, restored, cartRestaurantId, lines, favorites, favoriteDishes, details.fulfillment, details.paymentMethod]);
+  }, [userId, restored, cartRestaurantId, lines, favorites, favoriteDishes, details.fulfillment, details.paymentMethod, screen, resumeCheckout]);
   useEffect(() => {
     if (!restored) return;
     cancelScheduledPersistence();
@@ -154,6 +171,11 @@ export function FoodExperience({ userId, language = 'ru', active, entry, default
     return () => subscription.remove();
   }, [flushPersistence]);
   useEffect(() => { if (!active) flushPersistence(); }, [active, flushPersistence]);
+  useEffect(() => {
+    if (!restored || !resumeCheckout || !cartRestaurant || !lines.length || !['home', 'restaurants'].includes(screen)) return;
+    setResumeCheckout(false);
+    if (!cartSummary(cartRestaurant, lines).invalid) navigate('checkout');
+  }, [restored, resumeCheckout, cartRestaurant, lines, screen]);
 
   const loadCatalog = useCallback(async () => {
     const version = ++catalogVersion.current;
@@ -285,9 +307,11 @@ export function FoodExperience({ userId, language = 'ru', active, entry, default
     if (busy.current || !cartRestaurant || !restored) return;
     const submittingUserId = userId;
     const totals = cartSummary(cartRestaurant, lines, 'DELIVERY');
-    if (!totals.count || totals.invalid) return;
+    const deliveryAddress = shortAddress(details.address);
+    if (!totals.count || totals.invalid || totals.subtotal < cartRestaurant.minimumOrder || deliveryAddress.length < 5 ||
+      !catalog.paymentMethods.some(method => method.id === details.paymentMethod && method.available)) return;
     busy.current = true; setSubmitting(true); setSubmitError(''); cancelScheduledPersistence();
-    const body = { restaurantId: cartRestaurant.id, items: lines, ...details, fulfillment: 'DELIVERY' as const, address: details.address.trim(), comment: details.comment.trim() };
+    const body = { restaurantId: cartRestaurant.id, items: lines, ...details, fulfillment: 'DELIVERY' as const, address: deliveryAddress, comment: details.comment.trim() };
     const signature = JSON.stringify(body);
     if (pending.current?.signature !== signature) pending.current = { signature, requestId: requestId() };
     try {
@@ -302,7 +326,7 @@ export function FoodExperience({ userId, language = 'ru', active, entry, default
       pending.current = undefined;
       setSelectedOrder(order); setActiveOrder(terminal(order) ? null : order); orderOrigin.current = 'home';
       setLines([]); setCartRestaurantId(null); navigate('order'); setOrderError('');
-      const completedState = { ...savedState(), lines: [], restaurantId: null, pending: undefined };
+      const completedState = { ...savedState(), lines: [], restaurantId: null, pending: undefined, resumeCheckout: false };
       persistenceContext.current = { userId: submittingUserId, state: completedState };
       void writeFoodState(submittingUserId, completedState).catch(() => undefined);
     } catch (error) { if (mounted.current && currentUserId.current === submittingUserId) setSubmitError(t(foodError(error))); }
@@ -311,7 +335,7 @@ export function FoodExperience({ userId, language = 'ru', active, entry, default
 
   let content: React.ReactNode;
   let routeKey: string;
-  if (screen === 'home') { routeKey = 'home'; content = <ServiceHomeScreen language={language} active={active} onTaxi={onTaxi} onTruck={onTruck} onSearch={onTaxiSearch} savedPlaces={savedPlaces} onSavedPlace={onSavedPlace} onEditSavedPlace={onEditSavedPlace} onFood={() => navigate('restaurants')} onMenu={onMenu} onOrders={() => {
+  if (screen === 'home') { routeKey = 'home'; content = <ServiceHomeScreen userId={userId} language={language} active={active} currentAddress={defaultAddress} onChangeAddress={onChangeAddress} onTaxi={onTaxi} onDelivery={onDelivery} onTruck={onTruck} onSearch={onTaxiSearch} savedPlaces={savedPlaces} onSavedPlace={onSavedPlace} onEditSavedPlace={onEditSavedPlace} onFood={() => navigate('restaurants')} onMenu={onMenu} onOrders={() => {
     if (activeOrder) { setSelectedOrder(activeOrder); orderOrigin.current = 'home'; navigate('order'); } else navigate('history');
   }} hasOrder={!!activeOrder} banners={banners} onBanner={banner => {
     if (banner.actionType === 'TAXI') onTaxi();
@@ -322,15 +346,20 @@ export function FoodExperience({ userId, language = 'ru', active, entry, default
     }
   }} />; }
   else if (screen === 'dish' && restaurant && selectedDish) { routeKey = `dish:${restaurant.id}:${selectedDish.id}`; content = <DishScreen key={`${restaurant.id}:${selectedDish.id}`} dish={selectedDish} restaurant={restaurant} onBack={back} onAdd={(dish, quantity, optionIds) => add(dish, quantity, optionIds, true)} favorite={favoriteDishes.includes(`${restaurant.id}:${selectedDish.id}`)} onFavorite={() => setFavoriteDishes(current => toggle(current, `${restaurant.id}:${selectedDish.id}`))} />; }
-  else if (screen === 'restaurant' && restaurant) { routeKey = `restaurant:${restaurant.id}`; content = <RestaurantScreen key={restaurant.id} restaurant={restaurant} onBack={back} onDish={dish => { dishOrigin.current = 'restaurant'; setDishId(dish.id); navigate('dish'); }} onAdd={dish => add(dish)} onDecrease={decreaseDish} onCart={() => openCart('restaurant')} cartCount={summary.count} cartTotal={summary.total} cartRestaurantName={cartRestaurant?.name} dishQuantities={cartRestaurantId === restaurant.id ? dishQuantities : {}} favorite={favorites.includes(restaurant.id)} onFavorite={() => setFavorites(current => toggle(current, restaurant.id))} />; }
+  else if (screen === 'restaurant' && restaurant) { routeKey = `restaurant:${restaurant.id}`; content = <RestaurantScreen key={restaurant.id} restaurant={restaurant} onBack={back} onDish={dish => { dishOrigin.current = 'restaurant'; setDishId(dish.id); navigate('dish'); }} onAdd={dish => add(dish)} onDecrease={decreaseDish} onCart={() => openCart('restaurant')} onDeliveryInfo={() => setDeliveryInfoOpen(true)} cartCount={summary.count} cartTotal={summary.total} cartRestaurantName={cartRestaurant?.name} cartLines={lines} cartRestaurant={cartRestaurant} dishQuantities={cartRestaurantId === restaurant.id ? dishQuantities : {}} favorite={favorites.includes(restaurant.id)} onFavorite={() => setFavorites(current => toggle(current, restaurant.id))} />; }
   else if (screen === 'favorites') { routeKey = 'favorites'; content = <FavoritesScreen restaurants={favoriteRestaurants} dishes={favoriteDishItems} onBack={back} onRestaurant={value => { restaurantOrigin.current = 'favorites'; setSelectedRestaurantId(value.id); navigate('restaurant'); }} onDish={(value, dish) => { dishOrigin.current = 'favorites'; setSelectedRestaurantId(value.id); setDishId(dish.id); navigate('dish'); }} />; }
-  else if (screen === 'cart') { routeKey = 'cart'; content = <CartScreen restaurant={cartRestaurant} lines={lines} onBack={back} onClear={clearCart} onQuantity={(key, quantity) => setLines(current => changeCartQuantity(current, key, quantity))} onRemoveOption={removeOption} onCheckout={() => { setSubmitError(''); navigate('checkout'); }} />; }
+  else if (screen === 'cart') { routeKey = 'cart'; content = <CartScreen restaurant={cartRestaurant} lines={lines} onBack={back} onClear={clearCart} onQuantity={(key, quantity) => setLines(current => changeCartQuantity(current, key, quantity))} onRemoveOption={removeOption} onAddRecommendation={dish => setLines(current => addCartLine(current, dish, 1, []))} onCheckout={() => {
+    const current = cartSummary(cartRestaurant, lines);
+    if (!restored || !cartRestaurant || !current.count || current.invalid || current.subtotal < cartRestaurant.minimumOrder) return;
+    setSubmitError(''); navigate('checkout');
+  }} />; }
   else if (screen === 'checkout' && cartRestaurant) { routeKey = 'checkout'; content = <CheckoutScreen restaurant={cartRestaurant} lines={lines} paymentMethods={catalog.paymentMethods} details={details} onDetails={setDetails} onBack={back} onSubmit={() => void submit()} busy={submitting} error={submitError} />; }
   else if (screen === 'order' && selectedOrder) { routeKey = `order:${selectedOrder.id}`; content = <FoodOrderScreen order={selectedOrder} onBack={back} error={orderError} onRetry={() => void refreshOrder()} />; }
   else if (screen === 'history') { routeKey = 'history'; content = <FoodHistoryScreen orders={orders} loading={historyLoading} error={historyError} onBack={back} onRetry={() => void loadHistory()} onOrder={order => { setSelectedOrder(order); orderOrigin.current = 'history'; navigate('order'); }} />; }
-  else { routeKey = 'restaurants'; content = <RestaurantsScreen restaurants={catalog.restaurants} onBack={back} onRestaurant={openRestaurant} onFavorites={() => navigate('favorites')} favoriteCount={favoriteRestaurants.length + favoriteDishItems.length} onCart={() => openCart('restaurants')} cartCount={summary.count} cartTotal={summary.total} cartRestaurantName={cartRestaurant?.name} loading={loading} error={catalogError} onRetry={() => void loadCatalog()} />; }
+  else { routeKey = 'restaurants'; content = <RestaurantsScreen restaurants={catalog.restaurants} onBack={back} onRestaurant={openRestaurant} onFavorites={() => navigate('favorites')} favoriteCount={favoriteRestaurants.length + favoriteDishItems.length} onCart={() => openCart('restaurants')} onDeliveryInfo={() => setDeliveryInfoOpen(true)} cartCount={summary.count} cartTotal={summary.total} cartRestaurantName={cartRestaurant?.name} cartLines={lines} cartRestaurant={cartRestaurant} loading={loading} error={catalogError} onRetry={() => void loadCatalog()} />; }
   return <FoodLanguageProvider language={language}><View style={{ flex: 1, backgroundColor: theme.isDark ? theme.palette.background : '#F7F7F5' }}>
     {active && <StatusBar style={theme.isDark || screen === 'restaurant' || screen === 'dish' ? 'light' : 'dark'} />}
     <ScreenTransition routeKey={routeKey} direction={screenDirection}>{content}</ScreenTransition>
+    {deliveryInfoOpen && <DeliveryInfoSheet restaurant={cartRestaurant} lines={lines} deliveryAddress={details.address} onClose={() => setDeliveryInfoOpen(false)} />}
   </View></FoodLanguageProvider>;
 }

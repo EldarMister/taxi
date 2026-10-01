@@ -7,11 +7,14 @@ import { appVariant } from './appVariant';
 import { shortAddress } from './address';
 import type { Language, Order, User } from './types';
 import { useTheme } from './design/theme';
+import { en } from './en';
+import { selectedLanguage } from './auth/languageStore';
 
 export { shortAddress } from './address';
 
 export const colors = { blue: '#087FFF', blueDark: '#0067D9', ink: '#101D38', muted: '#7A8CA8', pale: '#F1F7FD', line: '#E5EDF6', green: '#19B66A', white: '#FFFFFF', danger: '#CA4149' };
-export const tr = (language: Language) => (text: string) => language === 'ky' ? (ky[text] || text) : text;
+export const tr = (language: Language) => (text: string) => language === 'ky' ? (ky[text] || text) : language === 'en' ? (en[text] || text) : text;
+export const localize = (language: Language, russian: string, kyrgyz: string) => language === 'ky' ? kyrgyz : tr(language)(russian);
 const ky: Record<string, string> = {
   'Доброе утро!': 'Кутман таң!',
   'Куда отправимся сегодня?': 'Бүгүн кайда барабыз?',
@@ -21,6 +24,15 @@ const ky: Record<string, string> = {
   'Доставка еды': 'Тамак жеткирүү',
   'Любимые рестораны рядом': 'Сүйүктүү ресторандар жаныңызда',
   'Куда поедем?': 'Кайда барабыз?',
+  'Еда': 'Тамак',
+  'Закрыть уведомления': 'Билдирүүлөрдү жабуу',
+  'Повторить загрузку уведомлений': 'Билдирүүлөрдү кайра жүктөө',
+  'Пока нет уведомлений': 'Азырынча билдирүүлөр жок',
+  'Изменить свой адрес': 'Өз дарегиңизди өзгөртүү',
+  'Укажите свой адрес': 'Дарегиңизди көрсөтүңүз',
+  'Быстрые заказы рядом': 'Тез буйрутмалар жакында',
+  'Быстрые\nзаказы рядом!': 'Тез буйрутмалар\nжакында!',
+  'Всё, что нужно —\nуже рядом': 'Керектүүнүн баары\nжаныңызда',
   'Выбрать адрес': 'Даректи тандоо',
   'Дом': 'Үй',
   'Работа': 'Жумуш',
@@ -348,16 +360,16 @@ const ky: Record<string, string> = {
   'Ваша оценка': 'Сиздин бааңыз', 'Комментарий': 'Комментарий', 'Поездка не найдена': 'Сапар табылган жок',
   'Не удалось позвонить': 'Чалуу мүмкүн болгон жок',
 };
-export const money = (value: number) => `${Number(value).toLocaleString('ru-RU')} сом`;
+export const money = (value: number) => `${Number(value).toLocaleString(selectedLanguage() === 'en' ? 'en-US' : 'ru-RU')} ${selectedLanguage() === 'en' ? 'som' : 'сом'}`;
 export const km = (meters: number) => Number(meters) < 1000
-  ? `${Math.round(Number(meters))} м`
-  : `${(Number(meters) / 1000).toFixed(1).replace('.', ',')} км`;
-export const mins = (seconds: number, language: Language = 'ru') => `${Math.max(1, Math.round(Number(seconds) / 60))} ${language === 'ky' ? 'мүн' : 'мин'}`;
+  ? `${Math.round(Number(meters))} ${selectedLanguage() === 'en' ? 'm' : 'м'}`
+  : `${(Number(meters) / 1000).toFixed(1).replace('.', selectedLanguage() === 'en' ? '.' : ',')} ${selectedLanguage() === 'en' ? 'km' : 'км'}`;
+export const mins = (seconds: number, language: Language = 'ru') => `${Math.max(1, Math.round(Number(seconds) / 60))} ${language === 'ky' ? 'мүн' : language === 'en' ? 'min' : 'мин'}`;
 export const tripTime = (seconds: number, language: Language = 'ru') => {
   const totalMinutes = Math.max(1, Math.round(Number(seconds) / 60));
-  if (totalMinutes < 60) return `${totalMinutes} ${language === 'ky' ? 'мүн' : 'мин'}`;
+  if (totalMinutes < 60) return `${totalMinutes} ${language === 'ky' ? 'мүн' : language === 'en' ? 'min' : 'мин'}`;
   const hours = Math.floor(totalMinutes / 60), minutes = totalMinutes % 60;
-  return `${hours} ${language === 'ky' ? 'саат' : 'ч'}${minutes ? ` ${minutes} ${language === 'ky' ? 'мүн' : 'мин'}` : ''}`;
+  return `${hours} ${language === 'ky' ? 'саат' : language === 'en' ? 'h' : 'ч'}${minutes ? ` ${minutes} ${language === 'ky' ? 'мүн' : language === 'en' ? 'min' : 'мин'}` : ''}`;
 };
 export function Icon({ name, size = 22, color }: { name: React.ComponentProps<typeof Ionicons>['name']; size?: number; color?: string }) {
   const { isDark, palette } = useTheme();
