@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Image, Keyboard, KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import * as ImageManipulator from 'expo-image-manipulator';
 import * as ImagePicker from 'expo-image-picker';
@@ -31,12 +31,44 @@ export function ChatOverlay({ orderId, user, peerName, incoming, onClose, onErro
   const key = useRef<{ signature: string; id: string } | null>(null);
   const scroll = useRef<ScrollView>(null);
   const input = useRef<TextInput>(null);
+  const chatHost = useRef<View>(null);
+  const keyboardScreenY = useRef<number | null>(null);
+  const keyboardMeasurement = useRef(0);
+  const [keyboardOverlap, setKeyboardOverlap] = useState(0);
   const canSend = !!text.trim() || !!photo;
   const composerColor = isDark ? '#1B1D1D' : '#F1F4F8';
   const bubbleColor = isDark ? '#1B1D1D' : '#FFFFFF';
   const photoCardColor = isDark ? '#242526' : '#F4F4F4';
   const photoCardBorder = isDark ? '#343637' : '#ECEDEF';
   const photoIconColor = isDark ? '#ECEDEF' : '#25282C';
+
+  const measureKeyboardOverlap = useCallback(() => {
+    if (Platform.OS !== 'android' || keyboardScreenY.current === null) return;
+    const keyboardY = keyboardScreenY.current;
+    const measurement = ++keyboardMeasurement.current;
+    chatHost.current?.measureInWindow((_x, y, _width, height) => {
+      if (keyboardScreenY.current !== keyboardY || keyboardMeasurement.current !== measurement) return;
+      // The modal may already resize. Lift only the overlap that remains.
+      const overlap = Math.min(Math.max(0, height - 100), Math.max(0, y + height - keyboardY));
+      setKeyboardOverlap(current => Math.abs(current - overlap) > 1 ? overlap : current);
+    });
+  }, []);
+  useEffect(() => {
+    if (Platform.OS !== 'android') return;
+    const shown = Keyboard.addListener('keyboardDidShow', event => {
+      keyboardScreenY.current = event.endCoordinates.screenY;
+      measureKeyboardOverlap();
+    });
+    const hidden = Keyboard.addListener('keyboardDidHide', () => {
+      keyboardScreenY.current = null;
+      keyboardMeasurement.current++;
+      setKeyboardOverlap(0);
+    });
+    return () => {
+      shown.remove(); hidden.remove();
+      keyboardScreenY.current = null; keyboardMeasurement.current++;
+    };
+  }, [measureKeyboardOverlap]);
 
   const add = (message: ChatMessage) => setMessages(current => current.some(item => item.id === message.id)
     ? current : [...current, message].sort((a, b) => a.createdAt.localeCompare(b.createdAt)));
@@ -125,12 +157,13 @@ export function ChatOverlay({ orderId, user, peerName, incoming, onClose, onErro
     headers: { Authorization: `Bearer ${api.getTokens()?.accessToken ?? ''}` },
   } : null;
 
-  return <Modal animationType="slide" onRequestClose={attachmentOpen ? closeAttachmentMenu : closeChat}>
+  return <Modal animationType="slide" statusBarTranslucent navigationBarTranslucent onRequestClose={attachmentOpen ? closeAttachmentMenu : closeChat}>
     <GestureHandlerRootView style={{ flex: 1 }}>
     <SafeAreaView style={{ flex: 1, backgroundColor: palette.background }}>
-      {/* Android Modal already resizes for the keyboard; extra padding can leave the composer lifted. */}
+      <View ref={chatHost} testID="chat-keyboard-host" collapsable={false} onLayout={measureKeyboardOverlap} style={{ flex: 1 }}>
+      {/* Android uses the actual overlap; iOS keeps native keyboard avoidance. */}
       <KeyboardAvoidingView accessibilityElementsHidden={attachmentOpen} importantForAccessibility={attachmentOpen ? 'no-hide-descendants' : 'auto'}
-        style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined} enabled={Platform.OS === 'ios'}>
+        style={{ flex: 1, paddingBottom: keyboardOverlap }} behavior={Platform.OS === 'ios' ? 'padding' : undefined} enabled={Platform.OS === 'ios'}>
         <View style={{ height: 66, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, gap: 12, borderBottomWidth: 1, borderBottomColor: palette.line }}>
           <Pressable accessibilityRole="button" accessibilityLabel={say('Назад', 'Артка')} onPress={closeChat}
             style={{ width: 38, height: 44, alignItems: 'center', justifyContent: 'center' }}><Icon name="chevron-back" size={27} color={palette.ink}/></Pressable>
@@ -188,6 +221,7 @@ export function ChatOverlay({ orderId, user, peerName, incoming, onClose, onErro
           </Pressable>}
         </View>
       </KeyboardAvoidingView>
+      </View>
       {attachmentOpen && <BottomPanel onClose={finishAttachmentClose} closeRequested={attachmentClosing}
         handlePlacement="inside" label={say('Закрыть выбор фото', 'Сүрөт тандоону жабуу')} bottomPadding={Math.max(36, insets.bottom + 18)}>
         <View testID="chat-photo-sheet" style={chatStyles.sheet}>

@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Animated, Image, Keyboard, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View, useWindowDimensions } from 'react-native';
 import * as Contacts from 'expo-contacts';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -9,7 +9,8 @@ import { Point, Quote, Tariff, User } from './types';
 import { usePanelTransition } from './usePanelTransition';
 import { useTheme } from './design/theme';
 import { useThemeStyles } from './design/themeStyles';
-import { Gesture, GestureDetector } from 'react-native-gesture-handler';
+import { GestureDetector } from 'react-native-gesture-handler';
+import { useParametersSwipe } from './useParametersSwipe';
 
 export type RideDetails = { entrance: string; comment: string; passenger: { name: string; phone: string } | null };
 export const emptyRideDetails: RideDetails = { entrance: '', comment: '', passenger: null };
@@ -53,14 +54,10 @@ export function BookingPanel({ pickup, dropoff, locatingPickup = false, tariffs,
   const index = Math.max(0, tariffs.findIndex(item => item.id === tariffId));
   const tariff = tariffs[index];
   const editing = surface in titles ? surface as EditField : null;
-  // Recognize the pull only in the fixed footer, leaving address/tariff scrolling native.
-  const parametersPull = useMemo(() => Gesture.Pan()
-    .enabled(rootVisible && surface === 'summary' && !!dropoff && !busy)
-    .activeOffsetY(-8).failOffsetX([-12, 12]).runOnJS(true)
-    .onEnd((event, success) => {
-      if (success && !busy && surface === 'summary' && dropoff &&
-        (event.translationY < -24 || event.velocityY < -300)) navigate('details');
-    }), [rootVisible, surface, dropoff, busy, navigate]);
+  const openParameters = () => {
+    if (rootVisible && surface === 'summary' && !busy) navigate('details');
+  };
+  const parametersPull = useParametersSwipe(openParameters, rootVisible && surface === 'summary' && !busy);
   const edit = (field: EditField) => { setReturnTo(surface === 'details' ? 'details' : 'summary'); setDraft(details[field]); navigate(field); };
   const close = () => { Keyboard.dismiss(); navigate(editing || surface === 'payment' || surface === 'passenger' ? returnTo : 'summary'); };
   const dismiss = () => { Keyboard.dismiss(); onSheetClosed(); };
@@ -124,8 +121,10 @@ export function BookingPanel({ pickup, dropoff, locatingPickup = false, tariffs,
       </>}
       </ScrollView>
       <GestureDetector gesture={parametersPull}>
-        <View testID="taxi-parameters-swipe" collapsable={false} style={{ paddingBottom: Math.max(insets.bottom, 12) }}>
-          {!!dropoff && footer()}
+        <View testID="taxi-parameters-swipe" collapsable={false} style={{ minHeight: 48, paddingTop: 6, paddingBottom: Math.max(insets.bottom, 12) }}>
+          {dropoff ? footer() : <Pressable accessibilityRole="button" accessibilityLabel={t('Детали поездки')} hitSlop={6} onPress={openParameters} style={{ minHeight: 36, justifyContent: 'center', alignItems: 'center' }}>
+            <View style={[panelStyle.handle, isDark && { backgroundColor: palette.line }]}/>
+          </Pressable>}
         </View>
       </GestureDetector>
     </Animated.View>

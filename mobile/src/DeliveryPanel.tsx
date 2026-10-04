@@ -1,11 +1,13 @@
-import React, { useMemo, useState } from 'react';
-import { ActivityIndicator, Image, PanResponder, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import React, { useState } from 'react';
+import { ActivityIndicator, Image, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { GestureDetector } from 'react-native-gesture-handler';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { BottomPanel, panelStyle } from './BottomPanel';
 import { clientMapPanelStyle } from './clientMapPanelStyle';
 import { useTheme } from './design/theme';
 import type { Language, Point, Quote, Tariff } from './types';
 import { colors, Icon, PickupIcon, money, shortAddress, ToggleSwitch, tr } from './ui';
+import { useParametersSwipe } from './useParametersSwipe';
 
 export type DeliveryDetails = {
   comment: string;
@@ -31,13 +33,10 @@ export function DeliveryPanel({ language = 'ru', pickup, dropoff, tariffs, selec
   const selected = tariffs.find(item => item.kind === selectedKind);
   const ready = !!pickup && !!dropoff;
   const shownQuote = quote ?? previewQuote;
-  const open = () => setSurface('details');
+  const open = () => { if (!busy && surface === null) setSurface('details'); };
   const openPayment = () => { setPaymentReturn(surface === 'details' ? 'details' : null); setSurface('payment'); };
   const closePayment = () => setSurface(paymentReturn);
-  const pull = useMemo(() => PanResponder.create({
-    onMoveShouldSetPanResponder: (_event, gesture) => gesture.dy < -7 && Math.abs(gesture.dy) > Math.abs(gesture.dx),
-    onPanResponderRelease: (_event, gesture) => { if (gesture.dy < -24 || gesture.vy < -.3) open(); },
-  }), []);
+  const parametersPull = useParametersSwipe(open, surface === null && !busy);
   const footer = (inside = false) => <View style={d.footer}>
     <Pressable accessibilityRole="button" accessibilityLabel={t('Способы оплаты')} disabled={busy} onPress={openPayment} style={d.cash}><Icon name="cash-outline" color={colors.blue} size={29}/></Pressable>
     <Pressable accessibilityRole="button" disabled={busy || (ready && !quote)} onPress={!ready ? () => onAddress(dropoff ? 'pickup' : 'dropoff') : onBook} style={({ pressed }) => [d.primary, (pressed || busy || (ready && !quote)) && { opacity: .6 }]}>{(busy || (ready && !quote && calculating)) && <ActivityIndicator size="small" color="#FFFFFF"/>}<Text numberOfLines={2} adjustsFontSizeToFit style={d.primaryText}>{t(!ready ? 'Указать адреса' : quote ? 'Заказать доставку' : error ? 'Повторим автоматически' : shownQuote ? 'Обновляем цену…' : 'Считаем…')}</Text></Pressable>
@@ -45,9 +44,9 @@ export function DeliveryPanel({ language = 'ru', pickup, dropoff, tariffs, selec
   </View>;
   if (hidden) return null;
   return <View pointerEvents="box-none" style={[StyleSheet.absoluteFill, { zIndex: 20 }]}>
-    <View accessibilityElementsHidden={surface !== null} importantForAccessibility={surface !== null ? 'no-hide-descendants' : 'auto'} onLayout={event => onHeight(event.nativeEvent.layout.height)} testID="client-delivery-panel" style={[panelStyle.surface, d.panel, clientMapPanelStyle.surface, isDark && { backgroundColor: palette.surface, shadowColor: palette.background }, { paddingBottom: Math.max(insets.bottom, 11) }]}>
+    <View accessibilityElementsHidden={surface !== null} importantForAccessibility={surface !== null ? 'no-hide-descendants' : 'auto'} onLayout={event => onHeight(event.nativeEvent.layout.height)} testID="client-delivery-panel" style={[panelStyle.surface, d.panel, clientMapPanelStyle.surface, isDark && { backgroundColor: palette.surface, shadowColor: palette.background }]}>
       <ScrollView testID="client-delivery-content" style={clientMapPanelStyle.scroll} nestedScrollEnabled keyboardShouldPersistTaps="handled" bounces={false}>
-      <View {...pull.panHandlers} style={d.titleRow}><Text style={[d.title, { color: palette.ink }]}>{t('Доставка')}</Text></View>
+      <View style={d.titleRow}><Text style={[d.title, { color: palette.ink }]}>{t('Доставка')}</Text></View>
       <AddressRow language={language} label={t('Адрес отправки')} value={pickup?.address || t('Определяем местоположение')} pickup onPress={() => onAddress('pickup')} color={palette.ink}/>
       <AddressRow language={language} label={t('Куда доставить')} value={dropoff?.address || t('Куда доставить')} onPress={() => onAddress('dropoff')} onSwap={onSwap} swapDisabled={busy || !ready} color={palette.ink}/>
       <View style={d.services}>
@@ -56,7 +55,11 @@ export function DeliveryPanel({ language = 'ru', pickup, dropoff, tariffs, selec
       </View>
       {!!error && <Text accessibilityRole="alert" style={d.error}>{error}</Text>}
       </ScrollView>
-      {footer()}
+      <GestureDetector gesture={parametersPull}>
+        <View testID="delivery-parameters-swipe" collapsable={false} style={{ minHeight: 48, paddingTop: 6, paddingBottom: Math.max(insets.bottom, 12) }}>
+          {footer()}
+        </View>
+      </GestureDetector>
     </View>
     {surface === 'details' && <BottomPanel onClose={() => setSurface(null)} label={t('Закрыть параметры доставки')}>
       <ScrollView keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false} contentContainerStyle={[d.details, { paddingBottom: Math.max(insets.bottom, 12) }]}>

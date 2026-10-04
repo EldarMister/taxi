@@ -15,7 +15,8 @@ function chatHarness(platform = 'android', isDark = true) {
     module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX, esModuleInterop: true,
   } }).outputText;
   const uploads = [], pickerCalls = [], posts = [], errors = [];
-  const state = { keyboardDismisses: 0, inputBlurs: 0, closes: 0 };
+  const state = { keyboardDismisses: 0, inputBlurs: 0, closes: 0, frame: { y: 0, height: 900 }, deferMeasurement: false, measurements: [] };
+  const keyboardListeners = new Map();
   class Form { fields = []; append(name, value) { this.fields.push([name, value]); } }
   const api = {
     baseUrl: 'https://example.test/api', getTokens: () => ({ accessToken: 'token' }),
@@ -35,7 +36,10 @@ function chatHarness(platform = 'android', isDark = true) {
     require: id => {
       if (id === 'react' || id === 'react/jsx-runtime') return require(id);
       if (id === 'react-native') return {
-        ActivityIndicator: 'ActivityIndicator', Image: 'Image', Keyboard: { dismiss: () => { state.keyboardDismisses++; } },
+        ActivityIndicator: 'ActivityIndicator', Image: 'Image', Keyboard: {
+          dismiss: () => { state.keyboardDismisses++; },
+          addListener: (event, listener) => { keyboardListeners.set(event, listener); return { remove: () => keyboardListeners.delete(event) }; },
+        },
         KeyboardAvoidingView: 'KeyboardAvoidingView', Modal: 'Modal', Platform: { OS: platform },
         Pressable: 'Pressable', ScrollView: 'ScrollView', StyleSheet: { create: styles => styles,
           absoluteFillObject: { position: 'absolute', left: 0, top: 0, right: 0, bottom: 0 } },
@@ -62,9 +66,16 @@ function chatHarness(platform = 'android', isDark = true) {
   });
   const user = { id: 'me', language: 'ru' };
   const props = { orderId: 'trip', user, incoming: null, onClose: () => { state.closes++; }, onError: error => { errors.push(error); } };
-  const render = () => create(React.createElement(exports.ChatOverlay, props),
-    { createNodeMock: node => node.type === 'TextInput' ? { blur: () => { state.inputBlurs++; } } : null });
-  return { api, exports, user, props, render, uploads, pickerCalls, posts, errors, state };
+  const render = () => create(React.createElement(exports.ChatOverlay, props), { createNodeMock: node => {
+    if (node.type === 'TextInput') return { blur: () => { state.inputBlurs++; } };
+    if (node.props.testID === 'chat-keyboard-host') return { measureInWindow: callback => {
+      const frame = { ...state.frame };
+      const complete = () => callback(0, frame.y, 412, frame.height);
+      if (state.deferMeasurement) state.measurements.push(complete); else complete();
+    } };
+    return null;
+  } });
+  return { api, exports, user, props, render, uploads, pickerCalls, posts, errors, state, keyboardListeners };
 }
 
 test('chat attachment can send a photo while the send button stays hidden for empty content', async () => {
@@ -74,8 +85,8 @@ test('chat attachment can send a photo while the send button stays hidden for em
   const buttons = label => renderer.root.findAllByProps({ accessibilityLabel: label });
   const finishAttachmentClose = async () => { await act(async () => renderer.root.findByType('BottomPanel').props.onClose()); };
   const avoiding = renderer.root.findByType('KeyboardAvoidingView');
-  assert.equal(avoiding.props.enabled, false, 'Android Modal owns the keyboard resize');
-  assert.equal(avoiding.props.behavior, undefined, 'Android does not add residual padding on top of the native resize');
+  assert.equal(avoiding.props.enabled, false, 'Android measures the modal overlap instead of assuming a native resize');
+  assert.equal(avoiding.props.behavior, undefined, 'built-in padding does not compound native resize or measured overlap');
   assert.equal(buttons('Отправить сообщение').length, 0);
   await act(async () => renderer.root.findByProps({ accessibilityLabel: 'Сообщение' }).props.onChangeText('Привет'));
   assert.equal(buttons('Отправить сообщение').length, 1);
@@ -182,8 +193,55 @@ test('iOS chat retains keyboard padding compensation', async () => {
   const avoiding = renderer.root.findByType('KeyboardAvoidingView');
   assert.equal(avoiding.props.enabled, true);
   assert.equal(avoiding.props.behavior, 'padding');
+  assert.equal(h.keyboardListeners.size, 0, 'iOS leaves keyboard avoidance to the native component');
   assert.equal(renderer.root.findByType('ScrollView').props.keyboardDismissMode, 'interactive');
   await act(async () => renderer.unmount());
+});
+
+test('Android composer lifts above the keyboard, follows resize, and resets after send and keyboard hide', async () => {
+  const h = chatHarness();
+  let renderer;
+  await act(async () => { renderer = h.render(); });
+  const lift = () => renderer.root.findByType('KeyboardAvoidingView').props.style.paddingBottom;
+  const layout = () => renderer.root.findByProps({ testID: 'chat-keyboard-host' }).props.onLayout();
+  const show = screenY => h.keyboardListeners.get('keyboardDidShow')({ endCoordinates: { screenY } });
+  const hide = () => h.keyboardListeners.get('keyboardDidHide')();
+  assert.equal(lift(), 0);
+  assert.equal(renderer.root.findAllByType('Modal')[0].props.statusBarTranslucent, true, 'modal and keyboard use the same screen coordinate origin');
+  await act(async () => show(600));
+  assert.equal(lift(), 300, 'unresized modal lifts the input out of the keyboard');
+  h.state.frame.height = 750;
+  await act(async () => layout());
+  assert.equal(lift(), 150, 'partial native resize needs only the remaining overlap');
+  h.state.frame.height = 600;
+  await act(async () => layout());
+  assert.equal(lift(), 0, 'complete native resize does not lift the input twice');
+  await act(async () => hide());
+  h.state.frame.height = 900;
+  await act(async () => { layout(); show(620); });
+  assert.equal(lift(), 280, 'the next keyboard opening still lifts the input');
+  await act(async () => renderer.root.findByProps({ accessibilityLabel: 'Сообщение' }).props.onChangeText('Привет'));
+  await act(async () => renderer.root.findByProps({ accessibilityLabel: 'Отправить сообщение' }).props.onPress());
+  assert.equal(h.state.inputBlurs, 1);
+  assert.equal(h.state.keyboardDismisses, 1);
+  await act(async () => hide());
+  assert.equal(lift(), 0, 'the composer returns to its resting position after the keyboard closes');
+  await act(async () => renderer.unmount());
+  assert.equal(h.keyboardListeners.size, 0);
+});
+
+test('late Android measurements cannot relift the composer after keyboard hide or unmount', async () => {
+  const h = chatHarness(); h.state.deferMeasurement = true;
+  let renderer;
+  await act(async () => { renderer = h.render(); });
+  await act(async () => h.keyboardListeners.get('keyboardDidShow')({ endCoordinates: { screenY: 600 } }));
+  await act(async () => h.keyboardListeners.get('keyboardDidHide')());
+  await act(async () => h.state.measurements.shift()());
+  assert.equal(renderer.root.findByType('KeyboardAvoidingView').props.style.paddingBottom, 0);
+  await act(async () => h.keyboardListeners.get('keyboardDidShow')({ endCoordinates: { screenY: 600 } }));
+  await act(async () => renderer.unmount());
+  await act(async () => h.state.measurements.shift()());
+  assert.equal(h.keyboardListeners.size, 0);
 });
 
 test('photo chooser uses two equal graphite cards with readable light and dark themes', async () => {

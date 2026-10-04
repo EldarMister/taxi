@@ -66,7 +66,7 @@ function load(file) {
       PanGestureHandler: 'PanGestureHandler', GestureDetector: 'GestureDetector', State: { BEGAN: 2, END: 5, CANCELLED: 3, FAILED: 1 },
       Gesture: { Pan: () => {
         const gesture = { config: {}, handlers: {} };
-        for (const option of ['enabled', 'activeOffsetY', 'failOffsetX', 'runOnJS']) {
+        for (const option of ['enabled', 'activeOffsetY', 'failOffsetX', 'failOffsetY', 'runOnJS']) {
           gesture[option] = value => { gesture.config[option] = value; return gesture; };
         }
         for (const callback of ['onStart', 'onUpdate', 'onEnd', 'onFinalize']) gesture[callback] = handler => { gesture.handlers[callback] = handler; return gesture; };
@@ -90,6 +90,7 @@ function load(file) {
     if (id === './design/themeStyles') return { useThemeStyles: base => base };
     if (id === './design/tokens') return { motion: { sheet: 320 } };
     if (id === './usePanelTransition') return load('usePanelTransition.ts');
+    if (id === './useParametersSwipe') return load('useParametersSwipe.ts');
     if (id === './clientMapPanelStyle') return load('clientMapPanelStyle.ts');
     if (id === './DriverRideSheet') return { DriverRideSheet: function Sheet({ header, details, compactDetails, footer, style, onExpanded, onHeight, visible = true, testID = 'driver-ride-sheet', handleLabel, handleStyle, handleTouchStyle }) {
       const [open, setOpen] = React.useState(false);
@@ -162,8 +163,14 @@ test('taxi footer pull opens the existing parameters and preserves taps and cont
   assert.equal(gesture().config.enabled, true);
   assert.equal(gesture().config.activeOffsetY, -8);
   assert.equal(gesture().config.failOffsetX.join(','), '-12,12');
+  assert.equal(gesture().config.failOffsetY, 10, 'downward motion releases the opener');
+  assert.equal(gesture().config.runOnJS, undefined, 'gesture recognition stays on the UI thread');
   const hitArea = renderer.root.findByProps({ testID: 'taxi-parameters-swipe' });
   assert.ok(hitArea.findAllByProps({ testID: 'book-ride' }).length);
+  assert.ok(hitArea.props.style.minHeight >= 48);
+  const originalGesture = gesture();
+  await act(async () => renderer.update(React.createElement(BookingPanel, { ...props, quote: { price: 120 } })));
+  assert.equal(gesture(), originalGesture, 'new price renders do not cancel an in-flight pull');
   assert.equal(hitArea.findAllByType('ScrollView').length, 0, 'horizontal tariffs and vertical content stay outside the gesture');
   await pull(-10); await pull(80); await pull(-60, -500, false);
   assert.equal(renderer.root.findAllByType('BottomPanel').length, 0);
@@ -180,6 +187,45 @@ test('taxi footer pull opens the existing parameters and preserves taps and cont
   await act(async () => renderer.update(React.createElement(BookingPanel, { ...props, busy: true })));
   assert.equal(gesture().config.enabled, false);
   await pull(-80, -600);
+  assert.equal(renderer.root.findAllByType('BottomPanel').length, 0);
+  await act(async () => renderer.update(React.createElement(BookingPanel, { ...props, dropoff: null })));
+  assert.equal(gesture().config.enabled, true, 'taxi parameters can also be opened before choosing a route');
+  await pull(-50);
+  assert.ok(button(renderer, 'Комментарий водителю'));
+});
+
+test('delivery uses the same upward footer gesture and preserves ordering, taps and body scrolling', async t => {
+  let renderer, booked = 0;
+  const props = { pickup: point('A'), dropoff: point('B'), tariffs: [{ id: 'car', kind: 'DELIVERY_CAR', minimumPrice: 100 }],
+    selectedKind: 'DELIVERY_CAR', quote: { price: 100 }, quotes: { car: { price: 100 } },
+    details: emptyDeliveryDetails, onDetails() {}, onAddress() {}, onKind() {}, onSwap() {}, onHeight() {}, onBook() { booked++; } };
+  await act(async () => { renderer = create(React.createElement(DeliveryPanel, props)); });
+  t.after(async () => act(async () => renderer.unmount()));
+  const gesture = () => renderer.root.findByType('GestureDetector').props.gesture;
+  const pull = async (translationY, velocityY = 0, success = true) => act(async () => gesture().handlers.onEnd({ translationY, velocityY }, success));
+  const area = renderer.root.findByProps({ testID: 'delivery-parameters-swipe' });
+  assert.equal(gesture().config.enabled, true);
+  assert.equal(gesture().config.activeOffsetY, -8);
+  assert.equal(gesture().config.failOffsetY, 10);
+  assert.equal(gesture().config.runOnJS, undefined);
+  assert.equal(area.findAllByType('ScrollView').length, 0, 'body scroll is outside the fixed swipe area');
+  assert.ok(area.props.style.minHeight >= 48);
+  await tap(renderer, 'Заказать доставку'); assert.equal(booked, 1, 'a normal button tap still books');
+  await pull(-4, -500); await pull(40, -500); await pull(-60, -500, false);
+  assert.equal(renderer.root.findAllByType('BottomPanel').length, 0, 'tiny, reversed and cancelled motions do not open parameters');
+  await pull(-12, -400);
+  assert.ok(renderer.root.findByProps({ label: 'От двери до двери' }));
+  assert.equal(booked, 1, 'a swipe does not submit an order');
+  await act(async () => renderer.root.findByType('BottomPanel').props.onClose());
+  await pull(-50);
+  assert.ok(renderer.root.findByProps({ label: 'Запланировать поездку' }));
+  await act(async () => renderer.root.findByType('BottomPanel').props.onClose());
+  await tap(renderer, 'Параметры доставки');
+  assert.ok(renderer.root.findByProps({ label: 'От двери до двери' }));
+  await act(async () => renderer.root.findByType('BottomPanel').props.onClose());
+  await act(async () => renderer.update(React.createElement(DeliveryPanel, { ...props, busy: true })));
+  assert.equal(gesture().config.enabled, false);
+  await pull(-80, -500);
   assert.equal(renderer.root.findAllByType('BottomPanel').length, 0);
 });
 
