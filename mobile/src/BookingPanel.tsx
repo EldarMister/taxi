@@ -55,9 +55,9 @@ export function BookingPanel({ pickup, dropoff, locatingPickup = false, tariffs,
   const tariff = tariffs[index];
   const editing = surface in titles ? surface as EditField : null;
   const openParameters = () => {
-    if (rootVisible && surface === 'summary' && !busy) navigate('details');
+    if (rootVisible && surface === 'summary' && dropoff && !busy) navigate('details');
   };
-  const parametersPull = useParametersSwipe(openParameters, rootVisible && surface === 'summary' && !busy);
+  const parametersPull = useParametersSwipe(openParameters, rootVisible && surface === 'summary' && !!dropoff && !busy);
   const edit = (field: EditField) => { setReturnTo(surface === 'details' ? 'details' : 'summary'); setDraft(details[field]); navigate(field); };
   const close = () => { Keyboard.dismiss(); navigate(editing || surface === 'payment' || surface === 'passenger' ? returnTo : 'summary'); };
   const dismiss = () => { Keyboard.dismiss(); onSheetClosed(); };
@@ -102,7 +102,7 @@ export function BookingPanel({ pickup, dropoff, locatingPickup = false, tariffs,
   </View>;
   if (hidden) return null;
   return <View pointerEvents="box-none" style={[StyleSheet.absoluteFill, { zIndex: 20 }]}>
-    <Animated.View pointerEvents={rootVisible ? 'auto' : 'none'} accessibilityElementsHidden={surface !== 'summary'} importantForAccessibility={surface === 'summary' ? 'auto' : 'no-hide-descendants'} onLayout={event => { const measured = event.nativeEvent.layout.height; onRootHeight(measured); onHeight(measured); }} testID="client-booking-panel" style={[panelStyle.surface, clientMapPanelStyle.surface, isDark && { backgroundColor: palette.surface, shadowColor: palette.background }, { position: 'absolute', bottom: 0, left: 0, right: 0, paddingTop: 14, transform: [{ translateY: rootTranslateY }] }]}>
+    <Animated.View pointerEvents={rootVisible ? 'auto' : 'none'} accessibilityElementsHidden={surface !== 'summary'} importantForAccessibility={surface === 'summary' ? 'auto' : 'no-hide-descendants'} onLayout={event => { const measured = event.nativeEvent.layout.height; onRootHeight(measured); onHeight(measured); }} testID="client-booking-panel" style={[panelStyle.surface, clientMapPanelStyle.surface, isDark && { backgroundColor: palette.surface, shadowColor: palette.background }, { position: 'absolute', bottom: 0, left: 0, right: 0, paddingTop: 14, paddingBottom: dropoff ? 0 : Math.max(insets.bottom, 12), transform: [{ translateY: rootTranslateY }] }]}>
       <ScrollView testID="client-booking-content" style={clientMapPanelStyle.scroll} nestedScrollEnabled keyboardShouldPersistTaps="handled" bounces={false}>
       {!dropoff ? <View style={b.home}>
         <View style={b.homeTitle}><Image source={require('../assets/logo1.png')} accessibilityLabel="Atlas" resizeMode="contain" style={b.serviceLogo}/><Text style={b.title}>{t('Такси')}</Text></View>
@@ -120,13 +120,11 @@ export function BookingPanel({ pickup, dropoff, locatingPickup = false, tariffs,
         {!!visibleError && <Text accessibilityRole="alert" style={b.error}>{t(visibleError)}</Text>}
       </>}
       </ScrollView>
-      <GestureDetector gesture={parametersPull}>
-        <View testID="taxi-parameters-swipe" collapsable={false} style={{ minHeight: 48, paddingTop: 6, paddingBottom: Math.max(insets.bottom, 12) }}>
-          {dropoff ? footer() : <Pressable accessibilityRole="button" accessibilityLabel={t('Детали поездки')} hitSlop={6} onPress={openParameters} style={{ minHeight: 36, justifyContent: 'center', alignItems: 'center' }}>
-            <View style={[panelStyle.handle, isDark && { backgroundColor: palette.line }]}/>
-          </Pressable>}
+      {!!dropoff && <GestureDetector gesture={parametersPull}>
+        <View testID="taxi-parameters-swipe" collapsable={false} style={{ paddingBottom: Math.max(insets.bottom, 12) }}>
+          {footer()}
         </View>
-      </GestureDetector>
+      </GestureDetector>}
     </Animated.View>
     {surface !== 'summary' && <BottomPanel key={surface} closeRequested={sheetClosing} onClose={dismiss} label={t('Закрыть')}>
       {surface === 'details' && <>

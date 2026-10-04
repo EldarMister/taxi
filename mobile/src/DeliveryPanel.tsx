@@ -56,7 +56,7 @@ export function DeliveryPanel({ language = 'ru', pickup, dropoff, tariffs, selec
       {!!error && <Text accessibilityRole="alert" style={d.error}>{error}</Text>}
       </ScrollView>
       <GestureDetector gesture={parametersPull}>
-        <View testID="delivery-parameters-swipe" collapsable={false} style={{ minHeight: 48, paddingTop: 6, paddingBottom: Math.max(insets.bottom, 12) }}>
+        <View testID="delivery-parameters-swipe" collapsable={false} style={{ paddingBottom: Math.max(insets.bottom, 12) }}>
           {footer()}
         </View>
       </GestureDetector>

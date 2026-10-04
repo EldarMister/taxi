@@ -167,7 +167,6 @@ test('taxi footer pull opens the existing parameters and preserves taps and cont
   assert.equal(gesture().config.runOnJS, undefined, 'gesture recognition stays on the UI thread');
   const hitArea = renderer.root.findByProps({ testID: 'taxi-parameters-swipe' });
   assert.ok(hitArea.findAllByProps({ testID: 'book-ride' }).length);
-  assert.ok(hitArea.props.style.minHeight >= 48);
   const originalGesture = gesture();
   await act(async () => renderer.update(React.createElement(BookingPanel, { ...props, quote: { price: 120 } })));
   assert.equal(gesture(), originalGesture, 'new price renders do not cancel an in-flight pull');
@@ -189,9 +188,8 @@ test('taxi footer pull opens the existing parameters and preserves taps and cont
   await pull(-80, -600);
   assert.equal(renderer.root.findAllByType('BottomPanel').length, 0);
   await act(async () => renderer.update(React.createElement(BookingPanel, { ...props, dropoff: null })));
-  assert.equal(gesture().config.enabled, true, 'taxi parameters can also be opened before choosing a route');
-  await pull(-50);
-  assert.ok(button(renderer, 'Комментарий водителю'));
+  assert.equal(renderer.root.findAllByProps({ testID: 'taxi-parameters-swipe' }).length, 0, 'the taxi home has no handle or empty footer');
+  assert.equal(button(renderer, 'Детали поездки'), undefined);
 });
 
 test('delivery uses the same upward footer gesture and preserves ordering, taps and body scrolling', async t => {
@@ -209,7 +207,6 @@ test('delivery uses the same upward footer gesture and preserves ordering, taps 
   assert.equal(gesture().config.failOffsetY, 10);
   assert.equal(gesture().config.runOnJS, undefined);
   assert.equal(area.findAllByType('ScrollView').length, 0, 'body scroll is outside the fixed swipe area');
-  assert.ok(area.props.style.minHeight >= 48);
   await tap(renderer, 'Заказать доставку'); assert.equal(booked, 1, 'a normal button tap still books');
   await pull(-4, -500); await pull(40, -500); await pull(-60, -500, false);
   assert.equal(renderer.root.findAllByType('BottomPanel').length, 0, 'tiny, reversed and cancelled motions do not open parameters');
