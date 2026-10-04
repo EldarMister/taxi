@@ -4,7 +4,7 @@ import { PushService } from '../src/providers';
 
 const turn = () => new Promise<void>(resolve => setImmediate(resolve));
 const deferred = () => { let resolve!: () => void; const promise = new Promise<void>(done => { resolve = done; }); return { promise, resolve }; };
-function setup() {
+function setup(role = 'CLIENT') {
   const jobs: any[] = [];
   const db = {
     pushJob: {
@@ -18,10 +18,10 @@ function setup() {
       },
       update: async ({ where, data }: any) => Object.assign(jobs.find(job => job.id === where.id), data),
     },
-    user: { findUnique: async ({ where }: any) => ({ notifications: true, role: 'CLIENT', pushTokens: [{ id: where.id, token: where.id }] }) },
+    user: { findUnique: async ({ where }: any) => ({ notifications: true, role, pushTokens: [{ id: where.id, token: where.id }] }) },
     pushToken: { deleteMany: async () => ({ count: 0 }) },
   };
-  const add = (id: string, userId = id) => jobs.push({ id, userId, event: 'chat:message', orderId: 'order', payload: null,
+  const add = (id: string, userId = id, event = 'chat:message') => jobs.push({ id, userId, event, orderId: 'order', payload: null,
     createdAt: new Date(), availableAt: new Date(), sentAt: null, attempts: 0 });
   return { jobs, add, service: new PushService(db as never, { pushProvider: 'expo' } as never),
     secondWorker: () => new PushService(db as never, { pushProvider: 'expo' } as never) };
@@ -73,4 +73,22 @@ test('atomic claims prevent duplicate provider sends across overlapping workers'
   await Promise.all([h.service.deliverPending(), h.secondWorker().deliverPending()]);
   assert.equal(calls, 1);
   assert.equal(h.jobs[0].attempts, 1);
+});
+
+test('obsolete queued notifications are consumed without contacting the provider for either role', async t => {
+  const sent: string[] = [];
+  t.mock.method(globalThis, 'fetch', async (_url: unknown, init: any) => {
+    sent.push(JSON.parse(init.body).data.event); return accepted();
+  });
+  for (const role of ['CLIENT', 'DRIVER']) {
+    const h = setup(role);
+    for (const event of ['order:created', 'order:updated', 'trip:started']) h.add(event, 'same', event);
+    h.add('message', 'same');
+    // One recipient is processed in order, one job per polling cycle.
+    for (let cycle = 0; cycle < h.jobs.length; cycle++) await h.service.deliverPending();
+    assert.equal(h.jobs.every(job => !!job.sentAt), true);
+    await h.service.deliverPending();
+    assert.equal(h.jobs.every(job => job.attempts === 1), true, 'silent jobs are not retried');
+  }
+  assert.deepEqual(sent, ['chat:message', 'chat:message']);
 });

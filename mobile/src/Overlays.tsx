@@ -34,6 +34,9 @@ export function ChatOverlay({ orderId, user, peerName, incoming, onClose, onErro
   const canSend = !!text.trim() || !!photo;
   const composerColor = isDark ? '#1B1D1D' : '#F1F4F8';
   const bubbleColor = isDark ? '#1B1D1D' : '#FFFFFF';
+  const photoCardColor = isDark ? '#242526' : '#F4F4F4';
+  const photoCardBorder = isDark ? '#343637' : '#ECEDEF';
+  const photoIconColor = isDark ? '#ECEDEF' : '#25282C';
 
   const add = (message: ChatMessage) => setMessages(current => current.some(item => item.id === message.id)
     ? current : [...current, message].sort((a, b) => a.createdAt.localeCompare(b.createdAt)));
@@ -186,31 +189,23 @@ export function ChatOverlay({ orderId, user, peerName, incoming, onClose, onErro
         </View>
       </KeyboardAvoidingView>
       {attachmentOpen && <BottomPanel onClose={finishAttachmentClose} closeRequested={attachmentClosing}
-        label={say('Закрыть выбор фото', 'Сүрөт тандоону жабуу')} bottomPadding={Math.max(18, insets.bottom + 8)}>
+        handlePlacement="inside" label={say('Закрыть выбор фото', 'Сүрөт тандоону жабуу')} bottomPadding={Math.max(36, insets.bottom + 18)}>
         <View testID="chat-photo-sheet" style={chatStyles.sheet}>
-          <View style={chatStyles.sheetHeader}>
-            <Text style={[chatStyles.sheetTitle, { color: palette.ink }]}>{say('Добавить фото', 'Сүрөт кошуу')}</Text>
-            <Pressable accessibilityRole="button" accessibilityLabel={say('Закрыть выбор фото', 'Сүрөт тандоону жабуу')}
-              onPress={closeAttachmentMenu} style={chatStyles.sheetClose}>
-              <Icon name="close" size={22} color={palette.muted}/>
-            </Pressable>
-          </View>
+          <Text accessibilityRole="header" style={[chatStyles.sheetTitle, { color: palette.ink }]}>{say('Добавить фото', 'Сүрөт кошуу')}</Text>
+          <View testID="chat-photo-options" style={chatStyles.sheetActions}>
           <Pressable accessibilityRole="button" accessibilityLabel={say('Сделать фото', 'Сүрөткө тартуу')}
             disabled={picking || sending || attachmentClosing}
-            onPress={() => selectPhotoSource('camera')} style={[chatStyles.sheetAction, { borderColor: palette.line }]}>
-            <View style={[chatStyles.sheetIcon, { backgroundColor: palette.elevated }]}><Icon name="camera-outline" size={25} color={palette.accent}/></View>
-            <View style={chatStyles.sheetCopy}><Text style={[chatStyles.sheetActionTitle, { color: palette.ink }]}>{say('Сделать фото', 'Сүрөткө тартуу')}</Text>
-              <Text style={[chatStyles.sheetActionHint, { color: palette.muted }]}>{say('Открыть камеру', 'Камераны ачуу')}</Text></View>
-            <Icon name="chevron-forward" size={20} color={palette.muted}/>
+            onPress={() => selectPhotoSource('camera')} style={({ pressed }) => [chatStyles.sheetAction, { backgroundColor: photoCardColor, borderColor: photoCardBorder, opacity: pressed || attachmentClosing ? .7 : 1 }]}>
+            <Icon name="camera-outline" size={36} color={photoIconColor}/>
+            <Text style={[chatStyles.sheetActionTitle, { color: palette.ink }]}>{say('Камера', 'Камера')}</Text>
           </Pressable>
           <Pressable accessibilityRole="button" accessibilityLabel={say('Выбрать из галереи', 'Галереядан тандоо')}
             disabled={picking || sending || attachmentClosing}
-            onPress={() => selectPhotoSource('library')} style={[chatStyles.sheetAction, { borderColor: palette.line }]}>
-            <View style={[chatStyles.sheetIcon, { backgroundColor: palette.elevated }]}><Icon name="images-outline" size={25} color={palette.accent}/></View>
-            <View style={chatStyles.sheetCopy}><Text style={[chatStyles.sheetActionTitle, { color: palette.ink }]}>{say('Выбрать из галереи', 'Галереядан тандоо')}</Text>
-              <Text style={[chatStyles.sheetActionHint, { color: palette.muted }]}>{say('Фото с устройства', 'Түзмөктөгү сүрөт')}</Text></View>
-            <Icon name="chevron-forward" size={20} color={palette.muted}/>
+            onPress={() => selectPhotoSource('library')} style={({ pressed }) => [chatStyles.sheetAction, { backgroundColor: photoCardColor, borderColor: photoCardBorder, opacity: pressed || attachmentClosing ? .7 : 1 }]}>
+            <Icon name="image-outline" size={36} color={photoIconColor}/>
+            <Text style={[chatStyles.sheetActionTitle, { color: palette.ink }]}>{say('Галерея', 'Галерея')}</Text>
           </Pressable>
+          </View>
         </View>
       </BottomPanel>}
       <Modal visible={!!viewer} transparent animationType="fade" onRequestClose={() => setViewer(null)}>
@@ -225,13 +220,9 @@ export function ChatOverlay({ orderId, user, peerName, incoming, onClose, onErro
 }
 
 const chatStyles = StyleSheet.create({
-  sheet: { paddingHorizontal: 18, paddingTop: 10, gap: 10 },
-  sheetHeader: { minHeight: 38, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 2 },
-  sheetTitle: { fontSize: 19, fontWeight: '700' },
-  sheetClose: { width: 38, height: 38, alignItems: 'center', justifyContent: 'center' },
-  sheetAction: { minHeight: 69, borderWidth: 1, borderRadius: 17, paddingHorizontal: 12, flexDirection: 'row', alignItems: 'center', gap: 12 },
-  sheetIcon: { width: 46, height: 46, borderRadius: 14, alignItems: 'center', justifyContent: 'center' },
-  sheetCopy: { flex: 1, gap: 2 },
-  sheetActionTitle: { fontSize: 15, fontWeight: '700' },
-  sheetActionHint: { fontSize: 12 },
+  sheet: { paddingHorizontal: 20, paddingTop: 12, gap: 18 },
+  sheetTitle: { fontSize: 21, fontWeight: '400' },
+  sheetActions: { flexDirection: 'row', gap: 10 },
+  sheetAction: { flex: 1, minWidth: 0, minHeight: 112, borderWidth: 1, borderRadius: 17, paddingHorizontal: 8, paddingVertical: 20, alignItems: 'center', justifyContent: 'center', gap: 8 },
+  sheetActionTitle: { fontSize: 17, fontWeight: '400', textAlign: 'center' },
 });

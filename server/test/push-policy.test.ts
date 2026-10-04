@@ -1,6 +1,18 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { pushDeliveryData, pushTtlSeconds, safePushFailureReason } from '../src/providers';
+import { OrdersService } from '../src/orders';
+
+test('order push enqueue keeps actionable events and ignores generic state updates', async () => {
+  const queued: any[] = [];
+  const service = new OrdersService({} as never, {} as never, {} as never, {} as never, {} as never, {} as never);
+  const tx = { pushJob: { createMany: async ({ data }: any) => queued.push(...data) } };
+  for (const event of ['order:created', 'order:updated', 'order:assigned', 'trip:completed', 'chat:message']) {
+    await (service as any).push(tx, ['client', 'driver', 'client'], event, 'order');
+  }
+  assert.deepEqual(queued.map(job => job.event), ['order:assigned', 'order:assigned', 'trip:completed', 'trip:completed', 'chat:message', 'chat:message']);
+  assert.equal(queued.every(job => job.orderId === 'order'), true);
+});
 
 test('push TTL follows the lifetime of each event', () => {
   const now = Date.now();

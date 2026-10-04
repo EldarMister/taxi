@@ -11,7 +11,7 @@ import { CreateOrderDto, DriverPositionDto, DriverPreferencesDto, HistoryDto, Me
 import { OrdersService } from './orders';
 import { PrismaService } from './prisma.service';
 import { AdminGuard } from './admin.security';
-import { pushPresentation } from './pushPresentation';
+import { pushNotificationEvents, pushPresentation } from './pushPresentation';
 type AuthedRequest=Request&{actor:Actor};
 type AvatarFile={buffer:Buffer;mimetype:string;size:number};
 export const MAX_AVATAR_BYTES=5*1024*1024;
@@ -73,14 +73,16 @@ export class UsersController {
   @Get('me/notifications') async notifications(@Req() req:AuthedRequest) {
     const asOf=new Date();
     const since=new Date(asOf.getTime()-30*86400000);
-    const where={userId:req.actor.id,createdAt:{gte:since}};
+    const where={userId:req.actor.id,createdAt:{gte:since},event:{in:pushNotificationEvents}};
     const [jobs,unread]=await Promise.all([
       this.db.pushJob.findMany({where,orderBy:{createdAt:'desc'},take:50,select:{id:true,event:true,orderId:true,createdAt:true,readAt:true}}),
       this.db.pushJob.count({where:{...where,readAt:null}}),
     ]);
-    return {asOf,hasUnread:unread>0,items:jobs.map(job=>{
-      const {title,body}=pushPresentation(job.event,req.actor.role);
-      return {id:job.id,event:job.event,orderId:job.orderId,createdAt:job.createdAt,readAt:job.readAt,title,body};
+    return {asOf,hasUnread:unread>0,items:jobs.flatMap(job=>{
+      const presentation=pushPresentation(job.event,req.actor.role);
+      if(!presentation)return [];
+      const {title,body}=presentation;
+      return [{id:job.id,event:job.event,orderId:job.orderId,createdAt:job.createdAt,readAt:job.readAt,title,body}];
     })};
   }
   @Post('me/notifications/read') async readNotifications(@Req() req:AuthedRequest,@Body() dto:ReadNotificationsDto) {

@@ -92,8 +92,14 @@ export class PushService {
           role:true,
           pushTokens:{select:{id:true,token:true}},
         }});
+        const presentation = user ? pushPresentation(job.event, user.role) : null;
+        if (!presentation) {
+          // Consume obsolete queued events without sending or retrying them.
+          await this.db.pushJob.update({where:{id:job.id},data:{sentAt:new Date()}});
+          return;
+        }
         if (user?.notifications && user.pushTokens.length && this.config.pushProvider !== 'development') {
-          const { title, body, sound, channelId } = pushPresentation(job.event, user.role);
+          const { title, body, sound, channelId } = presentation;
           let ttl = pushTtlSeconds(job.event);
           if (job.event === 'order:offer') {
             if(!job.orderId) {await this.db.pushJob.update({where:{id:job.id},data:{sentAt:new Date()}});return;}

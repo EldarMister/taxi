@@ -266,6 +266,19 @@ test('reduced motion restores and closes immediately without a spring', async t 
   assert.equal(h.animations.some(animation => animation.animation === 'spring'), false);
 });
 
+test('embedded handle keeps the photo surface behind the grabber without changing other panels', async t => {
+  const flatten = style => Object.assign({}, ...style.filter(Boolean));
+  const h = await panelHarness().mount(t);
+  assert.equal(flatten(h.panel().props.style).paddingTop, 24);
+  assert.equal(flatten(h.area().props.style).paddingTop, undefined);
+  await h.update({ handlePlacement: 'inside' });
+  assert.equal(flatten(h.panel().props.style).paddingTop, 0);
+  assert.equal(flatten(h.area().props.style).paddingTop, 24);
+  assert.equal(flatten(h.area().props.style).backgroundColor, '#fff');
+  await h.drag(40, 0, false);
+  assert.equal(h.position.get(), 40, 'the embedded grabber still follows the finger');
+});
+
 test('iOS owns keyboard avoidance without Android keyboard listeners', async t => {
   const h = await panelHarness({ platform: 'ios' }).mount(t);
   assert.equal(h.renderer.root.findByType('KeyboardAvoidingView').props.enabled, true);

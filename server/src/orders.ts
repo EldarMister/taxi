@@ -13,6 +13,7 @@ import { driverCanTake } from './driver-eligibility';
 import { detectMediaMime, normalizeContentImage } from './content-domain';
 import { isRestaurantDelivery, ordinaryClientOrders, RESTAURANT_DELIVERY_KEY, syncRestaurantFoodStatus } from './restaurant-delivery-state';
 import { serializeFoodOrder } from './food';
+import { isPushNotificationEvent } from './pushPresentation';
 
 const chatMessageFields = {id:true,orderId:true,senderId:true,clientMessageId:true,text:true,createdAt:true,imageMime:true} as const;
 function chatMessageView(row:{id:string;orderId:string;senderId:string;clientMessageId:string;text:string;createdAt:Date;imageMime:string|null}) {
@@ -57,7 +58,7 @@ export class OrdersService {
       if(quote.kind!=='RIDE'&&passenger)throw new BadRequestException('Для доставки укажите сведения о грузе вместо пассажира');
       const dispatchAfter=details?.scheduledAt?new Date(details.scheduledAt):new Date();
       const created = await tx.order.create({data:{clientId:actor.id,quoteId:quote.id,idempotencyKey:dto.idempotencyKey,kind:quote.kind,deliveryDetails:details?details as Prisma.InputJsonValue:Prisma.DbNull,dispatchAfter,pickup:quote.pickup as Prisma.InputJsonValue,dropoff:quote.dropoff as Prisma.InputJsonValue,geometry:quote.geometry as Prisma.InputJsonValue,distanceMeters:quote.distanceMeters,durationSeconds:quote.durationSeconds,price:quote.price,commission:quote.commission,waitingGraceMinutes:quote.tariff.waitingGraceMinutes,freeWaitingMinutes:quote.tariff.freeWaitingMinutes,waitingPricePerMinute:quote.tariff.waitingPricePerMinute,comment:dto.comment?.trim()??'',passengerName:passenger?.name,passengerPhone:passenger?.phone,searchExpiresAt:new Date(dispatchAfter.getTime()+OFFER_SECONDS*1000),history:{create:{status:'SEARCHING',actorId:actor.id}}}});
-      await this.push(tx,[actor.id],'order:created',created.id); return created;
+      return created;
     });
     await this.dispatchOrder(order.id); await this.publish(order.id); return this.serialize(order.id,false,actor.id);
   }
@@ -67,7 +68,7 @@ export class OrdersService {
     if(!order) throw new NotFoundException('Заказ не найден'); return order;
   }
   private async push(tx:Prisma.TransactionClient,users:string[],event:string,orderId:string) {
-    if(users.length) await tx.pushJob.createMany({data:[...new Set(users)].map(userId=>({userId,event,orderId}))});
+    if(users.length && isPushNotificationEvent(event)) await tx.pushJob.createMany({data:[...new Set(users)].map(userId=>({userId,event,orderId}))});
   }
   private participants(order:Order) {return [...(isRestaurantDelivery(order)?[]:[order.clientId]),...(order.driverId?[order.driverId]:[])];}
   async active(actor:Actor) {

@@ -8,7 +8,7 @@ import { useTheme } from './design/theme';
 import { useSheetDragToClose } from './useSheetDragToClose';
 
 /** A panel in the map screen's own view tree; the map and draft stay mounted. */
-export function BottomPanel({ children, onClose, expanded = false, topGap, bottomPadding, edgeToEdge = false, label = 'Закрыть панель', closeRequested = false }: PropsWithChildren<{ onClose: () => void; expanded?: boolean; topGap?: number; bottomPadding?: number; edgeToEdge?: boolean; label?: string; closeRequested?: boolean }>) {
+export function BottomPanel({ children, onClose, expanded = false, topGap, bottomPadding, edgeToEdge = false, handlePlacement = 'outside', label = 'Закрыть панель', closeRequested = false }: PropsWithChildren<{ onClose: () => void; expanded?: boolean; topGap?: number; bottomPadding?: number; edgeToEdge?: boolean; handlePlacement?: 'outside' | 'inside'; label?: string; closeRequested?: boolean }>) {
   const { isDark, palette } = useTheme();
   const insets = useSafeAreaInsets();
   const reducedMotion = useMotionPreference();
@@ -100,7 +100,7 @@ export function BottomPanel({ children, onClose, expanded = false, topGap, botto
     .onEnd((event, success) => settle(event.velocityY, success)).onFinalize(() => settle(0, false)),
   [layoutReady, nativeScroll, scrollRef, hasScrollChild, scrollY, touchX, touchY, beganAtTop, dragging, startDrag, updateDrag, settle]);
   const backdropStyle = useAnimatedStyle(() => ({ opacity: .28 * (1 - Math.min(1, Math.max(0, position.get()) / travel.get())) }));
-  // The handle lives outside the clipped content, reserving no space above the header.
+  // Most panels keep the handle above their content; the photo chooser embeds it.
   const content = wrapScrollChild(children, scrollChild, nativeScroll, scroll, setScrollRef);
   const keyboardOffset = screenTop + (Platform.OS === 'android' ? insets.top : 0);
   return <View ref={host} onLayout={measureHost} style={p.host}><KeyboardAvoidingView behavior="padding" enabled={Platform.OS === 'ios'} keyboardVerticalOffset={keyboardOffset} style={p.keyboard}>
@@ -108,11 +108,11 @@ export function BottomPanel({ children, onClose, expanded = false, topGap, botto
       <Pressable accessibilityRole="button" accessibilityLabel={label} onPress={closePanel} style={StyleSheet.absoluteFill}/>
     </Animated.View>
     <View testID="bottom-panel-dock" pointerEvents="box-none" style={[p.panelDock, { paddingTop: topGap ?? insets.top + 24, paddingBottom: keyboardLift }]}>
-      <Animated.View testID="bottom-panel" onLayout={handlePanelLayout} accessibilityViewIsModal style={[p.panel, expanded && p.expanded, { opacity: layoutReady && reducedMotion !== null ? 1 : 0 }, animatedStyle]}>
+      <Animated.View testID="bottom-panel" onLayout={handlePanelLayout} accessibilityViewIsModal style={[p.panel, handlePlacement === 'inside' && { paddingTop: 0 }, expanded && p.expanded, { opacity: layoutReady && reducedMotion !== null ? 1 : 0 }, animatedStyle]}>
         {!edgeToEdge && <GestureDetector gesture={gesture}><View collapsable={false} style={p.handleTouch}>
           <Pressable accessibilityRole="button" accessibilityLabel={label} onPress={closePanel} style={p.handleButton}><View style={[p.handle, isDark && { backgroundColor: palette.line }]}/></Pressable>
         </View></GestureDetector>}
-        <GestureDetector gesture={contentPan}><View collapsable={false} testID="bottom-panel-drag-area" style={[p.content, expanded && p.expanded, edgeToEdge && p.edgeToEdge, { backgroundColor: palette.surface, paddingBottom: bottomPadding ?? Math.max(insets.bottom, 10) }]}>{content}</View></GestureDetector>
+        <GestureDetector gesture={contentPan}><View collapsable={false} testID="bottom-panel-drag-area" style={[p.content, handlePlacement === 'inside' && !edgeToEdge && { paddingTop: 24 }, expanded && p.expanded, edgeToEdge && p.edgeToEdge, { backgroundColor: palette.surface, paddingBottom: bottomPadding ?? Math.max(insets.bottom, 10) }]}>{content}</View></GestureDetector>
       </Animated.View>
     </View>
   </KeyboardAvoidingView></View>;

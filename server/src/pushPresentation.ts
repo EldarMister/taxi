@@ -1,4 +1,17 @@
-export function pushPresentation(event: string, role: string) {
+export const pushNotificationEvents = [
+  'registration:submitted', 'registration:review_started', 'registration:document_approved',
+  'registration:correction_required', 'registration:approved', 'registration:rejected',
+  'registration:blocked', 'registration:activated', 'registration:document_expiring', 'registration:document_expired',
+  'order:offer', 'order:assigned', 'chat:message', 'trip:arrived', 'trip:completed', 'rider:coming',
+];
+
+export function isPushNotificationEvent(event: string) {
+  return pushNotificationEvents.includes(event);
+}
+
+type PushPresentation = { title: string; body: string; sound: string; channelId: string };
+
+export function pushPresentation(event: string, role: string): PushPresentation | null {
   const driver = role === 'DRIVER';
   if(event==='registration:submitted')return {title:'Анкета отправлена',body:'Мы получили данные и сообщим о ходе проверки',sound:'default',channelId:'registration'};
   if(event==='registration:review_started')return {title:'Проверка началась',body:'Специалист начал проверять вашу анкету',sound:'default',channelId:'registration'};
@@ -10,10 +23,6 @@ export function pushPresentation(event: string, role: string) {
   if(event==='registration:activated')return {title:'Профиль исполнителя активирован',body:'Теперь можно перейти к работе',sound:'default',channelId:'registration'};
   if(event==='registration:document_expiring')return {title:'Срок документа заканчивается',body:'Загрузите новый документ, чтобы сохранить допуск',sound:'default',channelId:'registration'};
   if(event==='registration:document_expired')return {title:'Документ просрочен',body:'Обновите документ в анкете исполнителя',sound:'default',channelId:'registration'};
-  if (event === 'order:created') return {
-    title: 'Заказ создан', body: 'Ищем для вас водителя',
-    sound: 'default', channelId: 'orders',
-  };
   if (event === 'order:offer') return {
     title: 'Новый заказ', body: 'Откройте приложение, чтобы принять заказ',
     sound: driver ? 'driver_new_order.wav' : 'default', channelId: driver ? 'driver-orders-v2' : 'orders',
@@ -38,5 +47,6 @@ export function pushPresentation(event: string, role: string) {
     title: 'Пассажир выходит', body: 'Пассажир сообщил, что уже выходит',
     sound: 'default', channelId: 'orders',
   };
-  return { title: 'Ваша поездка', body: 'Статус поездки изменился', sound: 'default', channelId: 'orders' };
+  // Realtime state updates are silent; only explicitly named events alert a user.
+  return null;
 }

@@ -329,7 +329,8 @@ test('concurrent creation offers only the nearest driver and accepts only that d
   const winner=accepted[0].status===201?driver1:driver2;
   assert.equal((await db.order.findUniqueOrThrow({where:{id:order.id}})).driverId,winner.user.id);
   const pushJobs=await db.pushJob.findMany({where:{orderId:order.id},select:{userId:true,event:true}});
-  assert.equal(pushJobs.filter(job=>job.userId===client.user.id&&job.event==='order:created').length,1);
+  assert.equal(pushJobs.filter(job=>job.userId===client.user.id&&job.event==='order:created').length,0);
+  assert.equal(pushJobs.some(job=>job.event==='order:updated'),false);
   assert.deepEqual(pushJobs.filter(job=>job.event==='order:offer').map(job=>job.userId),[driver1.user.id]);
   assert.deepEqual(pushJobs.filter(job=>job.event==='order:assigned'),[{userId:client.user.id,event:'order:assigned'}]);
   await api.get(`/api/orders/${order.id}`).set(headers(client2)).expect(403);

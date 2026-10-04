@@ -9,7 +9,7 @@ const { act, create } = require('react-test-renderer');
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
-function chatHarness(platform = 'android') {
+function chatHarness(platform = 'android', isDark = true) {
   const source = fs.readFileSync(path.join(__dirname, '../src/Overlays.tsx'), 'utf8');
   const code = ts.transpileModule(source, { compilerOptions: {
     module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX, esModuleInterop: true,
@@ -52,9 +52,9 @@ function chatHarness(platform = 'android') {
       if (id === 'react-native-gesture-handler') return { GestureHandlerRootView: 'GestureHandlerRootView' };
       if (id === './BottomPanel') return { BottomPanel: 'BottomPanel' };
       if (id === './api') return { api, messageOf: error => String(error), requestId: () => 'client-message-id' };
-      if (id === './design/theme') return { useTheme: () => ({ isDark: true, palette: {
+      if (id === './design/theme') return { useTheme: () => ({ isDark, palette: isDark ? {
         background: '#050505', surface: '#111111', line: '#333333', ink: '#ffffff', muted: '#aaaaaa', accent: '#ffffff', accentText: '#000000',
-      } }) };
+      } : { background: '#F4F8FD', surface: '#FFFFFF', line: '#E5EDF6', ink: '#101D38', muted: '#63718D', accent: '#087FFF', accentText: '#FFFFFF' } }) };
       if (id === './ui') return { Icon: 'Icon', localize: (language, ru, ky) => language === 'ky' ? ky : ru };
       if (id === './AddressPicker') return { AddressPicker: 'AddressPicker' };
       throw Error(id);
@@ -89,12 +89,13 @@ test('chat attachment can send a photo while the send button stays hidden for em
   assert.equal(state.inputBlurs, 1);
   const attachment = renderer.root.findByType('BottomPanel');
   assert.equal(attachment.props.expanded, undefined, 'photo choices size to their content');
-  assert.equal(attachment.props.bottomPadding, 28);
+  assert.equal(attachment.props.bottomPadding, 38);
+  assert.equal(attachment.props.handlePlacement, 'inside');
   let ancestor = attachment.parent;
   while (ancestor && ancestor.type !== 'GestureHandlerRootView') ancestor = ancestor.parent;
   assert.ok(ancestor && ancestor.parent.type === 'Modal', 'native modal owns its gesture root');
   assert.equal(avoiding.props.accessibilityElementsHidden, true);
-  await act(async () => { buttons('Закрыть выбор фото')[0].props.onPress(); });
+  await act(async () => renderer.root.findAllByType('Modal')[0].props.onRequestClose());
   assert.equal(renderer.root.findByType('BottomPanel').props.closeRequested, true);
   assert.equal(renderer.root.findAllByProps({ testID: 'chat-photo-sheet' }).length, 1, 'close waits for the shared exit transition');
   await finishAttachmentClose();
@@ -183,4 +184,29 @@ test('iOS chat retains keyboard padding compensation', async () => {
   assert.equal(avoiding.props.behavior, 'padding');
   assert.equal(renderer.root.findByType('ScrollView').props.keyboardDismissMode, 'interactive');
   await act(async () => renderer.unmount());
+});
+
+test('photo chooser uses two equal graphite cards with readable light and dark themes', async () => {
+  for (const isDark of [false, true]) {
+    const h = chatHarness('android', isDark);
+    let renderer;
+    await act(async () => { renderer = h.render(); });
+    await act(async () => renderer.root.findByProps({ accessibilityLabel: 'Прикрепить фото' }).props.onPress());
+    const sheet = renderer.root.findByProps({ testID: 'chat-photo-sheet' });
+    const options = renderer.root.findByProps({ testID: 'chat-photo-options' });
+    assert.equal(options.props.style.flexDirection, 'row');
+    assert.equal(options.findAllByType('Pressable').length, 2);
+    assert.deepEqual(sheet.findAllByType('Text').map(node => node.children.join('')), ['Добавить фото', 'Камера', 'Галерея']);
+    assert.deepEqual(sheet.findAllByType('Icon').map(node => node.props.name), ['camera-outline', 'image-outline']);
+    for (const card of options.findAllByType('Pressable')) {
+      const style = Object.assign({}, ...card.props.style({ pressed: false }));
+      assert.equal(style.flex, 1);
+      assert.ok(style.minHeight >= 104);
+      assert.equal(style.backgroundColor, isDark ? '#242526' : '#F4F4F4');
+      assert.equal(card.findByType('Icon').props.color, isDark ? '#ECEDEF' : '#25282C');
+      assert.equal(card.findByType('Text').props.style.at(-1).color, isDark ? '#ffffff' : '#101D38');
+      assert.ok(Object.assign({}, ...card.props.style({ pressed: true })).opacity < style.opacity);
+    }
+    await act(async () => renderer.unmount());
+  }
 });
