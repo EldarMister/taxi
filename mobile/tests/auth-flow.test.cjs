@@ -25,6 +25,12 @@ const deferred = () => {
 
 const textOf = node => typeof node === 'string' || typeof node === 'number'
   ? String(node) : (node?.children || []).map(textOf).join(' ');
+const themeExports = {};
+vm.runInNewContext(ts.transpileModule(fs.readFileSync(path.join(__dirname, '../src/design/theme.tsx'), 'utf8'), {
+  compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX, esModuleInterop: true },
+}).outputText, { exports: themeExports, require: id =>
+  id === 'react' || id === 'react/jsx-runtime' ? require(id) : {} });
+const flattenStyle = style => Array.isArray(style) ? Object.assign({}, ...style.filter(Boolean).map(flattenStyle)) : style;
 
 async function setup(t, options = {}) {
   const calls = [], logins = [], intervals = new Map(), timeouts = new Map(), backHandlers = new Set(), keyboardHandlers = new Map(), motionHandlers = new Set(), animations = [];
@@ -59,7 +65,7 @@ async function setup(t, options = {}) {
     colors: { blue: '#007AFF', muted: '#7D8DA5', ink: '#102039', danger: '#D33445', line: '#DDD' },
     s: { row: {} }, tr: () => value => value,
   };
-  const theme = { useTheme: () => ({ isDark: !!options.dark }) };
+  const theme = { useTheme: () => ({ isDark: !!options.dark, palette: themeExports.themePalettes[options.dark ? 'dark' : 'light'] }) };
   const exports = {};
   vm.runInNewContext(compiled, {
     exports, process: { env: {} }, Date: TestDate,
@@ -130,6 +136,10 @@ async function setup(t, options = {}) {
     unmount: async () => act(async () => renderer.unmount()),
     keyboard: async visible => act(async () => keyboardHandlers.get(visible ? 'keyboardDidShow' : 'keyboardDidHide')?.()),
     reduceMotion: async value => act(async () => { for (const callback of motionHandlers) callback(value); }),
+    changeTheme: async dark => act(async () => {
+      options.dark = dark;
+      renderer.update(React.createElement(exports.AuthScreen, renderer.root.findByType(exports.AuthScreen).props));
+    }),
   };
   return h;
 }
@@ -161,6 +171,37 @@ test('dark login keeps phone and SMS code fields legible', async t => {
   await h.submit();
   assert.equal(h.renderer.root.findByProps({ testID: 'auth-digit-0' }).props.style[1].backgroundColor, '#202020');
   assert.equal(h.renderer.root.findByType('SafeAreaView').props.style.backgroundColor, '#050505');
+});
+
+test('login follows the resolved theme on phone, language menu and SMS screens without losing input', async t => {
+  const h = await setup(t);
+  const light = themeExports.themePalettes.light;
+  const dark = themeExports.themePalettes.dark;
+  assert.equal(h.renderer.root.findByType('SafeAreaView').props.style.backgroundColor, light.background);
+  assert.equal(h.renderer.root.findByType('StatusBar').props.style, 'dark');
+  assert.match(h.renderer.root.findByType('Image').props.source, /logo light/);
+  assert.equal(h.input('auth-phone').props.style.color, light.ink);
+  assert.equal(h.input('auth-phone').props.keyboardAppearance, 'light');
+  await h.change('auth-phone', '700123456');
+  assert.equal(flattenStyle(h.button().props.style).backgroundColor, light.accent);
+  await act(async () => h.renderer.root.findByProps({ testID: 'auth-language-selector' }).props.onPress());
+  const popup = h.renderer.root.findByType('Modal');
+  assert.ok(popup.findAllByType('View').some(node => flattenStyle(node.props.style)?.backgroundColor === light.elevated));
+  await h.press('English');
+  await h.changeTheme(true);
+  assert.equal(h.renderer.root.findByType('SafeAreaView').props.style.backgroundColor, dark.background);
+  assert.equal(h.renderer.root.findByType('StatusBar').props.style, 'light');
+  assert.match(h.renderer.root.findByType('Image').props.source, /logo dark/);
+  assert.equal(h.input('auth-phone').props.value, '700 123 456');
+  await h.submit();
+  await h.change('auth-code', '12');
+  await h.changeTheme(false);
+  assert.equal(h.renderer.root.findByType('SafeAreaView').props.style.backgroundColor, light.background);
+  assert.equal(h.renderer.root.findByType('StatusBar').props.style, 'dark');
+  assert.equal(h.input('auth-code').props.value, '12');
+  assert.equal(h.input('auth-code').props.keyboardAppearance, 'light');
+  assert.ok(h.renderer.root.findAllByType('View').some(node => flattenStyle(node.props.style)?.backgroundColor === light.surface));
+  assert.equal(h.calls.length, 1, 'changing appearance must not resend the SMS');
 });
 
 test('successful SMS request replaces the phone form with a separate code form', async t => {

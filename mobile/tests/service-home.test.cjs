@@ -15,6 +15,7 @@ test('home reference controls change address, split delivery cards, and show unr
     module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX, esModuleInterop: true,
   } }).outputText;
   let unread = false;
+  let windowHeight = 800;
   const posts = [];
   const timers = new Map();
   const animation = { started: 0, blinkTargets: [], blinkDurations: [] };
@@ -40,7 +41,7 @@ test('home reference controls change address, split delivery cards, and show unr
         Easing: { ease: 'ease', inOut: () => 'ease' },
         ActivityIndicator: 'ActivityIndicator', Image: 'Image', Pressable: 'Pressable',
         ScrollView: 'ScrollView', StyleSheet: { create: value => value, hairlineWidth: 1 }, Text: 'Text', View: 'View',
-        useWindowDimensions: () => ({ width: 390, height: 800 }) };
+        useWindowDimensions: () => ({ width: 390, height: windowHeight }) };
       if (id === 'expo-linear-gradient') return { LinearGradient: 'LinearGradient' };
       if (id === 'react-native-safe-area-context') return { SafeAreaView: 'SafeAreaView', useSafeAreaInsets: () => ({ top: 20, left: 0, right: 0, bottom: 20 }) };
       if (id === '../BottomPanel') return { BottomPanel: 'BottomPanel' };
@@ -75,7 +76,7 @@ test('home reference controls change address, split delivery cards, and show unr
   const searchIcons = renderer.root.findByProps({ accessibilityLabel: 'Куда едем?' }).findAllByType('Icon');
   assert.equal(searchIcons.at(-1).props.name, 'chevron-forward');
   assert.equal(searchIcons.at(-1).props.color, '#4D5663');
-  assert.ok(button('Такси').props.containerStyle.height <= 116, 'service cards leave space for the restaurant row');
+  assert.equal(button('Такси').props.containerStyle.height, 116, 'services retain their normal size');
   assert.equal(renderer.root.findAllByProps({ testID: 'notification-dot' }).length, 0);
   const prompt = 'Куда едем?';
   const animatedText = () => renderer.root.findByType('AnimatedText').children.join('');
@@ -122,5 +123,17 @@ test('home reference controls change address, split delivery cards, and show unr
   assert.equal(renderer.root.findAllByType('SpringPressable').filter(node => node.props.testID?.startsWith('home-restaurant-')).length, 3);
   await act(async () => renderer.root.findByProps({ testID: 'home-restaurant-first' }).props.onPress());
   assert.equal(actions.at(-1), 'restaurant:first');
+  for (const height of [640, 1100]) {
+    windowHeight = height;
+    await act(async () => renderer.update(React.createElement(exports.ServiceHomeScreen, {
+      ...props, restaurants, hasOrder: true, savedPlaces: { home: { address: 'Ленина 18' } },
+    })));
+    for (const service of ['Такси', 'Доставка', 'Грузовой', 'Еда']) {
+      assert.equal(button(service).props.containerStyle.height, 116, 'screen height, restaurants and an active order must not shrink services');
+      assert.equal(button(service).props.containerStyle.flexShrink, 0);
+    }
+    const scroll = renderer.root.findByProps({ testID: 'service-home-scroll' });
+    assert.equal(scroll.findAllByType('SpringPressable').filter(node => node.props.testID?.startsWith('home-restaurant-')).length, 3);
+  }
   await act(async () => renderer.unmount());
 });

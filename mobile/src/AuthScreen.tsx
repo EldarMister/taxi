@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, Alert, BackHandler, Image, Keyboard, KeyboardAvoidingView, Linking, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View, useWindowDimensions } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
@@ -7,10 +7,13 @@ import { Icon, s, tr } from './ui';
 import type { Language, Session } from './types';
 import { CodeCells, useReducedMotion } from './auth/AuthMotion';
 import { readSelectedLanguage, writeSelectedLanguage } from './auth/languageStore';
+import { useTheme } from './design/theme';
 
 type CodeResponse = { retryAfterSeconds?: number; development?: boolean; developmentCode?: string };
 
 export function AuthScreen({ onLogin }: { onLogin: (session: Session, language: Language) => Promise<void> }) {
+  const { isDark, palette } = useTheme();
+  const a = useAuthStyles();
   const { height: screenHeight } = useWindowDimensions();
   const insets = useSafeAreaInsets();
   const [language, setLanguage] = useState<Language>('ru');
@@ -135,34 +138,34 @@ export function AuthScreen({ onLogin }: { onLogin: (session: Session, language: 
 
   return (
     <SafeAreaView style={a.screen}>
-      <StatusBar style="light" backgroundColor="#050505" />
+      <StatusBar style={isDark ? 'light' : 'dark'} backgroundColor={palette.background} />
       <KeyboardAvoidingView style={a.fill} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
         <ScrollView style={a.fill} keyboardShouldPersistTaps="handled" keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'} showsVerticalScrollIndicator={false} contentContainerStyle={[a.content, { minHeight: screenHeight - insets.top - insets.bottom }]}>
           {step === 'phone' ? (
             <>
               <View style={[a.hero, { minHeight: Math.min(330, Math.max(240, screenHeight * .325)) }]}>
-                <Image source={require('../assets/logo dark.png')} resizeMode="contain" accessibilityLabel="ATLAS" style={a.logo} />
+                <Image source={isDark ? require('../assets/logo dark.png') : require('../assets/logo light.png')} resizeMode="contain" accessibilityLabel="ATLAS" style={a.logo} />
                 <Text style={a.title}>{t('Вход в приложение')}</Text>
                 <Text style={a.subtitle}>{t('Быстрые и безопасные поездки\nвсегда рядом')}</Text>
               </View>
               <View style={a.form}>
                 <View style={a.field}>
-                  <Icon name="call-outline" size={25} color="#FFFFFF" />
+                  <Icon name="call-outline" size={25} color={palette.ink} />
                   <View style={a.fill}>
                     <Text style={a.fieldLabel}>{t('Номер телефона')}</Text>
                     <View style={[s.row, { gap: 7 }]}>
                       <Text style={a.phonePrefix}>+996</Text>
-                      <TextInput testID="auth-phone" accessibilityLabel={t('Номер телефона')} keyboardType="phone-pad" textContentType="telephoneNumber" autoComplete="tel-national" editable={!busy} value={displayPhone(phone)} onChangeText={value => {
+                      <TextInput testID="auth-phone" accessibilityLabel={t('Номер телефона')} keyboardType="phone-pad" keyboardAppearance={isDark ? 'dark' : 'light'} textContentType="telephoneNumber" autoComplete="tel-national" editable={!busy} value={displayPhone(phone)} onChangeText={value => {
                         let digits = value.replace(/\D/g, '');
                         if (digits.startsWith('996') && digits.length > 9) digits = digits.slice(3);
                         setPhone(digits.slice(0, 9)); setError('');
-                      }} placeholder="700 123 456" placeholderTextColor="#858585" selectionColor="#FFFFFF" style={a.phoneInput} maxLength={17} onSubmitEditing={() => void send()} />
+                      }} placeholder="700 123 456" placeholderTextColor={palette.muted} selectionColor={palette.accent} style={a.phoneInput} maxLength={17} onSubmitEditing={() => void send()} />
                     </View>
                   </View>
                 </View>
                 {error ? <Text accessibilityRole="alert" style={a.error}>{t(error)}</Text> : null}
-                <Pressable testID="auth-continue" accessibilityRole="button" accessibilityState={{ disabled: phone.length !== 9 || busy, busy }} disabled={phone.length !== 9 || busy} onPress={() => void send()} style={[a.continueButton, phone.length === 9 && !busy && a.continueActive]}>
-                  {busy ? <ActivityIndicator color="#111111" /> : <Text style={a.continueText}>{t('Продолжить')}</Text>}
+                <Pressable testID="auth-continue" accessibilityRole="button" accessibilityState={{ disabled: phone.length !== 9 || busy, busy }} disabled={phone.length !== 9 || busy} onPress={() => void send()} style={[a.continueButton, phone.length === 9 && a.continueActive]}>
+                  {busy ? <ActivityIndicator color={palette.accentText} /> : <Text style={[a.continueText, phone.length === 9 && a.continueTextActive]}>{t('Продолжить')}</Text>}
                 </Pressable>
                 <Text style={a.footnote}>{text('Отправим код подтверждения\nна ваш номер телефона', 'Телефон номериңизге\nырастоо кодун жөнөтөбүз', 'We will send a confirmation code\nto your phone number')}</Text>
                 <View style={a.formSpacer} />
@@ -174,21 +177,21 @@ export function AuthScreen({ onLogin }: { onLogin: (session: Session, language: 
             </>
           ) : (
             <View style={a.codeScreen}>
-              <Pressable accessibilityRole="button" accessibilityLabel={t('Назад')} onPress={back} style={a.back}><Icon name="arrow-back" color="#FFFFFF" /></Pressable>
+              <Pressable accessibilityRole="button" accessibilityLabel={t('Назад')} onPress={back} style={a.back}><Icon name="arrow-back" color={palette.ink} /></Pressable>
               <Text style={a.title}>{text('Введите код', 'Кодду киргизиңиз', 'Enter the code')}</Text>
               <Text style={a.subtitle}>{developmentCode ? text('Тестовый вход для номера', 'Номер үчүн сыноо кирүүсү', 'Test sign in for') : text('Отправили SMS на номер', 'Бул номерге SMS жөнөтүлдү', 'We sent an SMS to')}</Text>
               <Pressable accessibilityRole="button" disabled={busy} onPress={back} style={a.editPhone}>
                 <Text style={a.sentPhone}>{`+996 ${displayPhone(sentPhone.slice(4))}`}</Text>
-                <Icon name="pencil-outline" color="#FFFFFF" size={17} />
+                <Icon name="pencil-outline" color={palette.ink} size={17} />
               </Pressable>
               <Pressable onPress={() => input.current?.focus()} style={a.codeEntry}>
                 <CodeCells code={code} focused={codeFocused} error={error} verified={verified} reducedMotion={reducedMotion} />
-                <TextInput ref={input} testID="auth-code" accessibilityLabel={t('Код из SMS')} accessibilityHint={text('Шесть цифр. Код проверится автоматически.', 'Алты сан. Код автоматтык түрдө текшерилет.', 'Six digits. The code will be checked automatically.')} value={code} editable={!busy} onChangeText={changeCode} onFocus={() => setCodeFocused(true)} onBlur={() => setCodeFocused(false)} keyboardType="number-pad" textContentType="oneTimeCode" autoComplete="sms-otp" maxLength={6} caretHidden autoFocus underlineColorAndroid="transparent" selectionColor="transparent" selection={error ? { start: 0, end: code.length } : undefined} style={a.hiddenInput} onSubmitEditing={() => void login()} />
+                <TextInput ref={input} testID="auth-code" accessibilityLabel={t('Код из SMS')} accessibilityHint={text('Шесть цифр. Код проверится автоматически.', 'Алты сан. Код автоматтык түрдө текшерилет.', 'Six digits. The code will be checked automatically.')} value={code} editable={!busy} onChangeText={changeCode} onFocus={() => setCodeFocused(true)} onBlur={() => setCodeFocused(false)} keyboardType="number-pad" keyboardAppearance={isDark ? 'dark' : 'light'} textContentType="oneTimeCode" autoComplete="sms-otp" maxLength={6} caretHidden autoFocus underlineColorAndroid="transparent" selectionColor="transparent" selection={error ? { start: 0, end: code.length } : undefined} style={a.hiddenInput} onSubmitEditing={() => void login()} />
               </Pressable>
               {error ? <Text accessibilityRole="alert" style={a.error}>{t(error)}</Text> : null}
               {developmentCode ? <Text style={a.demoCode}>{text('Тестовый код', 'Сыноо коду', 'Test code')}: {developmentCode}</Text> : null}
               <Pressable accessibilityRole="button" disabled={busy || secondsLeft > 0} onPress={() => void send()} style={a.resend}>
-                <Text style={[a.resendText, secondsLeft > 0 && { color: '#888888' }]}>{secondsLeft > 0 ? text(`Отправить код ещё раз через ${secondsLeft} с`, `Кодду ${secondsLeft} сек кийин кайра жөнөтүү`, `Resend code in ${secondsLeft}s`) : t('Отправить ещё раз')}</Text>
+                <Text style={[a.resendText, secondsLeft > 0 && { color: palette.muted }]}>{secondsLeft > 0 ? text(`Отправить код ещё раз через ${secondsLeft} с`, `Кодду ${secondsLeft} сек кийин кайра жөнөтүү`, `Resend code in ${secondsLeft}s`) : t('Отправить ещё раз')}</Text>
               </Pressable>
               <Pressable accessibilityRole="button" onPress={back} disabled={busy} style={a.resend}><Text style={a.resendText}>{text('Изменить номер телефона', 'Телефон номерин өзгөртүү', 'Change phone number')}</Text></Pressable>
               <View style={a.formSpacer} />
@@ -204,7 +207,7 @@ export function AuthScreen({ onLogin }: { onLogin: (session: Session, language: 
           <View style={[a.menu, { left: languageAnchor.x, width: languageAnchor.width, top: Math.max(insets.top + 8, languageAnchor.y + insets.top - 172) }]}>
             {(['ru', 'ky', 'en'] as Language[]).map(item => <Pressable key={item} accessibilityRole="button" accessibilityState={{ selected: language === item }} onPress={() => selectLanguage(item)} style={a.menuItem}>
               <Text style={[a.menuText, language === item && a.menuTextActive]}>{languageName(item)}</Text>
-              {language === item ? <Icon name="checkmark" size={21} color="#FFFFFF" /> : null}
+              {language === item ? <Icon name="checkmark" size={21} color={palette.accent} /> : null}
             </Pressable>)}
           </View>
           <View style={{ position: 'absolute', left: languageAnchor.x, top: languageAnchor.y + insets.top, width: languageAnchor.width }}><LanguageSelector language={language} expanded onPress={() => setLanguageMenu(false)} /></View>
@@ -215,6 +218,7 @@ export function AuthScreen({ onLogin }: { onLogin: (session: Session, language: 
 }
 
 function LegalLinks({ language }: { language: Language }) {
+  const a = useAuthStyles();
   const privacyUrl = process.env.EXPO_PUBLIC_PRIVACY_URL;
   const termsUrl = process.env.EXPO_PUBLIC_TERMS_URL;
   const en = language === 'en';
@@ -231,36 +235,42 @@ function LegalLinks({ language }: { language: Language }) {
 
 function languageName(language: Language) { return language === 'ky' ? 'Кыргызский' : language === 'en' ? 'English' : 'Русский'; }
 function LanguageSelector({ language, expanded, onPress }: { language: Language; expanded: boolean; onPress: () => void }) {
+  const { palette } = useTheme();
+  const a = useAuthStyles();
   return <Pressable testID="auth-language-selector" accessibilityRole="button" accessibilityState={{ expanded }} onPress={onPress} style={a.languageSelector}>
-    <View style={a.globeCircle}><Icon name="globe-outline" size={22} color="#FFFFFF" /></View>
+    <View style={a.globeCircle}><Icon name="globe-outline" size={22} color={palette.ink} /></View>
     <Text style={a.selectedLanguage}>{languageName(language)}</Text>
-    <Icon name={expanded ? 'chevron-up' : 'chevron-down'} size={21} color="#E8E8E8" />
+    <Icon name={expanded ? 'chevron-up' : 'chevron-down'} size={21} color={palette.ink} />
   </Pressable>;
 }
 
-const a = StyleSheet.create({
-  fill: { flex: 1 }, screen: { flex: 1, backgroundColor: '#050505' }, content: { flexGrow: 1, backgroundColor: '#050505' },
+function useAuthStyles() {
+  const { isDark, palette } = useTheme();
+  return useMemo(() => StyleSheet.create({
+  fill: { flex: 1 }, screen: { flex: 1, backgroundColor: palette.background }, content: { flexGrow: 1, backgroundColor: palette.background },
   hero: { alignItems: 'center', justifyContent: 'center', paddingHorizontal: 20, paddingTop: 6, paddingBottom: 18 },
   logo: { width: 245, height: 84 },
-  title: { color: '#FFFFFF', fontSize: 28, lineHeight: 36, fontWeight: '700', letterSpacing: -.7, textAlign: 'center', marginTop: 18 },
-  subtitle: { color: '#ACACAC', fontSize: 16, lineHeight: 23, textAlign: 'center', marginTop: 12 },
-  form: { flexGrow: 1, paddingHorizontal: 24, paddingTop: 23, paddingBottom: 14, borderTopLeftRadius: 34, borderTopRightRadius: 34, backgroundColor: '#111111', gap: 14 },
-  field: { borderWidth: 1, borderColor: '#555555', backgroundColor: '#181818', borderRadius: 18, minHeight: 76, paddingHorizontal: 18, paddingVertical: 10, flexDirection: 'row', gap: 17, alignItems: 'center' },
-  fieldLabel: { fontSize: 13, color: '#AAAAAA', marginBottom: 3 }, phonePrefix: { fontSize: 20, color: '#FFFFFF' }, phoneInput: { flex: 1, color: '#FFFFFF', fontSize: 20, paddingVertical: 2 },
-  error: { color: '#FF8888', fontSize: 14, lineHeight: 21 },
-  continueButton: { height: 58, borderRadius: 17, backgroundColor: '#C8C8C8', alignItems: 'center', justifyContent: 'center' },
-  continueActive: { backgroundColor: '#FFFFFF' }, continueText: { fontSize: 17, fontWeight: '700', color: '#111111' },
-  footnote: { fontSize: 13, color: '#A0A0A0', textAlign: 'center', lineHeight: 20 },
+  title: { color: palette.ink, fontSize: 28, lineHeight: 36, fontWeight: '700', letterSpacing: -.7, textAlign: 'center', marginTop: 18 },
+  subtitle: { color: palette.muted, fontSize: 16, lineHeight: 23, textAlign: 'center', marginTop: 12 },
+  form: { flexGrow: 1, paddingHorizontal: 24, paddingTop: 23, paddingBottom: 14, borderTopLeftRadius: 34, borderTopRightRadius: 34, backgroundColor: palette.surface, gap: 14 },
+  field: { borderWidth: 1, borderColor: palette.line, backgroundColor: palette.elevated, borderRadius: 18, minHeight: 76, paddingHorizontal: 18, paddingVertical: 10, flexDirection: 'row', gap: 17, alignItems: 'center' },
+  fieldLabel: { fontSize: 13, color: palette.muted, marginBottom: 3 }, phonePrefix: { fontSize: 20, color: palette.ink }, phoneInput: { flex: 1, color: palette.ink, fontSize: 20, paddingVertical: 2 },
+  error: { color: isDark ? '#FF8888' : '#CA4149', fontSize: 14, lineHeight: 21 },
+  continueButton: { height: 58, borderRadius: 17, backgroundColor: isDark ? '#C8C8C8' : palette.line, alignItems: 'center', justifyContent: 'center' },
+  continueActive: { backgroundColor: palette.accent }, continueText: { fontSize: 17, fontWeight: '700', color: isDark ? '#111111' : palette.muted },
+  continueTextActive: { color: palette.accentText },
+  footnote: { fontSize: 13, color: palette.muted, textAlign: 'center', lineHeight: 20 },
   formSpacer: { flexGrow: 1, minHeight: 24 },
-  legal: { alignItems: 'center', gap: 5 }, legalIntro: { color: '#929292', fontSize: 13, textAlign: 'center', lineHeight: 20, marginBottom: 3 },
+  legal: { alignItems: 'center', gap: 5 }, legalIntro: { color: palette.muted, fontSize: 13, textAlign: 'center', lineHeight: 20, marginBottom: 3 },
   legalLinks: { alignItems: 'center', gap: 5 }, legalLinksInline: { alignSelf: 'stretch', flexDirection: 'row', justifyContent: 'center', gap: 16 }, legalLinkCompact: { flexShrink: 1 },
   legalLinksRussian: { gap: 8 }, privacyRussian: { fontSize: 12, lineHeight: 18 },
-  privacy: { color: '#E6E6E6', textDecorationLine: 'underline', fontSize: 14, textAlign: 'center', lineHeight: 21 },
-  selectorAnchor: { alignSelf: 'center', width: '68%', maxWidth: 260, marginTop: 14 }, languageSelector: { minHeight: 62, borderWidth: 1, borderColor: '#515151', borderRadius: 32, backgroundColor: '#151515', flexDirection: 'row', alignItems: 'center', paddingLeft: 5, paddingRight: 12, gap: 8 },
-  globeCircle: { width: 49, height: 49, borderRadius: 25, backgroundColor: '#292929', alignItems: 'center', justifyContent: 'center' }, selectedLanguage: { flex: 1, color: '#F5F5F5', fontSize: 15, fontWeight: '500' },
-  menuOverlay: { flex: 1 }, menu: { position: 'absolute', backgroundColor: '#202020', borderColor: '#515151', borderWidth: 1, borderRadius: 18, paddingVertical: 4, overflow: 'hidden' }, menuItem: { minHeight: 52, paddingHorizontal: 18, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }, menuText: { color: '#D1D1D1', fontSize: 16 }, menuTextActive: { color: '#FFFFFF', fontWeight: '700' },
-  codeScreen: { flexGrow: 1, padding: 24, paddingTop: 18, backgroundColor: '#111111', borderTopLeftRadius: 34, borderTopRightRadius: 34 }, back: { width: 44, height: 44, justifyContent: 'center' },
-  editPhone: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 10, paddingVertical: 12 }, sentPhone: { color: '#FFFFFF', fontSize: 19, fontWeight: '600' },
+  privacy: { color: palette.ink, textDecorationLine: 'underline', fontSize: 14, textAlign: 'center', lineHeight: 21 },
+  selectorAnchor: { alignSelf: 'center', width: '68%', maxWidth: 260, marginTop: 14 }, languageSelector: { minHeight: 62, borderWidth: 1, borderColor: palette.line, borderRadius: 32, backgroundColor: palette.surface, flexDirection: 'row', alignItems: 'center', paddingLeft: 5, paddingRight: 12, gap: 8 },
+  globeCircle: { width: 49, height: 49, borderRadius: 25, backgroundColor: palette.elevated, alignItems: 'center', justifyContent: 'center' }, selectedLanguage: { flex: 1, color: palette.ink, fontSize: 15, fontWeight: '500' },
+  menuOverlay: { flex: 1 }, menu: { position: 'absolute', backgroundColor: palette.elevated, borderColor: palette.line, borderWidth: 1, borderRadius: 18, paddingVertical: 4, overflow: 'hidden' }, menuItem: { minHeight: 52, paddingHorizontal: 18, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }, menuText: { color: palette.muted, fontSize: 16 }, menuTextActive: { color: palette.ink, fontWeight: '700' },
+  codeScreen: { flexGrow: 1, padding: 24, paddingTop: 18, backgroundColor: palette.surface, borderTopLeftRadius: 34, borderTopRightRadius: 34 }, back: { width: 44, height: 44, justifyContent: 'center' },
+  editPhone: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 10, paddingVertical: 12 }, sentPhone: { color: palette.ink, fontSize: 19, fontWeight: '600' },
   codeEntry: { marginVertical: 24, height: 62 }, hiddenInput: { ...StyleSheet.absoluteFillObject, color: 'transparent', backgroundColor: 'transparent', fontSize: 20, borderWidth: 0, padding: 0 },
-  demoCode: { color: '#AAAAAA', textAlign: 'center', fontSize: 13, marginBottom: 17 }, resend: { alignItems: 'center', paddingVertical: 12, marginTop: 6 }, resendText: { fontSize: 14, color: '#FFFFFF', textAlign: 'center' },
-});
+  demoCode: { color: palette.muted, textAlign: 'center', fontSize: 13, marginBottom: 17 }, resend: { alignItems: 'center', paddingVertical: 12, marginTop: 6 }, resendText: { fontSize: 14, color: palette.ink, textAlign: 'center' },
+  }), [isDark, palette]);
+}

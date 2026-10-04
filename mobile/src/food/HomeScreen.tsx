@@ -102,12 +102,7 @@ export function ServiceHomeScreen({ userId, language = 'ru', currentAddress, onC
   const restaurantWidth = Math.max(1, (contentWidth - 14) / 2);
   const availableHeight = height - insets.top - insets.bottom;
   const compact = availableHeight < 820;
-  const hasSavedAddress = Object.values(savedPlaces).some(Boolean);
   const bodyGap = compact ? 8 : 17;
-  const firstRowFixedHeight = (compact ? 71 : 75) + (compact ? 18 : 22) + 8
-    + (compact ? 52 : 62) + (compact ? 72 : 81) + (hasSavedAddress ? 12 : 0)
-    + bodyGap * (hasOrder ? 4 : 3) + (hasOrder ? 52 : 0) + restaurantWidth + 72;
-  const cardHeight = Math.max(72, Math.min(116, (availableHeight - firstRowFixedHeight) / 2));
   const ink = isDark ? palette.ink : INK;
   const muted = isDark ? palette.muted : '#4D5663';
 
@@ -171,11 +166,11 @@ export function ServiceHomeScreen({ userId, language = 'ru', currentAddress, onC
         contentContainerStyle={[styles.bodyContent, { paddingTop: compact ? 18 : 22, gap: bodyGap, paddingBottom: Math.max(insets.bottom, 18) + 12 }]}>
       <View style={styles.grid}>
         {CARDS.map(card => <SpringPressable key={card.key} accessibilityRole="button" accessibilityLabel={t(card.title)}
-          onPress={serviceActions[card.key]} pressScale={.97} containerStyle={{ width: '48%', height: cardHeight }}
+          onPress={serviceActions[card.key]} pressScale={.97} containerStyle={styles.serviceTouch}
           style={[styles.serviceCard, { backgroundColor: isDark ? palette.elevated : card.tint,
             borderColor: isDark ? palette.line : 'transparent' }]}>
           <Image source={card.image} resizeMode="contain" style={[styles.serviceImage, card.key === 'food' && styles.serviceImageFood,
-            { height: Math.max(80, cardHeight + 4) }]}/>
+            { height: 120 }]}/>
           <Text style={[styles.serviceTitle, { color: ink }]}>{t(card.title)}</Text>
         </SpringPressable>)}
       </View>
@@ -277,7 +272,8 @@ const styles = StyleSheet.create({
   addressButton: { maxWidth: '75%', minHeight: 24, flexDirection: 'row', alignItems: 'center', gap: 4,
     marginTop: -9, paddingHorizontal: 4 },
   addressText: { maxWidth: '85%', fontFamily: fonts.medium, fontSize: 12, lineHeight: 16 },
-  grid: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between', rowGap: 8 },
+  grid: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between', rowGap: 8, flexShrink: 0 },
+  serviceTouch: { width: '48%', height: 116, flexShrink: 0 },
   serviceCard: { flex: 1, overflow: 'hidden', borderRadius: 17, borderWidth: 1, paddingHorizontal: 11, paddingBottom: 8,
     justifyContent: 'flex-end' },
   serviceImage: { position: 'absolute', left: '-4%', top: -12, width: '108%' },
