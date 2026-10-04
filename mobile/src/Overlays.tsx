@@ -3,10 +3,12 @@ import { ActivityIndicator, Image, Keyboard, KeyboardAvoidingView, Modal, Platfo
 import * as ImageManipulator from 'expo-image-manipulator';
 import * as ImagePicker from 'expo-image-picker';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { api, messageOf, requestId } from './api';
 import { ChatMessage, User } from './types';
 import { Icon, localize } from './ui';
 import { useTheme } from './design/theme';
+import { BottomPanel } from './BottomPanel';
 
 export { AddressPicker } from './AddressPicker';
 
@@ -24,6 +26,8 @@ export function ChatOverlay({ orderId, user, peerName, incoming, onClose, onErro
   const [picking, setPicking] = useState(false);
   const [sending, setSending] = useState(false);
   const [attachmentOpen, setAttachmentOpen] = useState(false);
+  const [attachmentClosing, setAttachmentClosing] = useState(false);
+  const pendingPhotoSource = useRef<'camera' | 'library' | null>(null);
   const key = useRef<{ signature: string; id: string } | null>(null);
   const scroll = useRef<ScrollView>(null);
   const input = useRef<TextInput>(null);
@@ -68,11 +72,23 @@ export function ChatOverlay({ orderId, user, peerName, incoming, onClose, onErro
     finally { setPicking(false); }
   }
 
-  const closeChat = () => { input.current?.blur(); Keyboard.dismiss(); onClose(); };
-  const openAttachmentMenu = () => { input.current?.blur(); Keyboard.dismiss(); setAttachmentOpen(true); };
+  const dismissComposerKeyboard = () => { input.current?.blur(); Keyboard.dismiss(); };
+  const closeChat = () => { dismissComposerKeyboard(); onClose(); };
+  const openAttachmentMenu = () => {
+    dismissComposerKeyboard(); pendingPhotoSource.current = null;
+    setAttachmentClosing(false); setAttachmentOpen(true);
+  };
+  const closeAttachmentMenu = () => setAttachmentClosing(true);
+  const finishAttachmentClose = () => {
+    const source = pendingPhotoSource.current;
+    pendingPhotoSource.current = null;
+    setAttachmentOpen(false); setAttachmentClosing(false);
+    if (source) void choosePhoto(source);
+  };
   const selectPhotoSource = (source: 'camera' | 'library') => {
-    setAttachmentOpen(false);
-    void choosePhoto(source);
+    if (picking || sending || attachmentClosing) return;
+    pendingPhotoSource.current = source;
+    closeAttachmentMenu();
   };
 
   async function send() {
@@ -96,6 +112,7 @@ export function ChatOverlay({ orderId, user, peerName, incoming, onClose, onErro
       setText('');
       setPhoto(null);
       key.current = null;
+      dismissComposerKeyboard();
     } catch (error) { onError(messageOf(error)); }
     finally { setSending(false); }
   }
@@ -105,9 +122,12 @@ export function ChatOverlay({ orderId, user, peerName, incoming, onClose, onErro
     headers: { Authorization: `Bearer ${api.getTokens()?.accessToken ?? ''}` },
   } : null;
 
-  return <Modal animationType="slide" onRequestClose={closeChat}>
+  return <Modal animationType="slide" onRequestClose={attachmentOpen ? closeAttachmentMenu : closeChat}>
+    <GestureHandlerRootView style={{ flex: 1 }}>
     <SafeAreaView style={{ flex: 1, backgroundColor: palette.background }}>
-      <KeyboardAvoidingView style={{ flex: 1 }} behavior="padding">
+      {/* Android Modal already resizes for the keyboard; extra padding can leave the composer lifted. */}
+      <KeyboardAvoidingView accessibilityElementsHidden={attachmentOpen} importantForAccessibility={attachmentOpen ? 'no-hide-descendants' : 'auto'}
+        style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined} enabled={Platform.OS === 'ios'}>
         <View style={{ height: 66, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, gap: 12, borderBottomWidth: 1, borderBottomColor: palette.line }}>
           <Pressable accessibilityRole="button" accessibilityLabel={say('Назад', 'Артка')} onPress={closeChat}
             style={{ width: 38, height: 44, alignItems: 'center', justifyContent: 'center' }}><Icon name="chevron-back" size={27} color={palette.ink}/></Pressable>
@@ -165,19 +185,18 @@ export function ChatOverlay({ orderId, user, peerName, incoming, onClose, onErro
           </Pressable>}
         </View>
       </KeyboardAvoidingView>
-      {attachmentOpen && <View testID="chat-photo-sheet" style={chatStyles.sheetHost}>
-        <Pressable accessibilityRole="button" accessibilityLabel={say('Закрыть выбор фото', 'Сүрөт тандоону жабуу')}
-          onPress={() => setAttachmentOpen(false)} style={StyleSheet.absoluteFillObject}/>
-        <View accessibilityViewIsModal style={[chatStyles.sheet, { backgroundColor: palette.surface, paddingBottom: Math.max(18, insets.bottom + 8) }]}>
-          <View style={[chatStyles.sheetHandle, { backgroundColor: palette.line }]}/>
+      {attachmentOpen && <BottomPanel onClose={finishAttachmentClose} closeRequested={attachmentClosing}
+        label={say('Закрыть выбор фото', 'Сүрөт тандоону жабуу')} bottomPadding={Math.max(18, insets.bottom + 8)}>
+        <View testID="chat-photo-sheet" style={chatStyles.sheet}>
           <View style={chatStyles.sheetHeader}>
             <Text style={[chatStyles.sheetTitle, { color: palette.ink }]}>{say('Добавить фото', 'Сүрөт кошуу')}</Text>
             <Pressable accessibilityRole="button" accessibilityLabel={say('Закрыть выбор фото', 'Сүрөт тандоону жабуу')}
-              onPress={() => setAttachmentOpen(false)} style={chatStyles.sheetClose}>
+              onPress={closeAttachmentMenu} style={chatStyles.sheetClose}>
               <Icon name="close" size={22} color={palette.muted}/>
             </Pressable>
           </View>
           <Pressable accessibilityRole="button" accessibilityLabel={say('Сделать фото', 'Сүрөткө тартуу')}
+            disabled={picking || sending || attachmentClosing}
             onPress={() => selectPhotoSource('camera')} style={[chatStyles.sheetAction, { borderColor: palette.line }]}>
             <View style={[chatStyles.sheetIcon, { backgroundColor: palette.elevated }]}><Icon name="camera-outline" size={25} color={palette.accent}/></View>
             <View style={chatStyles.sheetCopy}><Text style={[chatStyles.sheetActionTitle, { color: palette.ink }]}>{say('Сделать фото', 'Сүрөткө тартуу')}</Text>
@@ -185,6 +204,7 @@ export function ChatOverlay({ orderId, user, peerName, incoming, onClose, onErro
             <Icon name="chevron-forward" size={20} color={palette.muted}/>
           </Pressable>
           <Pressable accessibilityRole="button" accessibilityLabel={say('Выбрать из галереи', 'Галереядан тандоо')}
+            disabled={picking || sending || attachmentClosing}
             onPress={() => selectPhotoSource('library')} style={[chatStyles.sheetAction, { borderColor: palette.line }]}>
             <View style={[chatStyles.sheetIcon, { backgroundColor: palette.elevated }]}><Icon name="images-outline" size={25} color={palette.accent}/></View>
             <View style={chatStyles.sheetCopy}><Text style={[chatStyles.sheetActionTitle, { color: palette.ink }]}>{say('Выбрать из галереи', 'Галереядан тандоо')}</Text>
@@ -192,7 +212,7 @@ export function ChatOverlay({ orderId, user, peerName, incoming, onClose, onErro
             <Icon name="chevron-forward" size={20} color={palette.muted}/>
           </Pressable>
         </View>
-      </View>}
+      </BottomPanel>}
       <Modal visible={!!viewer} transparent animationType="fade" onRequestClose={() => setViewer(null)}>
         <Pressable onPress={() => setViewer(null)} style={{ flex: 1, backgroundColor: '#050505', justifyContent: 'center' }}>
           {viewer && <Image source={{ uri: viewer, headers: { Authorization: `Bearer ${api.getTokens()?.accessToken ?? ''}` } }} resizeMode="contain" style={{ width: '100%', height: '85%' }}/>}
@@ -200,13 +220,12 @@ export function ChatOverlay({ orderId, user, peerName, incoming, onClose, onErro
         </Pressable>
       </Modal>
     </SafeAreaView>
+    </GestureHandlerRootView>
   </Modal>;
 }
 
 const chatStyles = StyleSheet.create({
-  sheetHost: { ...StyleSheet.absoluteFillObject, zIndex: 5, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,.42)' },
-  sheet: { borderTopLeftRadius: 26, borderTopRightRadius: 26, paddingHorizontal: 18, paddingTop: 10, gap: 10 },
-  sheetHandle: { width: 38, height: 4, borderRadius: 2, alignSelf: 'center', marginBottom: 7 },
+  sheet: { paddingHorizontal: 18, paddingTop: 10, gap: 10 },
   sheetHeader: { minHeight: 38, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 2 },
   sheetTitle: { fontSize: 19, fontWeight: '700' },
   sheetClose: { width: 38, height: 38, alignItems: 'center', justifyContent: 'center' },

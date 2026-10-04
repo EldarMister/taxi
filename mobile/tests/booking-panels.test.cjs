@@ -42,6 +42,24 @@ function load(file) {
   vm.runInNewContext(code, { exports, setInterval, clearInterval, require: id => {
     if (id === 'react' || id === 'react/jsx-runtime') return require(id);
     if (id === 'react-native') return native;
+    if (id === 'react-native-reanimated') return {
+      __esModule: true, default: { View: 'ReanimatedView' },
+      useSharedValue: initial => {
+        const ref = React.useRef();
+        if (!ref.current) {
+          let value = initial;
+          ref.current = { get: () => value, set: next => {
+            if (next?.animation) { value = next.to; next.callback?.(true); }
+            else value = typeof next === 'function' ? next(value) : next;
+          } };
+        }
+        return ref.current;
+      },
+      useAnimatedStyle: evaluate => ({ evaluate }), cancelAnimation() {}, runOnJS: fn => fn,
+      Easing: { bezier: () => 'sheet' },
+      withTiming: (to, config, callback) => ({ animation: 'timing', to, config, callback }),
+      withSpring: (to, config, callback) => ({ animation: 'spring', to, config, callback }),
+    };
     if (id === 'expo-contacts') return contacts;
     if (id === 'react-native-svg') return { __esModule: true, default: 'Svg', Path: 'Path', Circle: 'Circle' };
     if (id === 'react-native-gesture-handler') return {
@@ -51,7 +69,7 @@ function load(file) {
         for (const option of ['enabled', 'activeOffsetY', 'failOffsetX', 'runOnJS']) {
           gesture[option] = value => { gesture.config[option] = value; return gesture; };
         }
-        gesture.onEnd = callback => { gesture.handlers.onEnd = callback; return gesture; };
+        for (const callback of ['onStart', 'onUpdate', 'onEnd', 'onFinalize']) gesture[callback] = handler => { gesture.handlers[callback] = handler; return gesture; };
         return gesture;
       } },
     };
@@ -82,7 +100,7 @@ function load(file) {
       return React.createElement('PanGestureHandler', { enabled: true, activeOffsetY: [-8, 8], failOffsetX: [-12, 12],
         onHandlerStateChange: event => { if (event.nativeEvent.state === 5) change(event.nativeEvent.translationY < 0); } },
         React.createElement('View', { testID, style, onLayout: event => setHeight(event.nativeEvent.layout.height) },
-          React.createElement('Pressable', { testID: 'driver-panel-handle', accessibilityLabel: handleLabel(open), accessibilityState: { expanded: open }, style: handleTouchStyle, onPress: toggle }, React.createElement('View', { style: handleStyle })),
+          React.createElement('Pressable', { testID: 'driver-panel-handle', accessibilityLabel: handleLabel(open), accessibilityState: { expanded: open }, style: handleTouchStyle || { height: 24, position: 'absolute', top: 0 }, onPress: toggle }, React.createElement('View', { style: handleStyle })),
           typeof header === 'function' ? header(open, toggle) : header, open ? details : compactDetails, footer));
     } };
     if (id === './waiting') return load('waiting.ts');
@@ -318,7 +336,7 @@ test('driver comment panel replaces the order panel and restores it after its ex
   assert.ok(finish);
   await act(async () => finish());
   assert.equal(renderer.root.findAllByType('BottomPanel').length, 0);
-  assert.equal(root().props.pointerEvents, 'auto');
+  assert.equal(root().props.pointerEvents, 'box-none', 'the sheet envelope passes map taps through after restoring');
 });
 
 test('cancelled driver order closes by button or downward pull and has no expand arrow', async t => {
@@ -333,9 +351,9 @@ test('cancelled driver order closes by button or downward pull and has no expand
   assert.match(textOf(renderer.root.findByProps({ testID: 'driver-terminal-summary' })), /A.*B.*100/);
   await tap(renderer, 'К новым заказам');
   assert.deepEqual(closed, [order.id]);
-  const gesture = renderer.root.findAllByType('PanGestureHandler').find(node => node.props.activeOffsetY?.join(',') === '-16,16');
+  const gesture = renderer.root.findByType('GestureDetector').props.gesture;
   assert.ok(gesture);
-  await act(async () => gesture.props.onHandlerStateChange({ nativeEvent: { state: 5, translationY: 90, velocityY: 0 } }));
+  await act(async () => { gesture.handlers.onStart(); gesture.handlers.onUpdate({ translationY: 90 }); gesture.handlers.onEnd({ velocityY: 1000 }, true); });
   assert.deepEqual(closed, [order.id, order.id]);
 });
 
@@ -500,8 +518,9 @@ test('client trip, completion, rating and thanks use dark surfaces when selected
   t.after(async () => { darkTheme = false; await act(async () => renderer.unmount()); });
   assert.equal(Object.assign({}, ...renderer.root.findByType('AnimatedView').props.style).backgroundColor, '#111111');
   await act(async () => renderer.update(React.createElement(ClientTripPanel, { ...props, order: { ...order, status: 'COMPLETED' } })));
-  const sheet = renderer.root.findByType('KeyboardAvoidingView').findByType('AnimatedView');
-  assert.equal(sheet.props.style[1].backgroundColor, '#111111');
+  const header = renderer.root.findByProps({ testID: 'client-completion-drag' }).findAllByType('View').find(node => Array.isArray(node.props.style) && node.props.style.some(style => style?.backgroundColor === '#111111'));
+  assert.ok(header, 'completion heading uses the selected dark surface');
+  assert.equal(renderer.root.findByType('ScrollView').props.style.backgroundColor, '#111111');
   assert.equal(button(renderer, 'Оценить поездку').props.style({ pressed: false })[1].backgroundColor, '#FFFFFF');
   await tap(renderer, 'Оценить поездку');
   assert.equal(renderer.root.findAllByType('Icon').filter(node => node.props.name === 'star' && node.props.color === '#FFFFFF').length, 5);
@@ -647,13 +666,18 @@ test('pulling a review panel down restores the previous completion panel', async
   t.after(async () => act(async () => { client.unmount(); driver.unmount(); }));
   await tap(client, 'Оценить поездку');
   await tap(driver, 'Оценить пассажира');
-  const handle = renderer => renderer.root.findAllByType('View').find(node => typeof node.props.onPanResponderRelease === 'function');
+  const handle = renderer => renderer.root.findByType('GestureDetector').props.gesture;
+  const pull = async (renderer, distance, velocity = 0) => act(async () => {
+    const gesture = handle(renderer);
+    gesture.handlers.onStart(); gesture.handlers.onUpdate({ translationY: distance });
+    gesture.handlers.onEnd({ velocityY: velocity }, true);
+  });
   assert.ok(handle(client));
   assert.ok(handle(driver));
-  await act(async () => handle(client).props.onPanResponderRelease({}, { dy: 30, vy: 0 }));
+  await pull(client, 30);
   assert.equal(clientClosed, 0);
-  await act(async () => handle(client).props.onPanResponderRelease({}, { dy: 80, vy: 0 }));
-  await act(async () => handle(driver).props.onPanResponderRelease({}, { dy: 80, vy: 0 }));
+  await pull(client, 80, 1000);
+  await pull(driver, 80, 1000);
   assert.equal(clientClosed, 0);
   assert.equal(driverClosed, 0);
   assert.ok(button(client, 'Оценить поездку'));
@@ -687,8 +711,9 @@ test('dark driver order and completion sheets keep their rating controls legible
   assert.ok(offerSheet);
   assert.equal(offerSheet.props.style.find(style => style?.backgroundColor === '#111111')?.backgroundColor, '#111111');
   await act(async () => renderer.update(React.createElement(DriverPanel, { ...props, offer: null, order: { ...order, status: 'COMPLETED' } })));
-  const completionSheet = renderer.root.findAllByType('AnimatedView').find(node => Array.isArray(node.props.style) && node.props.style.some(style => style?.borderTopLeftRadius === 30));
-  assert.equal(completionSheet.props.style[0].backgroundColor, '#111111');
+  const completionHeader = renderer.root.findByProps({ testID: 'driver-completion-drag' }).findAllByType('View').find(node => node.props.style?.backgroundColor === '#111111');
+  assert.ok(completionHeader, 'completion heading uses the dark surface');
+  assert.equal(renderer.root.findByType('ScrollView').props.style.backgroundColor, '#111111');
   await tap(renderer, 'Оценить пассажира');
   assert.equal(renderer.root.findAllByType('Icon').filter(node => node.props.name === 'star-outline' && node.props.color === '#777777').length, 5);
   assert.ok(button(renderer, 'Пропустить'));
@@ -863,7 +888,7 @@ test('narrow offer keeps the action visible and shows full addresses when expand
   assert.equal(renderer.root.findAllByType('ScrollView').length, 0);
   assert.equal(renderer.root.findAllByProps({ testID: 'driver-trip-details' }).length, 0);
   assert.match(textOf(renderer.root), /До клиента.*88 м.*Близкая подача.*Стандарт.*90.*Пассажир.*4,23.*Взять заказ/s);
-  assert.ok(renderer.root.findByProps({ testID: 'driver-panel-handle' }).props.style.height >= 44, 'compact layout retains a usable handle target');
+  assert.equal(renderer.root.findByProps({ testID: 'driver-panel-handle' }).props.style.height, 24, 'handle touch strip stays above the content rather than reserving a white gap');
   await tap(renderer, 'Раскрыть детали поездки');
   const details = renderer.root.findByProps({ testID: 'driver-trip-details' });
   assert.equal(details.type, 'View', 'expanded offer measures its content rather than a fixed scroll viewport');

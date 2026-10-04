@@ -1,10 +1,12 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Keyboard, KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import TaxiMap, { type MapSelectionPanel } from '../native/TaxiMap';
 import { BISHKEK, searchAddresses, type MapPoint } from '../native/mapkit';
 import { getCurrentPosition, getLocationPermissionState } from '../native/location';
 import { AddressPicker } from '../AddressPicker';
+import { BottomPanel } from '../BottomPanel';
 import { Icon } from '../ui';
 import { shortAddress } from '../address';
 import { messageOf } from '../api';
@@ -37,6 +39,7 @@ export function FoodAddressPicker({ details, defaultPoint, language, onSave, onC
   const [panelHeight, setPanelHeight] = useState(320 + insets.bottom);
   const [searchOpen, setSearchOpen] = useState(false);
   const [commentOpen, setCommentOpen] = useState(false);
+  const [commentClosing, setCommentClosing] = useState(false);
   const [commentDraft, setCommentDraft] = useState(details.comment);
   const [locationEnabled, setLocationEnabled] = useState(false);
   const [error, setError] = useState('');
@@ -60,6 +63,8 @@ export function FoodAddressPicker({ details, defaultPoint, language, onSave, onC
 
   const changeField = (key: 'entrance' | 'floor' | 'apartment' | 'intercom', value: string) => setDraft(current => ({ ...current, [key]: value }));
   const close = () => { Keyboard.dismiss(); onClose(); };
+  const closeComment = () => { Keyboard.dismiss(); setCommentClosing(true); };
+  const finishCommentClose = () => { Keyboard.dismiss(); setCommentOpen(false); setCommentClosing(false); };
   const locate = async () => {
     interacted.current = true;
     const request = ++locationRequest.current;
@@ -87,7 +92,7 @@ export function FoodAddressPicker({ details, defaultPoint, language, onSave, onC
       </Pressable>
       <View style={s.row}>{(['entrance', 'floor'] as const).map((key, index) => <TextInput key={key} accessibilityLabel={t(index ? 'Этаж' : 'Подъезд')} placeholder={t(index ? 'Этаж' : 'Подъезд')} value={draft[key] ?? ''} onChangeText={value => changeField(key, value)} placeholderTextColor={theme.palette.muted} style={s.input} maxLength={20} returnKeyType="done"/>)}</View>
       <View style={s.row}>{(['apartment', 'intercom'] as const).map((key, index) => <TextInput key={key} accessibilityLabel={t(index ? 'Домофон' : 'Квартира')} placeholder={t(index ? 'Домофон' : 'Квартира')} value={draft[key] ?? ''} onChangeText={value => changeField(key, value)} placeholderTextColor={theme.palette.muted} style={s.input} maxLength={30} returnKeyType="done"/>)}</View>
-      <Pressable accessibilityRole="button" onPress={() => { setCommentDraft(draft.comment); setCommentOpen(true); }} style={s.comment}><Text style={[s.commentText, !!draft.comment && s.filledComment]} numberOfLines={1}>{draft.comment || t('Комментарий курьеру')}</Text><Icon name="chevron-forward" size={23} color={theme.palette.ink}/></Pressable>
+      <Pressable accessibilityRole="button" accessibilityLabel={t('Комментарий курьеру')} onPress={() => { setCommentDraft(draft.comment); setCommentClosing(false); setCommentOpen(true); }} style={s.comment}><Text style={[s.commentText, !!draft.comment && s.filledComment]} numberOfLines={1}>{draft.comment || t('Комментарий курьеру')}</Text><Icon name="chevron-forward" size={23} color={theme.palette.ink}/></Pressable>
       {!!error && <Text accessibilityRole="alert" style={s.error}>{t(error)}</Text>}
       {needsSavedAddress && <Text style={s.caption}>{t('Уточните адрес через поиск или выберите точку на карте.')}</Text>}
       {selection.address === 'Точка на карте' && <Text accessibilityRole="alert" style={s.error}>{t('Не удалось определить адрес. Уточните его через поиск.')}</Text>}
@@ -95,22 +100,21 @@ export function FoodAddressPicker({ details, defaultPoint, language, onSave, onC
     <FoodButton label={t('Готово')} disabled={needsSavedAddress || locating || !selection.ready || selection.moving || selection.locatingAddress || !selection.address || selection.address === 'Точка на карте'} onPress={() => save(selection)} style={s.done}/>
   </View>;
 
-  return <Modal visible animationType="slide" statusBarTranslucent navigationBarTranslucent onRequestClose={() => { if (searchOpen) setSearchOpen(false); else if (commentOpen) setCommentOpen(false); else close(); }}>
-    <KeyboardAvoidingView style={s.screen} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
+  return <Modal visible animationType="slide" statusBarTranslucent navigationBarTranslucent onRequestClose={() => { if (searchOpen) setSearchOpen(false); else if (commentOpen) closeComment(); else close(); }}>
+    <GestureHandlerRootView style={s.screen}>
+    <KeyboardAvoidingView style={s.screen} behavior={Platform.OS === 'ios' ? 'padding' : undefined} enabled={Platform.OS === 'ios'} pointerEvents={commentOpen ? 'none' : 'auto'} accessibilityElementsHidden={commentOpen} importantForAccessibility={commentOpen ? 'no-hide-descendants' : 'auto'}>
       <TaxiMap theme={theme.resolved} language={language} passengerView pickup={point} focusPoint={focus} selectionMode="pickup" selectionAppearance="food" onSelectionInteraction={mapInteraction} renderSelectionPanel={renderPanel} onPanelHeight={setPanelHeight} showUserPosition={locationEnabled} contentTopInset={insets.top}/>
       <Pressable accessibilityRole="button" accessibilityLabel={t('Назад')} onPress={close} style={[s.back, { bottom: panelHeight + 12 }]}><Icon name="arrow-back" size={26} color={theme.palette.ink}/></Pressable>
       {searchOpen && <AddressPicker field="dropoff" savedPlace={{ title: 'Адрес доставки', point: { ...point, address: shortAddress(point.address || draft.address) } as Point }} center={point} language={language} onFieldChange={() => undefined} onSelect={next => { interacted.current = true; locationRequest.current++; setLocating(false); setNeedsSavedAddress(false); setError(''); setPoint(next); setFocus(next); }} onClose={() => setSearchOpen(false)} onMap={() => setSearchOpen(false)} onLocation={() => { void locate(); }}/>} 
-      {commentOpen && <Modal transparent visible animationType="slide" onRequestClose={() => setCommentOpen(false)}>
-        <KeyboardAvoidingView style={s.commentOverlay} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
-          <Pressable accessibilityLabel={t('Закрыть')} onPress={() => setCommentOpen(false)} style={StyleSheet.absoluteFill}/>
-          <View style={[s.commentSheet, { paddingBottom: Math.max(insets.bottom, 16) }]}>
-            <View style={s.commentHeader}><Text style={s.commentTitle}>{t('Комментарий курьеру')}</Text><Pressable accessibilityRole="button" accessibilityLabel={t('Закрыть')} onPress={() => setCommentOpen(false)} style={s.close}><Icon name="close" size={24} color={theme.palette.ink}/></Pressable></View>
-            <TextInput autoFocus multiline textAlignVertical="top" accessibilityLabel={t('Комментарий курьеру')} placeholder={t('Как вас найти?')} placeholderTextColor={theme.palette.muted} value={commentDraft} onChangeText={setCommentDraft} maxLength={300} style={s.commentInput}/>
-            <FoodButton label={t('Сохранить')} onPress={() => { setDraft(current => ({ ...current, comment: commentDraft.trim() })); Keyboard.dismiss(); setCommentOpen(false); }}/>
-          </View>
-        </KeyboardAvoidingView>
-      </Modal>}
     </KeyboardAvoidingView>
+    {commentOpen && <BottomPanel label={t('Закрыть')} closeRequested={commentClosing} onClose={finishCommentClose} bottomPadding={Math.max(insets.bottom, 16)}>
+      <ScrollView testID="food-courier-comment" keyboardShouldPersistTaps="handled" bounces={false} showsVerticalScrollIndicator={false} style={{ flexGrow: 0 }} contentContainerStyle={s.commentSheet}>
+        <View style={s.commentHeader}><Text style={s.commentTitle}>{t('Комментарий курьеру')}</Text><Pressable accessibilityRole="button" accessibilityLabel={t('Закрыть')} disabled={commentClosing} onPress={closeComment} style={s.close}><Icon name="close" size={24} color={theme.palette.ink}/></Pressable></View>
+        <TextInput autoFocus multiline textAlignVertical="top" accessibilityLabel={t('Комментарий курьеру')} placeholder={t('Как вас найти?')} placeholderTextColor={theme.palette.muted} value={commentDraft} onChangeText={setCommentDraft} editable={!commentClosing} maxLength={300} style={s.commentInput}/>
+        <FoodButton label={t('Сохранить')} disabled={commentClosing} onPress={() => { if (commentClosing) return; setDraft(current => ({ ...current, comment: commentDraft.trim() })); closeComment(); }}/>
+      </ScrollView>
+    </BottomPanel>}
+    </GestureHandlerRootView>
   </Modal>;
 }
 
@@ -129,8 +133,7 @@ const styles = StyleSheet.create({
   done: { marginTop: 20, minHeight: 56, borderRadius: 16 },
   back: { position: 'absolute', left: 10, width: 48, height: 48, borderRadius: 24, backgroundColor: '#FFFFFF', alignItems: 'center', justifyContent: 'center', elevation: 3, shadowColor: '#000000', shadowRadius: 8, shadowOpacity: .1, shadowOffset: { width: 0, height: 3 } },
   error: { color: '#B74747', fontSize: 13, paddingVertical: 8 },
-  commentOverlay: { flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,.35)' },
-  commentSheet: { backgroundColor: '#FFFFFF', borderTopLeftRadius: 26, borderTopRightRadius: 26, padding: 16, gap: 18 },
+  commentSheet: { backgroundColor: '#FFFFFF', paddingHorizontal: 16, paddingTop: 12, gap: 14 },
   commentHeader: { flexDirection: 'row', alignItems: 'center', gap: 10 },
   commentTitle: { flex: 1, fontSize: 23, fontFamily: fonts.bold, color: '#222222' },
   close: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center', borderRadius: 20, backgroundColor: '#F5F4F2' },

@@ -1,6 +1,8 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Animated, Easing, KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View, useWindowDimensions } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { GestureDetector } from 'react-native-gesture-handler';
+import Reanimated from 'react-native-reanimated';
 import { SuccessCelebration } from './SuccessCelebration';
 import { useMotionPreference } from './design/motion';
 import { useTheme } from './design/theme';
@@ -46,8 +48,9 @@ export function ClientCompletionPanel({ order, user, busy, onDone, onRating, onH
   const [selected, setSelected] = useState<string[]>([]);
   const [comment, setComment] = useState('');
   const [submitting, setSubmitting] = useState(false);
+  const [sheetHeight, setSheetHeight] = useState(0);
   const closeCompletion = () => exitStage(onDone);
-  const drag = useSheetDragToClose(stage === 'rating' ? () => navigateStage('success') : closeCompletion, stage === 'rating' && !busy && !submitting);
+  const drag = useSheetDragToClose(stage === 'rating' ? () => resetStage('success') : onDone, stage !== 'thankYou' && !busy && !submitting, sheetHeight);
   useEffect(() => { drag.reset(); }, [stage]);
   const carEntry = useRef(new Animated.Value(0)).current;
 
@@ -83,7 +86,7 @@ export function ClientCompletionPanel({ order, user, busy, onDone, onRating, onH
     }
   };
 
-  const measure = (height: number) => { if (stage !== 'thankYou') onHeight(height); };
+  const measure = (height: number) => { setSheetHeight(height); if (stage !== 'thankYou') onHeight(height); };
   const swipeHandle = stage === 'rating' ? () => navigateStage('success') : closeCompletion;
 
   if (stage === 'thankYou') return <View style={s.thankYouHost}>
@@ -103,39 +106,52 @@ export function ClientCompletionPanel({ order, user, busy, onDone, onRating, onH
   </View>;
 
   return <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={s.host} pointerEvents="box-none">
-    <Animated.View onLayout={event => measure(event.nativeEvent.layout.height)} style={[s.sheet, isDark && s.darkSheet, { paddingBottom: Math.max(insets.bottom, 14), transform: [{ translateY: stageTranslateY }, { translateY: drag.translateY }] }]}>
-      {stage === 'rating' && <View {...drag.panHandlers} style={s.handleTouch}><Pressable accessibilityRole="button" accessibilityLabel={say(delivery ? 'Вернуться к доставке' : 'Вернуться к поездке', 'Сапарга кайтуу')} accessibilityState={{ disabled: submitting || busy }} disabled={submitting || busy} onPress={swipeHandle} hitSlop={10}><View style={[s.handle, isDark && s.darkHandle]}/></Pressable></View>}
-      <ScrollView contentContainerStyle={stage === 'success' ? s.successContent : s.ratingContent} showsVerticalScrollIndicator={false} bounces={false} keyboardShouldPersistTaps="handled" style={{ flexGrow: 0, maxHeight: screenHeight - insets.top - 36 }}>
-        {stage === 'success' ? <>
-          <SuccessCelebration key={`success-${order.id}`} size={132} testID="order-success-celebration"/>
-          <Text style={[s.successTitle, isDark && s.darkInk]}>{say('Заказ успешно\nвыполнен!', 'Буюртма ийгиликтүү\nаткарылды!')}</Text>
-          <Text style={[s.successSubtitle, isDark && s.darkMuted]}>{say('Спасибо, что выбрали Atlas', 'Atlasты тандаганыңыз үчүн рахмат')}</Text>
-          <View style={[s.routeCard, isDark && s.darkInset]}>
-            <View style={s.routeRow}><Icon name="person" size={22} color={isDark ? '#FFFFFF' : colors.ink}/><Text style={[s.routeText, isDark && s.darkInk]} numberOfLines={2}>{shortAddress(order.pickup.address)}</Text></View>
-            <View style={s.routeRow}><Icon name="flag" size={22} color={isDark ? '#FFFFFF' : colors.ink}/><Text style={[s.routeText, isDark && s.darkInk]} numberOfLines={2}>{shortAddress(order.dropoff.address)}</Text></View>
+    <Reanimated.View style={drag.animatedStyle}>
+      <Animated.View onLayout={event => measure(event.nativeEvent.layout.height)} style={[s.sheet, isDark && s.darkSheet, { maxHeight: screenHeight - insets.top - 16, transform: [{ translateY: stageTranslateY }] }]}>
+        <GestureDetector gesture={drag.gesture}>
+          <View testID="client-completion-drag" collapsable={false}>
+            <Pressable accessibilityRole="button" accessibilityLabel={stage === 'rating' ? say(delivery ? 'Вернуться к доставке' : 'Вернуться к поездке', 'Сапарга кайтуу') : say('Закрыть', 'Жабуу')} accessibilityState={{ disabled: submitting || busy }} disabled={submitting || busy} onPress={swipeHandle} style={s.handleTouch}><View style={[s.handle, isDark && s.darkHandle]}/></Pressable>
+            <View style={[s.headerContent, isDark && s.darkHeaderContent]}>
+              {stage === 'success' ? <>
+                <SuccessCelebration key={`success-${order.id}`} size={132} testID="order-success-celebration"/>
+                <Text style={[s.successTitle, isDark && s.darkInk]}>{say('Заказ успешно\nвыполнен!', 'Буюртма ийгиликтүү\nаткарылды!')}</Text>
+                <Text style={[s.successSubtitle, isDark && s.darkMuted]}>{say('Спасибо, что выбрали Atlas', 'Atlasты тандаганыңыз үчүн рахмат')}</Text>
+              </> : <>
+                <Text style={[s.ratingTitle, isDark && s.darkInk]}>{say(delivery ? 'Оцените доставку' : 'Оцените поездку', 'Сапарды баалаңыз')}</Text>
+                <Text style={[s.ratingSubtitle, isDark && s.darkMuted]}>{say(delivery ? 'Как прошла доставка\nс водителем?' : 'Как прошла ваша поездка\nс водителем?', 'Айдоочу менен сапарыңыз\nкандай өттү?')}</Text>
+              </>}
+            </View>
           </View>
-          <View style={[s.fareCard, isDark && s.darkInset]}><Icon name="cash" size={25} color={isDark ? '#FFFFFF' : colors.blue}/><Text style={[s.fareLabel, isDark && s.darkInk]} numberOfLines={1}>{say('Наличные', 'Накталай')} · {order.tariff?.name || say('Стандарт', 'Стандарт')}</Text><Text style={[s.price, isDark && s.darkInk]}>{money(order.price)}</Text></View>
-          <PrimaryButton label={say(delivery ? 'Оценить доставку' : 'Оценить поездку', 'Сапарды баалоо')} icon="star" onPress={() => navigateStage('rating')}/>
-          <Pressable accessibilityRole="button" accessibilityLabel={say('Закрыть', 'Жабуу')} onPress={closeCompletion} style={s.close}><Text style={[s.closeText, isDark && s.darkInk]}>{say('Закрыть', 'Жабуу')}</Text></Pressable>
-        </> : <>
-          <Text style={[s.ratingTitle, isDark && s.darkInk]}>{say(delivery ? 'Оцените доставку' : 'Оцените поездку', 'Сапарды баалаңыз')}</Text>
-          <Text style={[s.ratingSubtitle, isDark && s.darkMuted]}>{say(delivery ? 'Как прошла доставка\nс водителем?' : 'Как прошла ваша поездка\nс водителем?', 'Айдоочу менен сапарыңыз\nкандай өттү?')}</Text>
-          <View style={s.stars}>{[1, 2, 3, 4, 5].map(value => <Pressable key={value} accessibilityRole="button" accessibilityLabel={`${say('Оценка', 'Баа')} ${value}`} accessibilityState={{ selected: score === value }} onPress={() => setScore(value)} hitSlop={5} style={s.star}><Icon name={value <= score ? 'star' : 'star-outline'} size={39} color={isDark ? '#FFFFFF' : '#FFBE12'}/></Pressable>)}</View>
-          <View style={s.compliments}>{compliments.map(item => <Pressable key={item.ru} accessibilityRole="checkbox" accessibilityLabel={say(item.ru, item.ky)} accessibilityState={{ checked: selected.includes(item.ru) }} onPress={() => setSelected(current => current.includes(item.ru) ? current.filter(value => value !== item.ru) : [...current, item.ru])} style={[s.compliment, isDark && s.darkCompliment, selected.includes(item.ru) && s.complimentSelected, isDark && selected.includes(item.ru) && s.darkComplimentSelected]}><View style={[s.complimentIcon, { backgroundColor: isDark ? '#FFFFFF' : item.color }]}><Icon name={item.icon} size={16} color={isDark ? '#050505' : '#FFFFFF'}/></View><Text style={[s.complimentText, isDark && s.darkInk]}>{say(item.ru, item.ky)}</Text></Pressable>)}</View>
-          <TextInput accessibilityLabel={say(delivery ? 'Комментарий к доставке' : 'Комментарий к поездке', 'Сапар тууралуу пикир')} placeholder={say('Оставьте комментарий (необязательно)', 'Пикириңизди калтырыңыз (милдеттүү эмес)')} placeholderTextColor={isDark ? '#A0A0A0' : '#8391A7'} selectionColor={isDark ? '#FFFFFF' : undefined} multiline maxLength={400} value={comment} onChangeText={setComment} textAlignVertical="top" style={[s.comment, isDark && s.darkComment]}/>
-          <PrimaryButton label={say('Отправить', 'Жөнөтүү')} onPress={() => void submit()} disabled={submitting || busy} busy={submitting || busy}/>
-        </>}
-      </ScrollView>
-    </Animated.View>
+        </GestureDetector>
+        <ScrollView contentContainerStyle={[stage === 'success' ? s.successContent : s.ratingContent, { paddingBottom: Math.max(insets.bottom, 14) }]} showsVerticalScrollIndicator={false} bounces={false} keyboardShouldPersistTaps="handled" style={{ flexGrow: 0, flexShrink: 1, backgroundColor: isDark ? '#111111' : '#FFFFFF' }}>
+          {stage === 'success' ? <>
+            <View style={[s.routeCard, isDark && s.darkInset]}>
+              <View style={s.routeRow}><Icon name="person" size={22} color={isDark ? '#FFFFFF' : colors.ink}/><Text style={[s.routeText, isDark && s.darkInk]} numberOfLines={2}>{shortAddress(order.pickup.address)}</Text></View>
+              <View style={s.routeRow}><Icon name="flag" size={22} color={isDark ? '#FFFFFF' : colors.ink}/><Text style={[s.routeText, isDark && s.darkInk]} numberOfLines={2}>{shortAddress(order.dropoff.address)}</Text></View>
+            </View>
+            <View style={[s.fareCard, isDark && s.darkInset]}><Icon name="cash" size={25} color={isDark ? '#FFFFFF' : colors.blue}/><Text style={[s.fareLabel, isDark && s.darkInk]} numberOfLines={1}>{say('Наличные', 'Накталай')} · {order.tariff?.name || say('Стандарт', 'Стандарт')}</Text><Text style={[s.price, isDark && s.darkInk]}>{money(order.price)}</Text></View>
+            <PrimaryButton label={say(delivery ? 'Оценить доставку' : 'Оценить поездку', 'Сапарды баалоо')} icon="star" onPress={() => navigateStage('rating')}/>
+            <Pressable accessibilityRole="button" accessibilityLabel={say('Закрыть', 'Жабуу')} onPress={closeCompletion} style={s.close}><Text style={[s.closeText, isDark && s.darkInk]}>{say('Закрыть', 'Жабуу')}</Text></Pressable>
+          </> : <>
+            <View style={s.stars}>{[1, 2, 3, 4, 5].map(value => <Pressable key={value} accessibilityRole="button" accessibilityLabel={`${say('Оценка', 'Баа')} ${value}`} accessibilityState={{ selected: score === value }} onPress={() => setScore(value)} hitSlop={5} style={s.star}><Icon name={value <= score ? 'star' : 'star-outline'} size={39} color={isDark ? '#FFFFFF' : '#FFBE12'}/></Pressable>)}</View>
+            <View style={s.compliments}>{compliments.map(item => <Pressable key={item.ru} accessibilityRole="checkbox" accessibilityLabel={say(item.ru, item.ky)} accessibilityState={{ checked: selected.includes(item.ru) }} onPress={() => setSelected(current => current.includes(item.ru) ? current.filter(value => value !== item.ru) : [...current, item.ru])} style={[s.compliment, isDark && s.darkCompliment, selected.includes(item.ru) && s.complimentSelected, isDark && selected.includes(item.ru) && s.darkComplimentSelected]}><View style={[s.complimentIcon, { backgroundColor: isDark ? '#FFFFFF' : item.color }]}><Icon name={item.icon} size={16} color={isDark ? '#050505' : '#FFFFFF'}/></View><Text style={[s.complimentText, isDark && s.darkInk]}>{say(item.ru, item.ky)}</Text></Pressable>)}</View>
+            <TextInput accessibilityLabel={say(delivery ? 'Комментарий к доставке' : 'Комментарий к поездке', 'Сапар тууралуу пикир')} placeholder={say('Оставьте комментарий (необязательно)', 'Пикириңизди калтырыңыз (милдеттүү эмес)')} placeholderTextColor={isDark ? '#A0A0A0' : '#8391A7'} selectionColor={isDark ? '#FFFFFF' : undefined} multiline maxLength={400} value={comment} onChangeText={setComment} textAlignVertical="top" style={[s.comment, isDark && s.darkComment]}/>
+            <PrimaryButton label={say('Отправить', 'Жөнөтүү')} onPress={() => void submit()} disabled={submitting || busy} busy={submitting || busy}/>
+          </>}
+        </ScrollView>
+      </Animated.View>
+    </Reanimated.View>
   </KeyboardAvoidingView>;
 }
 
 const s = StyleSheet.create({
   host: { ...StyleSheet.absoluteFillObject, zIndex: 30, justifyContent: 'flex-end' },
-  sheet: { backgroundColor: '#FFFFFF', borderTopLeftRadius: 30, borderTopRightRadius: 30, paddingHorizontal: 16, paddingTop: 9, shadowColor: '#12365F', shadowOpacity: .12, shadowRadius: 16, shadowOffset: { width: 0, height: -4 }, elevation: 9 },
-  darkSheet: { backgroundColor: '#111111', shadowColor: '#000000' },
+  sheet: { shadowColor: '#12365F', shadowOpacity: .12, shadowRadius: 16, shadowOffset: { width: 0, height: -4 } },
+  darkSheet: { shadowColor: '#000000' },
+  headerContent: { backgroundColor: '#FFFFFF', borderTopLeftRadius: 30, borderTopRightRadius: 30, paddingHorizontal: 16, paddingTop: 14, paddingBottom: 8, gap: 6 },
+  darkHeaderContent: { backgroundColor: '#111111' },
   darkInk: { color: '#FFFFFF' }, darkMuted: { color: '#B8B8B8' }, darkInset: { backgroundColor: '#202020', borderWidth: 1, borderColor: '#3A3A3A' },
-  successContent: { gap: 6, paddingBottom: 2 },
+  successContent: { gap: 6, paddingHorizontal: 16 },
   successTitle: { fontSize: 23, lineHeight: 27, fontWeight: '800', color: '#101D38', textAlign: 'center', letterSpacing: -.5, marginTop: -10 },
   successSubtitle: { fontSize: 14, lineHeight: 19, color: '#63718D', textAlign: 'center', marginBottom: 3 },
   routeCard: { backgroundColor: '#F3F7FF', borderRadius: 15, paddingHorizontal: 15, paddingVertical: 8, gap: 8 },
@@ -151,10 +167,10 @@ const s = StyleSheet.create({
   pressed: { opacity: .82 }, disabled: { opacity: .55 },
   close: { minHeight: 34, alignItems: 'center', justifyContent: 'center' },
   closeText: { fontSize: 16, fontWeight: '700', color: '#087FFF' },
-  handleTouch: { height: 25, alignItems: 'center', justifyContent: 'flex-start' },
-  handle: { width: 43, height: 5, borderRadius: 4, backgroundColor: '#B9C3D5' },
+  handleTouch: { height: 24, alignItems: 'center', justifyContent: 'center' },
+  handle: { width: 34, height: 4, borderRadius: 4, backgroundColor: '#B9C3D5' },
   darkHandle: { backgroundColor: '#666666' },
-  ratingContent: { gap: 15, paddingHorizontal: 1, paddingBottom: 5 },
+  ratingContent: { gap: 15, paddingHorizontal: 17 },
   ratingTitle: { fontSize: 25, lineHeight: 31, fontWeight: '800', color: '#101D38', textAlign: 'center', letterSpacing: -.5, marginTop: 2 },
   ratingSubtitle: { fontSize: 16, lineHeight: 22, color: '#78859C', textAlign: 'center' },
   stars: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 14, marginVertical: 3 },

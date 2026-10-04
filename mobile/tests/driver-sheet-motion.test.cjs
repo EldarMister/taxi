@@ -6,7 +6,7 @@ globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 const code = ts.transpileModule(fs.readFileSync(path.join(__dirname, '../src/DriverRideSheet.tsx'), 'utf8'), {
   compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX, esModuleInterop: true },
 }).outputText;
-async function mount(t, stage, reduced = false) {
+async function mount(t, stage, reduced = false, options = {}) {
   const values = [], reactions = new Set(), animations = [], heights = [], expanded = [];
   let flushBusy = false;
   const flush = () => { if (flushBusy) return; flushBusy = true; for (const run of reactions) run(); flushBusy = false; };
@@ -20,7 +20,7 @@ async function mount(t, stage, reduced = false) {
       if (fraction === 1) { object.pending = null; pending.callback?.(true); }
     } }; values.push(object); return object;
   }
-  const animated = { __esModule: true, default: { View: 'MotionView' },
+  const animated = { __esModule: true, default: { View: 'MotionView', ScrollView: 'MotionScrollView' },
     useSharedValue: initial => { const ref = React.useRef(); if (!ref.current) ref.current = shared(initial); return ref.current; },
     useAnimatedStyle: evaluate => ({ evaluate }),
     useAnimatedReaction: (prepare, react) => React.useEffect(() => { const run = () => react(prepare()); reactions.add(run); run(); return () => reactions.delete(run); }),
@@ -39,7 +39,7 @@ async function mount(t, stage, reduced = false) {
     if (id === 'react' || id === 'react/jsx-runtime') return require(id);
     if (id === 'react-native') return { Pressable: 'Pressable', View: 'View', StyleSheet: { create: x => x } };
     if (id === 'react-native-reanimated') return animated;
-    if (id === 'react-native-gesture-handler') return { Gesture: { Pan: pan }, GestureDetector: 'GestureDetector' };
+    if (id === 'react-native-gesture-handler') return { Gesture: { Pan: pan, Native: () => ({ type: 'native' }) }, GestureDetector: 'GestureDetector' };
     if (id === './design/motion') return { useMotionPreference: () => reduced };
     throw Error(id);
   } });
@@ -50,7 +50,7 @@ async function mount(t, stage, reduced = false) {
     header: React.createElement('View', null, React.createElement('Pressable', { testID: 'call', onPress: () => contacts.calls++ }), React.createElement('Pressable', { testID: 'chat', onPress: () => contacts.chats++ }), stage === 'ARRIVED' ? React.createElement('Text', { testID: 'timer' }, '0:47') : null),
     details: React.createElement(Details), footer: React.createElement('Pressable', { testID: 'confirm', onPress: () => contacts.actions++ }),
     compactDetails: stage === 'SEARCHING' ? React.createElement('Text', null, 'Tariff and fare') : undefined,
-    style: {}, handleStyle: {}, handleLabel: open => open ? 'Close' : 'Open', onHeight: value => heights.push(value), onExpanded: value => expanded.push(value), inset,
+    style: {}, handleStyle: {}, handleLabel: open => open ? 'Close' : 'Open', onHeight: value => heights.push(value), onExpanded: value => expanded.push(value), inset, maxHeight: options.maxHeight,
   })); });
   t.after(async () => { await act(async () => renderer.unmount()); assert.equal(reactions.size, 0); });
   const root = () => renderer.root.findByProps({ testID: 'driver-ride-sheet' });
@@ -58,7 +58,7 @@ async function mount(t, stage, reduced = false) {
   await act(async () => { root().props.onLayout({ nativeEvent: { layout: { height: 420 } } }); clip().props.onLayout({ nativeEvent: { layout: { height: 220 } } }); });
   if (stage === 'SEARCHING') await act(async () => renderer.root.findByProps({ testID: 'driver-sheet-compact-details' }).props.onLayout({ nativeEvent: { layout: { height: 44 } } }));
   const reveal = values[1]; // external inset was created before the component's shared values
-  const gesture = () => renderer.root.findByType('GestureDetector').props.gesture;
+  const gesture = () => renderer.root.findAllByType('GestureDetector').find(node => node.props.gesture.handlers?.onStart).props.gesture;
   const tap = async id => act(async () => renderer.root.findByProps({ testID: id }).props.onPress());
   const step = async fraction => act(async () => reveal.step(fraction));
   const style = () => root().props.style.at(-1).evaluate();
@@ -109,12 +109,19 @@ test('SEARCHING: reduced motion settles without a spring and preserves the compa
   assert.equal(h.inset.get(), 244);
   assert.equal(h.detailsMounts.count, 1);
 });
-for (const stage of ['ARRIVED', 'IN_PROGRESS']) {
+for (const stage of ['ASSIGNED', 'ARRIVED', 'IN_PROGRESS', 'DELIVERY_ASSIGNED', 'DELIVERY_ARRIVED', 'DELIVERY_IN_PROGRESS']) {
   test(`${stage}: tap transitions, reversal and synchronized inset keep details mounted and controls usable`, async t => {
     const h = await mount(t, stage);
     assert.equal(h.inset.get(), 200); assert.equal(h.style().transform[0].translateY, 220);
     const handle = h.renderer.root.findByProps({ testID: 'driver-panel-handle' });
-    assert.ok(Object.assign({}, ...handle.props.style).height >= 56 && handle.props.hitSlop.bottom > 0, 'handle has a generous touch and drag area');
+    const handleLayout = Object.assign({}, ...handle.props.style);
+    assert.equal(handleLayout.position, 'absolute', 'grabber does not reserve a blank band above the content');
+    const envelope = Object.assign({}, ...h.renderer.root.findByProps({ testID: 'driver-ride-sheet' }).props.style);
+    const dragArea = h.renderer.root.findByProps({ testID: 'driver-sheet-drag-area' }).props.style;
+    const handleTop = envelope.paddingTop + dragArea.marginTop + handleLayout.top;
+    const whiteTop = Object.assign({}, ...h.renderer.root.findByProps({ testID: 'driver-sheet-background' }).props.style).top;
+    assert.ok(handleTop >= 0 && handleTop + handleLayout.height / 2 < whiteTop, 'grabber sits above the white surface while inside native hit bounds');
+    assert.ok(handleLayout.height + handle.props.hitSlop.top + handle.props.hitSlop.bottom >= 40, 'grabber retains a generous touch target');
     await h.tap('driver-panel-handle');
     assert.equal(h.animations.at(-1).animation, 'spring'); assert.equal(h.animations.at(-1).config.duration, 300);
     assert.equal(h.animations.at(-1).config.overshootClamping, true);
@@ -145,7 +152,7 @@ for (const stage of ['ARRIVED', 'IN_PROGRESS']) {
     await h.drag(140); await h.step(1); assert.equal(h.inset.get(), 200);
     await h.drag(-15, -1000); assert.equal(h.animations.at(-1).config.velocity, 1000); await h.step(1); assert.equal(h.inset.get(), 420);
     await h.drag(15, 1000); await h.step(1); assert.equal(h.inset.get(), 200);
-    await h.drag(-140, 0, false); await act(async () => h.gesture().handlers.onFinalize()); await h.step(1); assert.equal(h.inset.get(), 420);
+    await h.drag(-140, 0, false); await act(async () => h.gesture().handlers.onFinalize()); await h.step(1); assert.equal(h.inset.get(), 200, 'cancelled drag restores its previous collapsed detent');
   });
   test(`${stage}: reduced motion uses a short non-spring transition`, async t => {
     const h = await mount(t, stage, true);
@@ -154,3 +161,46 @@ for (const stage of ['ARRIVED', 'IN_PROGRESS']) {
     await h.tap('driver-panel-handle'); await h.step(1); assert.equal(h.inset.get(), 200);
   });
 }
+test('top/header drag area includes contact controls while resistance preserves contact beyond both detents', async t => {
+  const h = await mount(t, 'ASSIGNED');
+  const area = h.renderer.root.findByProps({ testID: 'driver-sheet-drag-area' });
+  assert.equal(area.findAllByProps({ testID: 'call' }).length, 1);
+  assert.equal(area.findAllByProps({ testID: 'chat' }).length, 1);
+  assert.equal(area.findAllByProps({ testID: 'confirm' }).length, 0);
+  await h.drag(40, 0, false);
+  assert.ok(h.reveal.get() < 0 && h.reveal.get() > -40, 'closed edge resists a downward pull instead of stopping immediately');
+  await act(async () => { h.gesture().handlers.onEnd({ velocityY: 0 }); h.gesture().handlers.onFinalize(); });
+  await h.step(1); assert.equal(h.reveal.get(), 0);
+  await h.tap('driver-panel-handle'); await h.step(1);
+  await h.drag(-40, 0, false);
+  assert.ok(h.reveal.get() > 220 && h.reveal.get() < 260, 'expanded edge also retains finger contact with resistance');
+  await act(async () => { h.gesture().handlers.onEnd({ velocityY: 0 }); h.gesture().handlers.onFinalize(); });
+  await h.step(1); assert.equal(h.reveal.get(), 220);
+  await act(async () => {
+    h.gesture().handlers.onStart({ translationY: 9 });
+    h.gesture().handlers.onUpdate({ translationY: 9 });
+  });
+  assert.equal(h.reveal.get(), 220, 'activation does not jump when grabbing at the gesture threshold');
+  await act(async () => h.gesture().handlers.onFinalize()); await h.step(1);
+  await h.tap('driver-panel-handle'); await h.step(1);
+  await h.drag(-15, 0, false);
+  await act(async () => { h.gesture().handlers.onEnd({ velocityY: -1000 }, false); h.gesture().handlers.onFinalize(); });
+  await h.step(1); assert.equal(h.reveal.get(), 0, 'cancelled recognizer does not apply the stale flick velocity');
+});
+test('overflow details scroll inside a capped expanded envelope without raising the compact detent', async t => {
+  const h = await mount(t, 'SEARCHING', false, { maxHeight: 360 });
+  let scroll = h.renderer.root.findByProps({ testID: 'driver-sheet-details-scroll' });
+  assert.equal(scroll.props.style.maxHeight, 160, 'header and footer are deducted from usable screen height');
+  assert.equal(scroll.props.style.flexGrow, 0, 'short content keeps its intrinsic height');
+  const headerGesture = h.renderer.root.findAllByType('GestureDetector').find(node => node.props.gesture === h.gesture());
+  assert.equal(headerGesture.findAllByProps({ testID: 'driver-sheet-details-scroll' }).length, 0, 'vertical detail scrolling does not compete with header dragging');
+  await h.resize(360, 160);
+  assert.equal(h.inset.get(), 244, 'constraining expanded content leaves compact height unchanged');
+  await h.tap('driver-panel-handle'); await h.step(1);
+  assert.equal(h.inset.get(), 360);
+  await h.resize(360, 160); scroll = h.renderer.root.findByProps({ testID: 'driver-sheet-details-scroll' });
+  assert.equal(scroll.props.style.maxHeight, 160, 'measuring the capped viewport does not shrink it repeatedly');
+  await h.drag(100, 0, false);
+  await act(async () => { h.gesture().handlers.onEnd({ velocityY: 1000 }, false); h.gesture().handlers.onFinalize(); });
+  await h.step(1); assert.equal(h.inset.get(), 360, 'a cancelled downward drag restores the expanded detent');
+});

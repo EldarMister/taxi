@@ -10,17 +10,26 @@ export function sheetDestination(reveal: number, height: number, velocityY: numb
   return reveal - velocityY * .18 > height / 2;
 }
 
+export function sheetReveal(position: number, height: number) {
+  'worklet';
+  // Resist beyond either detent without breaking contact with the finger.
+  const bounded = Math.max(0, Math.min(height, position));
+  const overshoot = position - bounded;
+  const dimension = Math.max(120, height);
+  return bounded + overshoot * dimension * .55 / (dimension + .55 * Math.abs(overshoot));
+}
+
 /** Fixed measured envelope: translate the surface and countertranslate its footer.
  * A translated clipping window reveals details without a Yoga layout per frame.
  * Reanimated 3 is required by this app's Paper architecture; runOnJS runs only
  * at gesture boundaries / settlement, never for each animation frame.
  */
-export function DriverRideSheet({ header, details, compactDetails, footer, style, handleStyle, handleTouchStyle, handleLabel, onExpanded, onHeight, inset, visible = true, testID = 'driver-ride-sheet' }: {
+export function DriverRideSheet({ header, details, compactDetails, footer, style, handleStyle, handleTouchStyle, handleLabel, onExpanded, onHeight, inset, maxHeight, visible = true, testID = 'driver-ride-sheet' }: {
   header: React.ReactNode | ((expanded: boolean, toggle: () => void) => React.ReactNode); details: React.ReactNode; compactDetails?: React.ReactNode; footer: React.ReactNode;
   style: StyleProp<ViewStyle>; handleStyle: StyleProp<ViewStyle>; handleLabel: (expanded: boolean) => string;
   handleTouchStyle?: StyleProp<ViewStyle>; testID?: string;
   onExpanded: (expanded: boolean) => void; onHeight: (height: number) => void;
-  inset?: SharedValue<number>; visible?: boolean;
+  inset?: SharedValue<number>; maxHeight?: number; visible?: boolean;
 }) {
   const reduced = useMotionPreference();
   const reveal = useSharedValue(0);
@@ -35,6 +44,8 @@ export function DriverRideSheet({ header, details, compactDetails, footer, style
   const [measuredHeight, setMeasuredHeight] = useState(0);
   const [measuredDetails, setMeasuredDetails] = useState(0);
   const [measuredCompact, setMeasuredCompact] = useState(0);
+  const availableDetails = maxHeight == null ? undefined : Math.max(48, maxHeight - (measuredHeight - measuredDetails));
+  const nativeScroll = useMemo(() => Gesture.Native(), []);
   const notify = useCallback((value: boolean, height: number) => {
     setExpanded(value); onExpanded(value); onHeight(height);
   }, [onExpanded, onHeight]);
@@ -83,41 +94,51 @@ export function DriverRideSheet({ header, details, compactDetails, footer, style
   const counterStyle = useAnimatedStyle(() => ({ transform: [{ translateY: reveal.get() - detailHeight.get() }] }));
   const detailStyle = useAnimatedStyle(() => ({
     transform: [{ translateY: detailHeight.get() - reveal.get() }],
-    opacity: detailHeight.get() ? Math.min(1, reveal.get() / detailHeight.get() * 1.5) : 0,
+    opacity: detailHeight.get() ? Math.max(0, Math.min(1, reveal.get() / detailHeight.get() * 1.5)) : 0,
   }));
   const compactStyle = useAnimatedStyle(() => ({
     transform: [{ translateY: detailHeight.get() - reveal.get() }],
-    opacity: detailHeight.get() ? Math.max(0, 1 - reveal.get() / detailHeight.get() * 2) : 1,
+    opacity: detailHeight.get() ? Math.min(1, Math.max(0, 1 - reveal.get() / detailHeight.get() * 2)) : 1,
   }));
   const gesture = useMemo(() => Gesture.Pan().enabled(visible).activeOffsetY([-8, 8]).failOffsetX([-10, 10])
-    .onStart(event => { cancelAnimation(reveal); origin.set(reveal.get() + event.translationY); dragging.set(true); })
-    .onUpdate(event => { reveal.set(Math.max(0, Math.min(detailHeight.get(), origin.get() - event.translationY))); })
-    .onEnd(event => { dragging.set(false); settle(sheetDestination(reveal.get(), detailHeight.get(), event.velocityY), event.velocityY); })
-    .onFinalize(() => { if (dragging.get()) { dragging.set(false); settle(reveal.get() > detailHeight.get() / 2); } }),
-  [visible, reveal, origin, dragging, detailHeight, settle]);
+    .onStart(event => { if (!shown.get() || !ready.get()) return; cancelAnimation(reveal); origin.set(reveal.get() + event.translationY); dragging.set(true); })
+    .onUpdate(event => { if (dragging.get()) reveal.set(sheetReveal(origin.get() - event.translationY, detailHeight.get())); })
+    .onEnd((event, success) => {
+      if (!dragging.get()) return;
+      dragging.set(false);
+      settle(success !== false ? sheetDestination(reveal.get(), detailHeight.get(), event.velocityY) : targetExpanded.get(),
+        success !== false ? event.velocityY : 0);
+    })
+    .onFinalize(() => { if (dragging.get()) { dragging.set(false); settle(targetExpanded.get()); } }),
+  [visible, reveal, origin, dragging, detailHeight, settle, shown, ready, targetExpanded]);
 
   const toggle = () => settle(!targetExpanded.get());
-  return <Animated.View testID={testID} onLayout={event => setMeasuredHeight(event.nativeEvent.layout.height)} style={[style, surfaceStyle]}>
+  return <Animated.View testID={testID} onLayout={event => setMeasuredHeight(event.nativeEvent.layout.height)} style={[style, styles.envelope, surfaceStyle]}>
+    <View testID="driver-sheet-background" pointerEvents="none" style={[style, styles.background]}/>
     <GestureDetector gesture={gesture}>
-      <View testID="driver-sheet-drag-area" pointerEvents="box-none" collapsable={false}>
-      <View>
+      <View testID="driver-sheet-drag-area" collapsable={false} style={styles.dragArea}>
         <Pressable testID="driver-panel-handle" hitSlop={{ top: 14, bottom: 4, left: 16, right: 16 }} accessibilityRole="button" accessibilityState={{ expanded }} accessibilityLabel={handleLabel(expanded)}
           onPress={toggle} style={[styles.handleTouch, handleTouchStyle]}><View style={handleStyle}/></Pressable>
         {typeof header === 'function' ? header(expanded, toggle) : header}
       </View>
+    </GestureDetector>
     <Animated.View pointerEvents="box-none" style={[styles.clip, counterStyle]} onLayout={event => setMeasuredDetails(event.nativeEvent.layout.height)}>
       <Animated.View pointerEvents={expanded ? 'auto' : 'none'} accessibilityElementsHidden={!expanded} importantForAccessibility={expanded ? 'auto' : 'no-hide-descendants'} style={detailStyle}>
-        {details}
+        {availableDetails == null ? details : <GestureDetector gesture={nativeScroll}>
+          <Animated.ScrollView testID="driver-sheet-details-scroll" style={{ maxHeight: availableDetails, flexGrow: 0 }} showsVerticalScrollIndicator={false} nestedScrollEnabled bounces={false} keyboardShouldPersistTaps="handled">{details}</Animated.ScrollView>
+        </GestureDetector>}
       </Animated.View>
       {compactDetails && <Animated.View testID="driver-sheet-compact-details" onLayout={event => setMeasuredCompact(event.nativeEvent.layout.height)} pointerEvents={expanded ? 'none' : 'auto'} accessibilityElementsHidden={expanded} importantForAccessibility={expanded ? 'no-hide-descendants' : 'auto'} style={[styles.compactDetails, compactStyle]}>{compactDetails}</Animated.View>}
     </Animated.View>
-      </View>
-    </GestureDetector>
     <Animated.View style={[styles.footer, counterStyle]}>{footer}</Animated.View>
   </Animated.View>;
 }
 const styles = StyleSheet.create({
-  handleTouch: { height: 56, marginTop: -12, marginBottom: 4, paddingTop: 10, alignItems: 'center' },
+  // Extend the native drag area above the surface without adding flow height.
+  envelope: { backgroundColor: 'transparent', paddingTop: 40, shadowOpacity: 0, elevation: 0 },
+  background: { position: 'absolute', top: 24, left: 0, right: 0, bottom: 0, marginTop: 0 },
+  dragArea: { marginTop: -38, paddingTop: 38 },
+  handleTouch: { position: 'absolute', top: 0, left: 0, right: 0, height: 24, alignItems: 'center', justifyContent: 'center', zIndex: 2 },
   clip: { overflow: 'hidden' },
   compactDetails: { position: 'absolute', top: 0, left: 0, right: 0 },
   footer: { paddingTop: 10 },

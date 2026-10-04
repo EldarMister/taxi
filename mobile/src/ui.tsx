@@ -1,5 +1,5 @@
-import React, { PropsWithChildren, useEffect, useMemo, useRef } from 'react';
-import { ActivityIndicator, Animated, Image, PanResponder, Pressable, ScrollView, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
+import React, { useEffect, useRef } from 'react';
+import { ActivityIndicator, Animated, Image, Pressable, StyleSheet, Text, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import Svg, { Circle, Path, Rect } from 'react-native-svg';
 import { api } from './api';
@@ -469,17 +469,6 @@ export function Route({ order, pickup, dropoff, t = (text: string) => text }: { 
 export function Empty({ icon = 'car-outline', title, subtitle }: { icon?: React.ComponentProps<typeof Ionicons>['name']; title: string; subtitle?: string }) {
   const { isDark, palette } = useTheme();
   return <View style={s.empty}><View style={[s.emptyIcon, isDark && { backgroundColor: palette.elevated }]}><Icon name={icon} size={32} color={palette.accent}/></View><Text style={[s.h2, isDark && { color: palette.ink }]}>{title}</Text>{subtitle && <Text style={[s.muted, { textAlign: 'center' }, isDark && { color: palette.muted }]}>{subtitle}</Text>}</View>;
-}
-export function Sheet({ children, compact = false, maxFraction = .56, handleLabel = 'Развернуть или свернуть панель' }: PropsWithChildren<{ compact?: boolean; maxFraction?: number; handleLabel?: string }>) {
-  const { isDark, palette } = useTheme();
-  const { height } = useWindowDimensions();
-  const max = Math.min(height * maxFraction, 760), min = Math.min(230, height * .28);
-  const current = useRef(compact ? min : max); const animated = useRef(new Animated.Value(current.current)).current;
-  const origin = useRef(current.current);
-  useEffect(() => { const target = compact ? min : max; current.current = target; animated.setValue(target); }, [min, max, compact, animated]);
-  const snap = (value: number) => { current.current = value; Animated.spring(animated, { toValue: value, useNativeDriver: false, damping: 24, stiffness: 180, mass: 1 }).start(); };
-  const responder = useMemo(() => PanResponder.create({ onMoveShouldSetPanResponder: (_, g) => Math.abs(g.dy) > 4, onPanResponderGrant: () => { origin.current = current.current; }, onPanResponderMove: (_, g) => animated.setValue(Math.max(min, Math.min(max, origin.current - g.dy))), onPanResponderRelease: (_, g) => snap(origin.current - g.dy > (max + min) / 2 ? max : min) }), [min, max, animated]);
-  return <Animated.View style={[s.sheet, isDark && { backgroundColor: palette.surface, shadowColor: palette.background }, { maxHeight: animated }]}><View {...responder.panHandlers}><Pressable onPress={() => snap(current.current === max ? min : max)} accessibilityRole="button" accessibilityLabel={handleLabel} style={s.handleTouch}><View style={[s.handle, isDark && { backgroundColor: palette.line }]}/></Pressable></View><ScrollView showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled" contentContainerStyle={s.sheetContent}>{children}</ScrollView></Animated.View>;
 }
 export const s = StyleSheet.create({
   logo: { flexDirection: 'row', alignItems: 'center', gap: 9 }, brand: { color: colors.ink, fontSize: 25, fontWeight: '800', letterSpacing: -.8 },

@@ -1,6 +1,8 @@
 import React, { useEffect, useState } from 'react';
 import { ActivityIndicator, Animated, Pressable, ScrollView, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { GestureDetector } from 'react-native-gesture-handler';
+import Reanimated from 'react-native-reanimated';
 import { SuccessCelebration } from './SuccessCelebration';
 import { Icon, km, localize, money, shortAddress, tripTime } from './ui';
 import type { Order, User } from './types';
@@ -39,8 +41,9 @@ export function DriverCompletionPanel({ order, user, busy, onDone, onRateClient,
   const [rated, setRated] = useState(order.driverRating != null);
   const [submitting, setSubmitting] = useState(false);
   const [ratingError, setRatingError] = useState(false);
+  const [sheetHeight, setSheetHeight] = useState(0);
   const closeCompletion = () => exitStage(() => onDone(order.id));
-  const drag = useSheetDragToClose(stage === 'rating' ? () => navigateStage('success') : closeCompletion, !busy && !submitting);
+  const drag = useSheetDragToClose(stage === 'rating' ? () => resetStage('success') : () => onDone(order.id), !busy && !submitting, sheetHeight);
   useEffect(() => { drag.reset(); }, [stage]);
 
   useEffect(() => {
@@ -67,45 +70,57 @@ export function DriverCompletionPanel({ order, user, busy, onDone, onRateClient,
 
   return <View testID="driver-completion" style={s.host}>
     <View style={[s.backdrop, { backgroundColor: palette.backdrop }]}/>
-    <Animated.View onLayout={event => onHeight?.(event.nativeEvent.layout.height)} style={[s.sheet, { maxHeight: screenHeight - insets.top - 16, paddingBottom: Math.max(insets.bottom, 14), transform: [{ translateY: stageTranslateY }, { translateY: drag.translateY }] }]}>
-      <View {...drag.panHandlers} style={s.handleTouch}><Pressable accessibilityRole="button" accessibilityLabel={stage === 'rating' ? say('Назад к заказу', 'Буюртмага кайтуу') : rated ? say('Закрыть', 'Жабуу') : say('Пропустить оценку', 'Баалоону өткөрүп жиберүү')} accessibilityState={{ disabled: busy || submitting }} disabled={busy || submitting} onPress={stage === 'rating' ? () => navigateStage('success') : closeCompletion} hitSlop={8}><View style={s.handle}/></Pressable></View>
-      <ScrollView contentContainerStyle={stage === 'success' ? s.successContent : s.ratingContent} showsVerticalScrollIndicator={false} bounces={false} style={{ flexGrow: 0 }}>
-        {stage === 'success' ? <>
-          <SuccessCelebration key={`driver-success-${order.id}`} size={132} testID="driver-success-celebration"/>
-          <Text style={s.successTitle}>{say('Заказ успешно\nвыполнен!', 'Буюртма ийгиликтүү\nаткарылды!')}</Text>
-          <Text style={s.successSubtitle}>{say('Спасибо, что выбрали Atlas', 'Atlasты тандаганыңыз үчүн рахмат')}</Text>
-          <View style={s.routeCard}>
-            <View style={s.routeRow}><View style={s.routeLetter}><Text style={s.routeLetterText}>А</Text></View><View style={s.routeCopy}><Text style={s.routeLabel}>{say('Откуда', 'Кайдан')}</Text><Text style={s.routeText} numberOfLines={2}>{shortAddress(order.pickup.address)}</Text></View></View>
-            <View style={s.routeDivider}/>
-            <View style={s.routeRow}><View style={s.routeLetter}><Text style={s.routeLetterText}>Б</Text></View><View style={s.routeCopy}><Text style={s.routeLabel}>{say('Куда', 'Кайда')}</Text><Text style={s.routeText} numberOfLines={2}>{shortAddress(order.dropoff.address)}</Text></View></View>
+    <Reanimated.View style={drag.animatedStyle}>
+      <Animated.View onLayout={event => { const height = event.nativeEvent.layout.height; setSheetHeight(height); onHeight?.(height); }} style={[s.sheet, { maxHeight: screenHeight - insets.top - 16, transform: [{ translateY: stageTranslateY }] }]}>
+        <GestureDetector gesture={drag.gesture}>
+          <View testID="driver-completion-drag" collapsable={false}>
+            <Pressable accessibilityRole="button" accessibilityLabel={stage === 'rating' ? say('Назад к заказу', 'Буюртмага кайтуу') : rated ? say('Закрыть', 'Жабуу') : say('Пропустить оценку', 'Баалоону өткөрүп жиберүү')} accessibilityState={{ disabled: busy || submitting }} disabled={busy || submitting} onPress={stage === 'rating' ? () => navigateStage('success') : closeCompletion} style={s.handleTouch}><View style={s.handle}/></Pressable>
+            <View style={s.headerContent}>
+              {stage === 'success' ? <>
+                <SuccessCelebration key={`driver-success-${order.id}`} size={132} testID="driver-success-celebration"/>
+                <Text style={s.successTitle}>{say('Заказ успешно\nвыполнен!', 'Буюртма ийгиликтүү\nаткарылды!')}</Text>
+                <Text style={s.successSubtitle}>{say('Спасибо, что выбрали Atlas', 'Atlasты тандаганыңыз үчүн рахмат')}</Text>
+              </> : <>
+                <Text style={s.ratingTitle}>{say('Как всё прошло?', 'Баары кандай өттү?')}</Text>
+                <Text style={s.ratingSubtitle}>{say(delivery ? 'Оцените заказчика' : 'Оцените пассажира', 'Жүргүнчүнү баалаңыз')}</Text>
+              </>}
+            </View>
           </View>
-          <View style={s.metricsCard}>
-            <View style={s.metric}><Text style={s.metricLabel}>{say('Общий путь', 'Жалпы жол')}</Text><Text style={s.metricValue}>{km(order.distanceMeters)}</Text></View>
-            <View style={s.metricsDivider}/>
-            <View style={s.metric}><Text style={s.metricLabel}>{order.actualDurationSeconds == null ? say('Расчётное время в пути', 'Болжолдуу жол убактысы') : say('Время в пути', 'Жолдогу убакыт')}</Text><Text style={s.metricValue}>{tripTime(order.actualDurationSeconds ?? order.durationSeconds, user.language)}</Text></View>
-          </View>
-          <View style={s.fareCard}><Icon name="cash" size={25} color={isDark ? '#FFFFFF' : palette.accent}/><Text style={s.fareLabel} numberOfLines={1}>{say('Наличные', 'Накталай')} · {order.tariff?.name || say('Стандарт', 'Стандарт')}</Text><Text style={s.price}>{money(order.price)}</Text></View>
-          {!rated && <MainButton label={say(delivery ? 'Оценить заказчика' : 'Оценить пассажира', 'Жүргүнчүнү баалоо')} onPress={() => { setScore(0); setRatingError(false); navigateStage('rating'); }} busy={busy}/>}
-          <Pressable accessibilityRole="button" accessibilityLabel={say(rated ? 'Закрыть' : 'Пропустить оценку', rated ? 'Жабуу' : 'Баалоону өткөрүп жиберүү')} accessibilityState={{ disabled: busy }} disabled={busy} onPress={closeCompletion} style={s.close}><Text style={s.closeText}>{say(rated ? 'Закрыть' : 'Пропустить оценку', rated ? 'Жабуу' : 'Баалоону өткөрүп жиберүү')}</Text></Pressable>
-        </> : <>
-          <Text style={s.ratingTitle}>{say('Как всё прошло?', 'Баары кандай өттү?')}</Text>
-          <Text style={s.ratingSubtitle}>{say(delivery ? 'Оцените заказчика' : 'Оцените пассажира', 'Жүргүнчүнү баалаңыз')}</Text>
-          <View style={s.stars}>{[1, 2, 3, 4, 5].map(value => <Pressable key={value} accessibilityRole="button" accessibilityLabel={`${say('Оценка', 'Баа')} ${value}`} accessibilityState={{ selected: score === value }} disabled={busy || submitting} onPress={() => { setScore(value); setRatingError(false); }} hitSlop={6} style={s.star}><Icon name={value <= score ? 'star' : 'star-outline'} size={40} color={value <= score ? isDark ? '#FFFFFF' : '#FFBE12' : isDark ? '#777777' : '#AEBED2'}/></Pressable>)}</View>
-          {ratingError && <Text accessibilityRole="alert" style={s.ratingError}>{say('Не удалось сохранить отзыв. Попробуйте ещё раз.', 'Пикир сакталган жок. Кайра аракет кылыңыз.')}</Text>}
-          <MainButton label={score ? say('Отправить', 'Жөнөтүү') : say('Пропустить', 'Өткөрүп жиберүү')} onPress={score ? () => void submit() : closeCompletion} busy={busy || submitting}/>
-        </>}
-      </ScrollView>
-    </Animated.View>
+        </GestureDetector>
+        <ScrollView contentContainerStyle={[stage === 'success' ? s.successContent : s.ratingContent, { paddingBottom: Math.max(insets.bottom, 14) }]} showsVerticalScrollIndicator={false} bounces={false} style={{ flexGrow: 0, flexShrink: 1, backgroundColor: palette.surface }}>
+          {stage === 'success' ? <>
+            <View style={s.routeCard}>
+              <View style={s.routeRow}><View style={s.routeLetter}><Text style={s.routeLetterText}>А</Text></View><View style={s.routeCopy}><Text style={s.routeLabel}>{say('Откуда', 'Кайдан')}</Text><Text style={s.routeText} numberOfLines={2}>{shortAddress(order.pickup.address)}</Text></View></View>
+              <View style={s.routeDivider}/>
+              <View style={s.routeRow}><View style={s.routeLetter}><Text style={s.routeLetterText}>Б</Text></View><View style={s.routeCopy}><Text style={s.routeLabel}>{say('Куда', 'Кайда')}</Text><Text style={s.routeText} numberOfLines={2}>{shortAddress(order.dropoff.address)}</Text></View></View>
+            </View>
+            <View style={s.metricsCard}>
+              <View style={s.metric}><Text style={s.metricLabel}>{say('Общий путь', 'Жалпы жол')}</Text><Text style={s.metricValue}>{km(order.distanceMeters)}</Text></View>
+              <View style={s.metricsDivider}/>
+              <View style={s.metric}><Text style={s.metricLabel}>{order.actualDurationSeconds == null ? say('Расчётное время в пути', 'Болжолдуу жол убактысы') : say('Время в пути', 'Жолдогу убакыт')}</Text><Text style={s.metricValue}>{tripTime(order.actualDurationSeconds ?? order.durationSeconds, user.language)}</Text></View>
+            </View>
+            <View style={s.fareCard}><Icon name="cash" size={25} color={isDark ? '#FFFFFF' : palette.accent}/><Text style={s.fareLabel} numberOfLines={1}>{say('Наличные', 'Накталай')} · {order.tariff?.name || say('Стандарт', 'Стандарт')}</Text><Text style={s.price}>{money(order.price)}</Text></View>
+            {!rated && <MainButton label={say(delivery ? 'Оценить заказчика' : 'Оценить пассажира', 'Жүргүнчүнү баалоо')} onPress={() => { setScore(0); setRatingError(false); navigateStage('rating'); }} busy={busy}/>}
+            <Pressable accessibilityRole="button" accessibilityLabel={say(rated ? 'Закрыть' : 'Пропустить оценку', rated ? 'Жабуу' : 'Баалоону өткөрүп жиберүү')} accessibilityState={{ disabled: busy }} disabled={busy} onPress={closeCompletion} style={s.close}><Text style={s.closeText}>{say(rated ? 'Закрыть' : 'Пропустить оценку', rated ? 'Жабуу' : 'Баалоону өткөрүп жиберүү')}</Text></Pressable>
+          </> : <>
+            <View style={s.stars}>{[1, 2, 3, 4, 5].map(value => <Pressable key={value} accessibilityRole="button" accessibilityLabel={`${say('Оценка', 'Баа')} ${value}`} accessibilityState={{ selected: score === value }} disabled={busy || submitting} onPress={() => { setScore(value); setRatingError(false); }} hitSlop={6} style={s.star}><Icon name={value <= score ? 'star' : 'star-outline'} size={40} color={value <= score ? isDark ? '#FFFFFF' : '#FFBE12' : isDark ? '#777777' : '#AEBED2'}/></Pressable>)}</View>
+            {ratingError && <Text accessibilityRole="alert" style={s.ratingError}>{say('Не удалось сохранить отзыв. Попробуйте ещё раз.', 'Пикир сакталган жок. Кайра аракет кылыңыз.')}</Text>}
+            <MainButton label={score ? say('Отправить', 'Жөнөтүү') : say('Пропустить', 'Өткөрүп жиберүү')} onPress={score ? () => void submit() : closeCompletion} busy={busy || submitting}/>
+          </>}
+        </ScrollView>
+      </Animated.View>
+    </Reanimated.View>
   </View>;
 }
 
 const lightS = StyleSheet.create({
   host: { ...StyleSheet.absoluteFillObject, zIndex: 30, justifyContent: 'flex-end' },
   backdrop: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(16,29,56,.42)' },
-  sheet: { backgroundColor: '#FFFFFF', borderTopLeftRadius: 30, borderTopRightRadius: 30, paddingHorizontal: 16, paddingTop: 9, shadowColor: '#12365F', shadowOpacity: .12, shadowRadius: 16, shadowOffset: { width: 0, height: -4 }, elevation: 9 },
-  handleTouch: { height: 25, alignItems: 'center', justifyContent: 'flex-start' },
-  handle: { width: 43, height: 5, borderRadius: 4, backgroundColor: '#B9C3D5' },
-  successContent: { gap: 7, paddingBottom: 2 },
+  sheet: { shadowColor: '#12365F', shadowOpacity: .12, shadowRadius: 16, shadowOffset: { width: 0, height: -4 } },
+  headerContent: { backgroundColor: '#FFFFFF', borderTopLeftRadius: 30, borderTopRightRadius: 30, paddingHorizontal: 16, paddingTop: 14, gap: 7, paddingBottom: 7 },
+  handleTouch: { height: 24, alignItems: 'center', justifyContent: 'center' },
+  handle: { width: 34, height: 4, borderRadius: 4, backgroundColor: '#B9C3D5' },
+  successContent: { gap: 7, paddingHorizontal: 16 },
   successTitle: { fontSize: 23, lineHeight: 27, fontWeight: '800', color: '#101D38', textAlign: 'center', letterSpacing: -.5, marginTop: -10 },
   successSubtitle: { fontSize: 14, lineHeight: 19, color: '#63718D', textAlign: 'center', marginBottom: 3 },
   routeCard: { backgroundColor: '#F3F7FF', borderRadius: 15, paddingHorizontal: 15, paddingVertical: 9, gap: 7 },
@@ -129,7 +144,7 @@ const lightS = StyleSheet.create({
   buttonDimmed: { opacity: .6 },
   close: { minHeight: 36, alignItems: 'center', justifyContent: 'center' },
   closeText: { fontSize: 16, fontWeight: '700', color: '#087FFF' },
-  ratingContent: { gap: 15, paddingHorizontal: 1, paddingTop: 17, paddingBottom: 5, minHeight: 225 },
+  ratingContent: { gap: 15, paddingHorizontal: 17 },
   ratingTitle: { fontSize: 25, lineHeight: 31, fontWeight: '800', color: '#101D38', textAlign: 'center', letterSpacing: -.5 },
   ratingSubtitle: { fontSize: 16, lineHeight: 22, color: '#78859C', textAlign: 'center' },
   stars: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 14, marginVertical: 8 },
@@ -138,7 +153,8 @@ const lightS = StyleSheet.create({
 });
 
 const darkS = StyleSheet.create({
-  sheet: { ...lightS.sheet, backgroundColor: '#111111', shadowColor: '#000000' },
+  sheet: { ...lightS.sheet, shadowColor: '#000000' },
+  headerContent: { ...lightS.headerContent, backgroundColor: '#111111' },
   handle: { ...lightS.handle, backgroundColor: '#777777' },
   successTitle: { ...lightS.successTitle, color: '#FFFFFF' },
   successSubtitle: { ...lightS.successSubtitle, color: '#B0B0B0' },

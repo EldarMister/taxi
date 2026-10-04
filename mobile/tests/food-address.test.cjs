@@ -11,24 +11,35 @@ const deferred = () => { let resolve; const promise = new Promise(done => { reso
 const clone = value => JSON.parse(JSON.stringify(value));
 const saved = { fulfillment: 'DELIVERY', address: 'ул. Токтогула, 100', addressPoint: { latitude: 42.87, longitude: 74.57 }, comment: 'Позвоните', paymentMethod: 'CASH', entrance: '2', floor: '4', apartment: '18', intercom: '18К', cutleryCount: 3, restaurantComment: 'Без лука' };
 
-async function mount(t, { details = saved, geocode, position, defaultPoint } = {}) {
+async function mount(t, { details = saved, geocode, position, defaultPoint, platform = 'android', deferSheetClose = false } = {}) {
   const saves = [], searches = [];
+  const pendingSheetClosures = [];
   let closed = 0, selected, renderer;
   const native = Object.fromEntries(['View', 'Text', 'TextInput', 'Pressable', 'ScrollView', 'Modal', 'KeyboardAvoidingView'].map(name => [name, name]));
   native.StyleSheet = { create: value => value, absoluteFill: {}, hairlineWidth: 1 };
-  native.Keyboard = { dismiss() {} };
-  native.Platform = { OS: 'android' };
+  let dismissed = 0;
+  native.Keyboard = { dismiss() { dismissed++; } };
+  native.Platform = { OS: platform };
   const exports = {};
   const compile = ts.transpileModule(fs.readFileSync(path.join(__dirname, '../src/food/FoodAddressPicker.tsx'), 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX, esModuleInterop: true } }).outputText;
   vm.runInNewContext(compile, { exports, AbortController, require: id => {
     if (id === 'react' || id === 'react/jsx-runtime') return require(id);
     if (id === 'react-native') return native;
+    if (id === 'react-native-gesture-handler') return { GestureHandlerRootView: 'GestureHandlerRootView' };
     if (id === 'react-native-safe-area-context') return { useSafeAreaInsets: () => ({ top: 24, bottom: 24, left: 0, right: 0 }) };
     if (id === '../native/TaxiMap') return { __esModule: true, default: props => React.createElement('TaxiMap', props,
       props.renderSelectionPanel(selected ?? { point: props.pickup, address: props.pickup.address ?? '', ready: true, moving: false, locatingAddress: false })) };
     if (id === '../native/mapkit') return { BISHKEK: { latitude: 42.87, longitude: 74.57 }, searchAddresses: (...args) => { searches.push(args); return geocode?.promise ?? Promise.resolve([]); } };
     if (id === '../native/location') return { getLocationPermissionState: async () => ({ granted: false, servicesEnabled: false }), getCurrentPosition: async () => position ?? { latitude: 42.91, longitude: 74.61, address: 'Текущее место' } };
     if (id === '../AddressPicker') return { AddressPicker: props => React.createElement('AddressPicker', props) };
+    if (id === '../BottomPanel') return { BottomPanel: function BottomPanel({ closeRequested, onClose, children, ...props }) {
+      React.useEffect(() => {
+        if (!closeRequested) return;
+        if (deferSheetClose) pendingSheetClosures.push(onClose);
+        else onClose();
+      }, [closeRequested]);
+      return React.createElement('BottomPanel', { ...props, closeRequested, onClose }, children);
+    } };
     if (id === '../ui') return { Icon: 'Icon' };
     if (id === '../address') return { shortAddress: value => value ?? '' };
     if (id === '../api') return { messageOf: value => value.message };
@@ -44,11 +55,13 @@ async function mount(t, { details = saved, geocode, position, defaultPoint } = {
   t.after(async () => { await act(async () => renderer.unmount()); });
   return {
     renderer, saves, searches, props, get closed() { return closed; },
+    get dismissed() { return dismissed; },
     get map() { return renderer.root.findByType('TaxiMap').props; },
     get search() { return renderer.root.findByType('AddressPicker').props; },
     button: label => renderer.root.findAllByType('FoodButton').find(node => node.props.label === label),
     input: label => renderer.root.findAllByType('TextInput').find(node => node.props.accessibilityLabel === label),
     press: async label => act(async () => renderer.root.findAllByType('Pressable').find(node => node.props.accessibilityLabel === label).props.onPress()),
+    finishSheetClose: async () => act(async () => { pendingSheetClosures.splice(0).forEach(callback => callback()); }),
     select: async value => act(async () => { selected = value; renderer.update(React.createElement(exports.FoodAddressPicker, { ...props })); }),
   };
 }
@@ -127,6 +140,66 @@ test('courier comment sheet cancels independently and only an explicit save upda
   await act(async () => h.button('Готово').props.onPress());
   assert.equal(h.saves[0].comment, 'Вход со двора');
   assert.equal(h.saves[0].restaurantComment, 'Без лука');
+});
+
+test('the native food modal owns a gesture root for address search and the shared courier comment sheet', async t => {
+  for (const platform of ['android', 'ios']) {
+    const h = await mount(t, { platform });
+    const nativeModal = h.renderer.root.findByType('Modal');
+    const gestureRoot = nativeModal.findByType('GestureHandlerRootView');
+    assert.equal(gestureRoot.props.style.flex, 1);
+    assert.equal(gestureRoot.findAllByType('TaxiMap').length, 1);
+    const keyboard = gestureRoot.findByType('KeyboardAvoidingView');
+    assert.equal(keyboard.props.enabled, platform === 'ios', 'Android Modal uses its own native adjustResize');
+    assert.equal(keyboard.props.behavior, platform === 'ios' ? 'padding' : undefined);
+    await h.press('Найти адрес');
+    assert.equal(gestureRoot.findAllByType('AddressPicker').length, 1, 'food address search stays below the modal-native gesture root');
+    await act(async () => h.search.onClose());
+    await h.press('Комментарий курьеру');
+    assert.equal(h.renderer.root.findAllByType('Modal').length, 1, 'courier comment does not create a separate native touch root');
+    const sheet = gestureRoot.findByType('BottomPanel');
+    let ancestor = sheet.parent;
+    while (ancestor && ancestor.type !== 'GestureHandlerRootView') {
+      assert.notEqual(ancestor.type, 'KeyboardAvoidingView', 'courier sheet is a sibling of the map keyboard wrapper');
+      ancestor = ancestor.parent;
+    }
+    assert.equal(ancestor, gestureRoot);
+    assert.equal(sheet.findAllByType('KeyboardAvoidingView').length, 0, 'the shared sheet compensates its own keyboard');
+    assert.equal(sheet.findByProps({ testID: 'food-courier-comment' }).props.keyboardShouldPersistTaps, 'handled');
+    assert.equal(keyboard.props.pointerEvents, 'none');
+    assert.equal(keyboard.props.importantForAccessibility, 'no-hide-descendants', 'the map cannot be closed or saved behind an open comment');
+  }
+});
+
+test('courier close waits for the sheet exit, discards unsaved comments and commits saved comments only to the draft', async t => {
+  const h = await mount(t, { deferSheetClose: true });
+  await h.press('Комментарий курьеру');
+  await act(async () => h.input('Комментарий курьеру').props.onChangeText('Не сохранять'));
+  await h.press('Закрыть');
+  assert.equal(h.renderer.root.findByType('BottomPanel').props.closeRequested, true);
+  assert.equal(h.input('Комментарий курьеру').props.editable, false);
+  assert.equal(h.closed, 0);
+  await h.finishSheetClose();
+  assert.equal(h.renderer.root.findAllByType('BottomPanel').length, 0);
+  assert.equal(h.renderer.root.findByType('KeyboardAvoidingView').props.pointerEvents, 'auto');
+  await h.press('Комментарий курьеру');
+  assert.equal(h.input('Комментарий курьеру').props.value, 'Позвоните');
+  await act(async () => h.input('Комментарий курьеру').props.onChangeText('Не сохранять жестом'));
+  await act(async () => h.renderer.root.findByType('BottomPanel').props.onClose());
+  await h.press('Комментарий курьеру');
+  assert.equal(h.input('Комментарий курьеру').props.value, 'Позвоните');
+  await act(async () => h.input('Комментарий курьеру').props.onChangeText('  Вход со двора  '));
+  await act(async () => h.button('Сохранить').props.onPress());
+  assert.equal(h.renderer.root.findByType('BottomPanel').props.closeRequested, true);
+  assert.equal(h.button('Сохранить').props.disabled, true);
+  assert.equal(h.saves.length, 0);
+  assert.deepEqual(h.props.details, saved);
+  await h.finishSheetClose();
+  await act(async () => h.button('Готово').props.onPress());
+  assert.equal(h.saves[0].comment, 'Вход со двора');
+  assert.equal(h.saves[0].restaurantComment, 'Без лука');
+  assert.equal(h.closed, 0, 'comment save does not close the address picker');
+  assert.ok(h.dismissed >= 3, 'all close and confirmation paths release the keyboard');
 });
 
 test('editing entrance during a legacy address lookup does not replace the saved food destination', async t => {

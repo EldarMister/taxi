@@ -9,13 +9,13 @@ const { act, create } = require('react-test-renderer');
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
-test('chat attachment can send a photo while the send button stays hidden for empty content', async () => {
+function chatHarness(platform = 'android') {
   const source = fs.readFileSync(path.join(__dirname, '../src/Overlays.tsx'), 'utf8');
   const code = ts.transpileModule(source, { compilerOptions: {
     module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX, esModuleInterop: true,
   } }).outputText;
-  const uploads = [], pickerCalls = [];
-  let keyboardDismisses = 0, inputBlurs = 0, closes = 0;
+  const uploads = [], pickerCalls = [], posts = [], errors = [];
+  const state = { keyboardDismisses: 0, inputBlurs: 0, closes: 0 };
   class Form { fields = []; append(name, value) { this.fields.push([name, value]); } }
   const api = {
     baseUrl: 'https://example.test/api', getTokens: () => ({ accessToken: 'token' }),
@@ -24,14 +24,19 @@ test('chat attachment can send a photo while the send button stays hidden for em
       return { id: 'photo-message', orderId: 'trip', senderId: 'me', text: '', createdAt: new Date().toISOString(),
         photoUrl: '/orders/trip/messages/photo-message/photo' };
     },
+    post: async (url, body) => {
+      posts.push({ url, body });
+      return { id: `text-message-${posts.length}`, orderId: 'trip', senderId: 'me', text: body.text,
+        createdAt: new Date().toISOString() };
+    },
   };
   const exports = {};
   vm.runInNewContext(code, { exports, FormData: Form, setInterval: () => 1, clearInterval: () => {},
     require: id => {
       if (id === 'react' || id === 'react/jsx-runtime') return require(id);
       if (id === 'react-native') return {
-        ActivityIndicator: 'ActivityIndicator', Image: 'Image', Keyboard: { dismiss: () => { keyboardDismisses++; } },
-        KeyboardAvoidingView: 'KeyboardAvoidingView', Modal: 'Modal', Platform: { OS: 'android' },
+        ActivityIndicator: 'ActivityIndicator', Image: 'Image', Keyboard: { dismiss: () => { state.keyboardDismisses++; } },
+        KeyboardAvoidingView: 'KeyboardAvoidingView', Modal: 'Modal', Platform: { OS: platform },
         Pressable: 'Pressable', ScrollView: 'ScrollView', StyleSheet: { create: styles => styles,
           absoluteFillObject: { position: 'absolute', left: 0, top: 0, right: 0, bottom: 0 } },
         Text: 'Text', TextInput: 'TextInput', View: 'View',
@@ -44,6 +49,8 @@ test('chat attachment can send a photo while the send button stays hidden for em
       };
       if (id === 'expo-image-manipulator') return { SaveFormat: { JPEG: 'jpeg' }, manipulateAsync: async () => ({ uri: 'prepared.jpg' }) };
       if (id === 'react-native-safe-area-context') return { SafeAreaView: 'SafeAreaView', useSafeAreaInsets: () => ({ bottom: 20 }) };
+      if (id === 'react-native-gesture-handler') return { GestureHandlerRootView: 'GestureHandlerRootView' };
+      if (id === './BottomPanel') return { BottomPanel: 'BottomPanel' };
       if (id === './api') return { api, messageOf: error => String(error), requestId: () => 'client-message-id' };
       if (id === './design/theme') return { useTheme: () => ({ isDark: true, palette: {
         background: '#050505', surface: '#111111', line: '#333333', ink: '#ffffff', muted: '#aaaaaa', accent: '#ffffff', accentText: '#000000',
@@ -54,13 +61,21 @@ test('chat attachment can send a photo while the send button stays hidden for em
     },
   });
   const user = { id: 'me', language: 'ru' };
+  const props = { orderId: 'trip', user, incoming: null, onClose: () => { state.closes++; }, onError: error => { errors.push(error); } };
+  const render = () => create(React.createElement(exports.ChatOverlay, props),
+    { createNodeMock: node => node.type === 'TextInput' ? { blur: () => { state.inputBlurs++; } } : null });
+  return { api, exports, user, props, render, uploads, pickerCalls, posts, errors, state };
+}
+
+test('chat attachment can send a photo while the send button stays hidden for empty content', async () => {
+  const { exports, user, render, uploads, pickerCalls, state, errors } = chatHarness();
   let renderer;
-  await act(async () => { renderer = create(React.createElement(exports.ChatOverlay,
-    { orderId: 'trip', user, incoming: null, onClose: () => { closes++; }, onError: error => { throw Error(error); } }),
-    { createNodeMock: node => node.type === 'TextInput' ? { blur: () => { inputBlurs++; } } : null }); });
+  await act(async () => { renderer = render(); });
   const buttons = label => renderer.root.findAllByProps({ accessibilityLabel: label });
-  assert.equal(renderer.root.findByType('KeyboardAvoidingView').props.behavior, 'padding',
-    'the chat composer moves above the Android keyboard');
+  const finishAttachmentClose = async () => { await act(async () => renderer.root.findByType('BottomPanel').props.onClose()); };
+  const avoiding = renderer.root.findByType('KeyboardAvoidingView');
+  assert.equal(avoiding.props.enabled, false, 'Android Modal owns the keyboard resize');
+  assert.equal(avoiding.props.behavior, undefined, 'Android does not add residual padding on top of the native resize');
   assert.equal(buttons('Отправить сообщение').length, 0);
   await act(async () => renderer.root.findByProps({ accessibilityLabel: 'Сообщение' }).props.onChangeText('Привет'));
   assert.equal(buttons('Отправить сообщение').length, 1);
@@ -70,12 +85,26 @@ test('chat attachment can send a photo while the send button stays hidden for em
   assert.equal(renderer.root.findAllByProps({ testID: 'chat-photo-sheet' }).length, 1);
   assert.equal(buttons('Сделать фото').length, 1);
   assert.equal(buttons('Выбрать из галереи').length, 1);
-  assert.equal(keyboardDismisses, 1);
-  assert.equal(inputBlurs, 1);
+  assert.equal(state.keyboardDismisses, 1);
+  assert.equal(state.inputBlurs, 1);
+  const attachment = renderer.root.findByType('BottomPanel');
+  assert.equal(attachment.props.expanded, undefined, 'photo choices size to their content');
+  assert.equal(attachment.props.bottomPadding, 28);
+  let ancestor = attachment.parent;
+  while (ancestor && ancestor.type !== 'GestureHandlerRootView') ancestor = ancestor.parent;
+  assert.ok(ancestor && ancestor.parent.type === 'Modal', 'native modal owns its gesture root');
+  assert.equal(avoiding.props.accessibilityElementsHidden, true);
   await act(async () => { buttons('Закрыть выбор фото')[0].props.onPress(); });
+  assert.equal(renderer.root.findByType('BottomPanel').props.closeRequested, true);
+  assert.equal(renderer.root.findAllByProps({ testID: 'chat-photo-sheet' }).length, 1, 'close waits for the shared exit transition');
+  await finishAttachmentClose();
   assert.equal(renderer.root.findAllByProps({ testID: 'chat-photo-sheet' }).length, 0);
+  assert.equal(avoiding.props.accessibilityElementsHidden, false);
   await act(async () => { buttons('Прикрепить фото')[0].props.onPress(); });
   await act(async () => { buttons('Сделать фото')[0].props.onPress(); });
+  assert.deepEqual(pickerCalls, [], 'native camera opens only after the card finishes closing');
+  assert.equal(buttons('Сделать фото')[0].props.disabled, true);
+  await finishAttachmentClose();
   assert.deepEqual(pickerCalls, ['camera']);
   assert.equal(renderer.root.findAllByProps({ testID: 'chat-photo-sheet' }).length, 0);
   assert.equal(buttons('Отправить сообщение').length, 1, 'a selected camera photo is sendable without a caption');
@@ -85,19 +114,73 @@ test('chat attachment can send a photo while the send button stays hidden for em
   assert.deepEqual(uploads[0].form.fields.map(([name]) => name), ['image', 'text', 'clientMessageId']);
   assert.equal(buttons('Отправить сообщение').length, 0, 'the button disappears after a successful send');
   assert.equal(buttons('Открыть фотографию').length, 1);
+  assert.equal(state.keyboardDismisses, 3, 'a successful photo send dismisses any composer keyboard');
+  assert.equal(state.inputBlurs, 3);
   await act(async () => { buttons('Прикрепить фото')[0].props.onPress(); });
   await act(async () => { buttons('Выбрать из галереи')[0].props.onPress(); });
+  assert.deepEqual(pickerCalls, ['camera']);
+  await finishAttachmentClose();
   assert.deepEqual(pickerCalls, ['camera', 'library']);
+  await act(async () => { buttons('Прикрепить фото')[0].props.onPress(); });
+  await act(async () => renderer.root.findAllByType('Modal')[0].props.onRequestClose());
+  assert.equal(renderer.root.findByType('BottomPanel').props.closeRequested, true, 'Android back closes the attachment card first');
+  assert.equal(state.closes, 0, 'chat stays open behind its attachment card');
+  await finishAttachmentClose();
+  assert.deepEqual(pickerCalls, ['camera', 'library'], 'closing without selecting does not launch a photo picker');
   await act(async () => { buttons('Назад')[0].props.onPress(); });
-  assert.equal(closes, 1);
-  assert.ok(keyboardDismisses >= 3);
+  assert.equal(state.closes, 1);
+  assert.ok(state.keyboardDismisses >= 3);
   await act(async () => renderer.update(React.createElement(exports.ChatOverlay,
     { orderId: 'trip', user: { ...user, role: 'DRIVER' }, peerName: 'Имя клиента', incoming: null,
-      onClose: () => { closes++; }, onError: error => { throw Error(error); } })));
+      onClose: () => { state.closes++; }, onError: error => { throw Error(error); } })));
   assert.equal(renderer.root.findByProps({ testID: 'chat-peer-title' }).children.join(''), 'Пассажир');
   await act(async () => renderer.update(React.createElement(exports.ChatOverlay,
     { orderId: 'trip', user: { ...user, role: 'CLIENT' }, peerName: 'Имя водителя', incoming: null,
-      onClose: () => { closes++; }, onError: error => { throw Error(error); } })));
+      onClose: () => { state.closes++; }, onError: error => { throw Error(error); } })));
   assert.equal(renderer.root.findByProps({ testID: 'chat-peer-title' }).children.join(''), 'Имя водителя');
+  assert.deepEqual(errors, []);
+  await act(async () => renderer.unmount());
+});
+
+test('successful text send releases the composer and failed send keeps the draft for retry', async () => {
+  const h = chatHarness();
+  let renderer;
+  await act(async () => { renderer = h.render(); });
+  const input = () => renderer.root.findByProps({ accessibilityLabel: 'Сообщение' });
+  const send = () => renderer.root.findByProps({ accessibilityLabel: 'Отправить сообщение' }).props.onPress();
+  await act(async () => input().props.onChangeText('  Привет  '));
+  await act(async () => send());
+  assert.equal(h.posts[0].url, '/orders/trip/messages');
+  assert.equal(h.posts[0].body.text, 'Привет');
+  assert.equal(input().props.value, '');
+  assert.equal(h.state.inputBlurs, 1);
+  assert.equal(h.state.keyboardDismisses, 1, 'the input returns to its resting position after success');
+
+  const successfulPost = h.api.post;
+  let retryId;
+  h.api.post = async (_url, body) => { retryId = body.clientMessageId; throw Error('Нет сети'); };
+  await act(async () => input().props.onChangeText('Повторить'));
+  await act(async () => send());
+  assert.equal(input().props.value, 'Повторить');
+  assert.equal(h.state.inputBlurs, 1, 'failed send leaves the draft focused');
+  assert.equal(h.state.keyboardDismisses, 1);
+  assert.equal(h.errors.length, 1);
+  h.api.post = successfulPost;
+  await act(async () => send());
+  assert.equal(h.posts[1].body.clientMessageId, retryId, 'retry preserves the request identity');
+  assert.equal(input().props.value, '');
+  assert.equal(h.state.inputBlurs, 2);
+  assert.equal(h.state.keyboardDismisses, 2);
+  await act(async () => renderer.unmount());
+});
+
+test('iOS chat retains keyboard padding compensation', async () => {
+  const h = chatHarness('ios');
+  let renderer;
+  await act(async () => { renderer = h.render(); });
+  const avoiding = renderer.root.findByType('KeyboardAvoidingView');
+  assert.equal(avoiding.props.enabled, true);
+  assert.equal(avoiding.props.behavior, 'padding');
+  assert.equal(renderer.root.findByType('ScrollView').props.keyboardDismissMode, 'interactive');
   await act(async () => renderer.unmount());
 });
