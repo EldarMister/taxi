@@ -379,6 +379,7 @@ test('Android auth keeps the code input focused and shows the logo only on the p
   assert.equal(h.renderer.root.findAllByType('Image').length, 1);
   await h.change('auth-phone', '700123456'); await h.submit();
   assert.equal(h.renderer.root.findAllByType('Image').length, 0);
+  assert.equal(h.renderer.root.findAllByProps({ name: 'pencil-outline' }).length, 0);
   assert.equal(h.input('auth-code').props.autoFocus, true);
   assert.equal(h.buttons().length, 0);
 });

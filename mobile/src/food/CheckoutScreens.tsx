@@ -160,7 +160,7 @@ export function CartScreen({ restaurant, lines, carts, onSelectRestaurant, check
           <View style={{ backgroundColor: c.background }}><View style={[s.cartOptions, { backgroundColor: c.surface }]}>
             <View style={[s.cutleryControl, { backgroundColor: c.soft }]}><Icon name="restaurant" size={22} color={c.ink} /><View style={[s.verticalRule, { backgroundColor: c.line }]} /><QuantityControl name={t('Приборы')} value={cutleryCount} onDecrease={() => updateCutlery(cutleryCount - 1)} onIncrease={() => updateCutlery(cutleryCount + 1)} /></View>
             <Pressable accessibilityRole="button" accessibilityLabel={t('Комментарий ресторану')} onPress={() => setEditingComment(true)} style={[s.restaurantComment, { backgroundColor: c.soft }]}>
-              <Icon name="options-outline" size={24} color={c.ink} /><View style={[s.verticalRule, { backgroundColor: c.line }]} />
+              <Icon name="chatbubble-outline" size={21} color={c.ink} /><View style={[s.verticalRule, { backgroundColor: c.line }]} />
               <Text style={[s.commentLabel, { color: restaurantComment ? c.ink : c.muted }]} numberOfLines={2}>{restaurantComment || t('Комментарий ресторану')}</Text><Icon name="chevron-forward" size={18} color={c.ink} />
             </Pressable>
           </View></View>

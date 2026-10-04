@@ -182,7 +182,6 @@ export function AuthScreen({ onLogin }: { onLogin: (session: Session, language: 
               <Text style={a.subtitle}>{developmentCode ? text('Тестовый вход для номера', 'Номер үчүн сыноо кирүүсү', 'Test sign in for') : text('Отправили SMS на номер', 'Бул номерге SMS жөнөтүлдү', 'We sent an SMS to')}</Text>
               <Pressable accessibilityRole="button" disabled={busy} onPress={back} style={a.editPhone}>
                 <Text style={a.sentPhone}>{`+996 ${displayPhone(sentPhone.slice(4))}`}</Text>
-                <Icon name="pencil-outline" color={palette.ink} size={17} />
               </Pressable>
               <Pressable onPress={() => input.current?.focus()} style={a.codeEntry}>
                 <CodeCells code={code} focused={codeFocused} error={error} verified={verified} reducedMotion={reducedMotion} />

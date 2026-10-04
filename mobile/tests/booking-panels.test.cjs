@@ -44,7 +44,17 @@ function load(file) {
     if (id === 'react-native') return native;
     if (id === 'expo-contacts') return contacts;
     if (id === 'react-native-svg') return { __esModule: true, default: 'Svg', Path: 'Path', Circle: 'Circle' };
-    if (id === 'react-native-gesture-handler') return { PanGestureHandler: 'PanGestureHandler', State: { BEGAN: 2, END: 5, CANCELLED: 3, FAILED: 1 } };
+    if (id === 'react-native-gesture-handler') return {
+      PanGestureHandler: 'PanGestureHandler', GestureDetector: 'GestureDetector', State: { BEGAN: 2, END: 5, CANCELLED: 3, FAILED: 1 },
+      Gesture: { Pan: () => {
+        const gesture = { config: {}, handlers: {} };
+        for (const option of ['enabled', 'activeOffsetY', 'failOffsetX', 'runOnJS']) {
+          gesture[option] = value => { gesture.config[option] = value; return gesture; };
+        }
+        gesture.onEnd = callback => { gesture.handlers.onEnd = callback; return gesture; };
+        return gesture;
+      } },
+    };
     if (id === './navigation') return { displayDistance: value => value + ' м', distantManeuverInstruction: progress => progress.instruction,
       distanceBetween: () => 125, navigationConfig: { offRouteMeters: 40 }, offRouteThreshold: () => 40,
       normalizeManeuver: step => ({ kind: step.maneuver.type, side: step.maneuver.modifier }) };
@@ -122,6 +132,39 @@ test('client and driver waiting countdowns agree with the billed fare at minute 
   assert.deepEqual([at(60).phase, at(60).remainingSeconds, at(60).charge], ['FREE', 300, 0]);
   assert.deepEqual([at(361).phase, at(361).billedMinutes, at(361).totalPrice], ['PAID', 1, 104]);
 });
+test('taxi footer pull opens the existing parameters and preserves taps and content scrolling', async t => {
+  let renderer;
+  const props = { pickup: point('A'), dropoff: point('B'), tariffs: [{ id: 'eco', name: 'Эконом' }],
+    tariffId: 'eco', quote: { price: 100 }, quotes: { eco: { price: 100 } }, language: 'ru',
+    details: emptyRideDetails, onDetails() {}, onAddress() {}, onTariff() {}, onSwap() {}, onHeight() {}, onBook() {} };
+  await act(async () => { renderer = create(React.createElement(BookingPanel, props)); });
+  t.after(async () => act(async () => renderer.unmount()));
+  const gesture = () => renderer.root.findByType('GestureDetector').props.gesture;
+  const pull = async (translationY, velocityY = 0, success = true) => act(async () => gesture().handlers.onEnd({ translationY, velocityY }, success));
+  assert.equal(gesture().config.enabled, true);
+  assert.equal(gesture().config.activeOffsetY, -8);
+  assert.equal(gesture().config.failOffsetX.join(','), '-12,12');
+  const hitArea = renderer.root.findByProps({ testID: 'taxi-parameters-swipe' });
+  assert.ok(hitArea.findAllByProps({ testID: 'book-ride' }).length);
+  assert.equal(hitArea.findAllByType('ScrollView').length, 0, 'horizontal tariffs and vertical content stay outside the gesture');
+  await pull(-10); await pull(80); await pull(-60, -500, false);
+  assert.equal(renderer.root.findAllByType('BottomPanel').length, 0);
+  await pull(-12, -400);
+  assert.ok(button(renderer, 'Комментарий водителю'));
+  assert.ok(button(renderer, 'Заказ другому человеку'));
+  await act(async () => renderer.root.findByType('BottomPanel').props.onClose());
+  await pull(-50);
+  assert.ok(button(renderer, 'Комментарий водителю'));
+  await act(async () => renderer.root.findByType('BottomPanel').props.onClose());
+  await tap(renderer, 'Детали поездки');
+  assert.ok(button(renderer, 'Комментарий водителю'));
+  await act(async () => renderer.root.findByType('BottomPanel').props.onClose());
+  await act(async () => renderer.update(React.createElement(BookingPanel, { ...props, busy: true })));
+  assert.equal(gesture().config.enabled, false);
+  await pull(-80, -600);
+  assert.equal(renderer.root.findAllByType('BottomPanel').length, 0);
+});
+
 test('detail sheets keep the route and saved requests; closing discards an unsaved edit', async t => {
   let saved = emptyRideDetails, renderer, booked = 0;
   const props = { pickup: point('A'), dropoff: point('B'), tariffs: [{ id: 'eco', name: 'Эконом', description: 'Город' }], tariffId: 'eco', quote: { price: 100 }, quotes: { eco: { price: 100 } }, language: 'ru', onAddress() {}, onTariff() {}, onSwap() {}, onRefresh() {}, onHeight() {}, onBook() { booked++; } };

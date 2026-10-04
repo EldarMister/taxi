@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, Animated, Image, Keyboard, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View, useWindowDimensions } from 'react-native';
 import * as Contacts from 'expo-contacts';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -9,6 +9,7 @@ import { Point, Quote, Tariff, User } from './types';
 import { usePanelTransition } from './usePanelTransition';
 import { useTheme } from './design/theme';
 import { useThemeStyles } from './design/themeStyles';
+import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 
 export type RideDetails = { entrance: string; comment: string; passenger: { name: string; phone: string } | null };
 export const emptyRideDetails: RideDetails = { entrance: '', comment: '', passenger: null };
@@ -52,6 +53,14 @@ export function BookingPanel({ pickup, dropoff, locatingPickup = false, tariffs,
   const index = Math.max(0, tariffs.findIndex(item => item.id === tariffId));
   const tariff = tariffs[index];
   const editing = surface in titles ? surface as EditField : null;
+  // Recognize the pull only in the fixed footer, leaving address/tariff scrolling native.
+  const parametersPull = useMemo(() => Gesture.Pan()
+    .enabled(rootVisible && surface === 'summary' && !!dropoff && !busy)
+    .activeOffsetY(-8).failOffsetX([-12, 12]).runOnJS(true)
+    .onEnd((event, success) => {
+      if (success && !busy && surface === 'summary' && dropoff &&
+        (event.translationY < -24 || event.velocityY < -300)) navigate('details');
+    }), [rootVisible, surface, dropoff, busy, navigate]);
   const edit = (field: EditField) => { setReturnTo(surface === 'details' ? 'details' : 'summary'); setDraft(details[field]); navigate(field); };
   const close = () => { Keyboard.dismiss(); navigate(editing || surface === 'payment' || surface === 'passenger' ? returnTo : 'summary'); };
   const dismiss = () => { Keyboard.dismiss(); onSheetClosed(); };
@@ -96,7 +105,7 @@ export function BookingPanel({ pickup, dropoff, locatingPickup = false, tariffs,
   </View>;
   if (hidden) return null;
   return <View pointerEvents="box-none" style={[StyleSheet.absoluteFill, { zIndex: 20 }]}>
-    <Animated.View pointerEvents={rootVisible ? 'auto' : 'none'} accessibilityElementsHidden={surface !== 'summary'} importantForAccessibility={surface === 'summary' ? 'auto' : 'no-hide-descendants'} onLayout={event => { const measured = event.nativeEvent.layout.height; onRootHeight(measured); onHeight(measured); }} testID="client-booking-panel" style={[panelStyle.surface, clientMapPanelStyle.surface, isDark && { backgroundColor: palette.surface, shadowColor: palette.background }, { position: 'absolute', bottom: 0, left: 0, right: 0, paddingTop: 14, paddingBottom: Math.max(insets.bottom, 12), transform: [{ translateY: rootTranslateY }] }]}>
+    <Animated.View pointerEvents={rootVisible ? 'auto' : 'none'} accessibilityElementsHidden={surface !== 'summary'} importantForAccessibility={surface === 'summary' ? 'auto' : 'no-hide-descendants'} onLayout={event => { const measured = event.nativeEvent.layout.height; onRootHeight(measured); onHeight(measured); }} testID="client-booking-panel" style={[panelStyle.surface, clientMapPanelStyle.surface, isDark && { backgroundColor: palette.surface, shadowColor: palette.background }, { position: 'absolute', bottom: 0, left: 0, right: 0, paddingTop: 14, transform: [{ translateY: rootTranslateY }] }]}>
       <ScrollView testID="client-booking-content" style={clientMapPanelStyle.scroll} nestedScrollEnabled keyboardShouldPersistTaps="handled" bounces={false}>
       {!dropoff ? <View style={b.home}>
         <View style={b.homeTitle}><Image source={require('../assets/logo1.png')} accessibilityLabel="Atlas" resizeMode="contain" style={b.serviceLogo}/><Text style={b.title}>{t('Такси')}</Text></View>
@@ -114,7 +123,11 @@ export function BookingPanel({ pickup, dropoff, locatingPickup = false, tariffs,
         {!!visibleError && <Text accessibilityRole="alert" style={b.error}>{t(visibleError)}</Text>}
       </>}
       </ScrollView>
-      {!!dropoff && footer()}
+      <GestureDetector gesture={parametersPull}>
+        <View testID="taxi-parameters-swipe" collapsable={false} style={{ paddingBottom: Math.max(insets.bottom, 12) }}>
+          {!!dropoff && footer()}
+        </View>
+      </GestureDetector>
     </Animated.View>
     {surface !== 'summary' && <BottomPanel key={surface} closeRequested={sheetClosing} onClose={dismiss} label={t('Закрыть')}>
       {surface === 'details' && <>
