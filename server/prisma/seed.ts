@@ -1,10 +1,13 @@
 import 'dotenv/config';
 import { Prisma, PrismaClient } from '@prisma/client';
-import { DEMO_FOOD_RESTAURANTS } from '../src/food-catalog';
+import { DEMO_FOOD_RESTAURANTS, upgradeLegacyDemoCatalog } from '../src/food-catalog';
 const db=new PrismaClient();
 async function main() {
   if(process.env.NODE_ENV!=='development') throw new Error('Demo seed is allowed only in NODE_ENV=development');
   for(const [sortOrder,restaurant] of DEMO_FOOD_RESTAURANTS.entries()) {
+    const existing=await db.foodRestaurant.findUnique({where:{id:restaurant.id}});
+    const upgraded=existing?upgradeLegacyDemoCatalog(existing):null;
+    if(upgraded&&existing)await db.foodRestaurant.updateMany({where:{id:restaurant.id,isDemo:true,updatedAt:existing.updatedAt},data:{catalog:upgraded as unknown as Prisma.InputJsonValue}});
     await db.foodRestaurant.upsert({where:{id:restaurant.id},create:{id:restaurant.id,catalog:restaurant as unknown as Prisma.InputJsonValue,isDemo:true,active:true,sortOrder},update:{}});
   }
   await db.tariff.upsert({where:{id:'economy'},create:{id:'economy',name:'Эконом',description:'Быстро и доступно',basePrice:60,pricePerKm:14,pricePerMinute:2,waitingPricePerMinute:2,minimumPrice:100,commissionBps:1000},update:{}});

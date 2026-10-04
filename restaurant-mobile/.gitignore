@@ -1,0 +1,17 @@
+node_modules/
+.expo/
+.env
+.env.*
+!.env.example
+builds/
+dist/
+android/.gradle/
+android/.kotlin/
+android/build/
+android/app/build/
+android/local.properties
+*.keystore
+*.jks
+*.log
+ios/Pods/
+ios/build/

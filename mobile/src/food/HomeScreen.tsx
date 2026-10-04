@@ -1,6 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { AccessibilityInfo, ActivityIndicator, Animated, AppState, Easing, Image, Pressable, ScrollView, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
-import { LinearGradient } from 'expo-linear-gradient';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { BottomPanel } from '../BottomPanel';
 import { api, messageOf } from '../api';
@@ -11,8 +10,8 @@ import { fonts } from '../design/typography';
 import type { SavedPlaceKind, SavedPlaces } from '../savedPlaces';
 import type { Language } from '../types';
 import { Icon, tr } from '../ui';
-import { foodImage } from './assets';
-import type { HomeBanner } from './types';
+import { FoodPhoto } from './FoodPhoto';
+import type { FoodRestaurant } from './types';
 
 type NotificationItem = { id: string; title: string; body: string; createdAt: string; readAt: string | null };
 type NotificationFeed = { asOf: string; hasUnread: boolean; items: NotificationItem[] };
@@ -20,12 +19,13 @@ type Props = {
   userId: string; language?: Language; currentAddress: string; onChangeAddress: () => void;
   onTaxi: () => void; onDelivery: () => void; onTruck: () => void; onSearch: () => void;
   savedPlaces: SavedPlaces; onSavedPlace: (kind: SavedPlaceKind) => void; onEditSavedPlace: (kind: SavedPlaceKind) => void;
-  onFood: () => void; onBanner: (banner: HomeBanner) => void; banners: HomeBanner[];
+  onFood: () => void; restaurants?: FoodRestaurant[]; onRestaurant?: (restaurant: FoodRestaurant) => void;
+  loading?: boolean; error?: string | null; onRetry?: () => void;
   onMenu: () => void; onOrders: () => void; hasOrder: boolean; active: boolean;
 };
 
 const INK = '#0D1119';
-const BG = '#EAF5FF';
+const BG = '#FFFFFF';
 const CARDS = [
   { key: 'taxi', title: 'Такси', image: require('../../assets/home/service-taxi.png'), tint: '#FFF5CF' },
   { key: 'delivery', title: 'Доставка', image: require('../../assets/home/service-delivery.png'), tint: '#DCEEFF' },
@@ -88,7 +88,8 @@ function AnimatedSearchPrompt({ active, prompt, color }: { active: boolean; prom
 }
 
 export function ServiceHomeScreen({ userId, language = 'ru', currentAddress, onChangeAddress, onTaxi, onDelivery, onTruck, onSearch,
-  savedPlaces, onSavedPlace, onEditSavedPlace, onFood, onBanner, banners, onMenu, onOrders, hasOrder, active }: Props) {
+  savedPlaces, onSavedPlace, onEditSavedPlace, onFood, restaurants = [], onRestaurant, loading = false, error, onRetry,
+  onMenu, onOrders, hasOrder, active }: Props) {
   const t = tr(language);
   const { isDark, palette } = useTheme();
   const { width, height } = useWindowDimensions();
@@ -97,13 +98,16 @@ export function ServiceHomeScreen({ userId, language = 'ru', currentAddress, onC
   const [inboxOpen, setInboxOpen] = useState(false);
   const [inboxLoading, setInboxLoading] = useState(false);
   const [inboxError, setInboxError] = useState('');
-  const contentWidth = width - insets.left - insets.right - 36;
+  const contentWidth = Math.max(1, width - insets.left - insets.right - 36);
+  const restaurantWidth = Math.max(1, (contentWidth - 14) / 2);
   const availableHeight = height - insets.top - insets.bottom;
-  const compact = availableHeight < 720;
-  const tight = availableHeight < 620;
-  const promoBanner = banners[0];
-  const cardHeight = Math.max(82, Math.min(128, (availableHeight - (hasOrder ? 475 : 425)) / 2 - 3));
-  const promoHeight = tight ? 100 : compact ? 126 : 145;
+  const compact = availableHeight < 820;
+  const hasSavedAddress = Object.values(savedPlaces).some(Boolean);
+  const bodyGap = compact ? 8 : 17;
+  const firstRowFixedHeight = (compact ? 71 : 75) + (compact ? 18 : 22) + 8
+    + (compact ? 52 : 62) + (compact ? 72 : 81) + (hasSavedAddress ? 12 : 0)
+    + bodyGap * (hasOrder ? 4 : 3) + (hasOrder ? 52 : 0) + restaurantWidth + 72;
+  const cardHeight = Math.max(72, Math.min(116, (availableHeight - firstRowFixedHeight) / 2));
   const ink = isDark ? palette.ink : INK;
   const muted = isDark ? palette.muted : '#4D5663';
 
@@ -141,8 +145,8 @@ export function ServiceHomeScreen({ userId, language = 'ru', currentAddress, onC
   ];
 
   return <SafeAreaView edges={['top', 'left', 'right']} style={{ flex: 1, backgroundColor: isDark ? palette.background : BG }}>
-    <View testID="service-home-content" style={[styles.content, { paddingBottom: Math.max(insets.bottom, 10) + 5 }]}>
-      <View style={styles.heading}>
+    <View testID="service-home-content" style={styles.content}>
+      <View testID="service-home-header" style={styles.heading}>
         <View style={[styles.header, compact && styles.headerCompact]}>
           <Pressable accessibilityRole="button" accessibilityLabel={t('Меню')} onPress={onMenu} style={styles.headerButton}>
             <Icon name="menu-outline" size={31} color={ink}/>
@@ -163,6 +167,8 @@ export function ServiceHomeScreen({ userId, language = 'ru', currentAddress, onC
         </Pressable>
       </View>
 
+      <ScrollView testID="service-home-scroll" style={styles.body} showsVerticalScrollIndicator={false}
+        contentContainerStyle={[styles.bodyContent, { paddingTop: compact ? 18 : 22, gap: bodyGap, paddingBottom: Math.max(insets.bottom, 18) + 12 }]}>
       <View style={styles.grid}>
         {CARDS.map(card => <SpringPressable key={card.key} accessibilityRole="button" accessibilityLabel={t(card.title)}
           onPress={serviceActions[card.key]} pressScale={.97} containerStyle={{ width: '48%', height: cardHeight }}
@@ -181,12 +187,12 @@ export function ServiceHomeScreen({ userId, language = 'ru', currentAddress, onC
         <View style={{ marginLeft: 'auto' }}><Icon name="chevron-forward" size={19} color={muted}/></View>
       </SpringPressable>
 
-      <View style={[styles.places, tight && styles.placesTight]}>
+      <View style={styles.places}>
         {placeItems.map(place => <SpringPressable key={place.kind} accessibilityRole="button"
           accessibilityLabel={`${place.title}: ${savedPlaces[place.kind]?.address || t('добавить адрес')}`}
           onPress={() => onSavedPlace(place.kind)} onLongPress={() => onEditSavedPlace(place.kind)} pressScale={.95}
           containerStyle={styles.placeTouch} style={styles.place}>
-          <View style={[styles.placeIcon, tight && styles.placeIconTight, { backgroundColor: isDark ? palette.elevated : '#D9EBFB' }]}>
+          <View style={[styles.placeIcon, compact && styles.placeIconCompact, { backgroundColor: isDark ? palette.elevated : '#D9EBFB' }]}>
             <Icon name={place.icon} size={27} color={isDark ? ink : '#1267B5'}/>
           </View>
           <Text style={[styles.placeTitle, { color: ink }]}>{place.title}</Text>
@@ -197,31 +203,46 @@ export function ServiceHomeScreen({ userId, language = 'ru', currentAddress, onC
       </View>
 
       {hasOrder && <SpringPressable accessibilityRole="button" accessibilityLabel={t('Открыть активный заказ еды')}
-        onPress={onOrders} style={[styles.activeOrder, { backgroundColor: palette.surface }]}>
+        onPress={onOrders} style={[styles.activeOrder, { backgroundColor: isDark ? palette.elevated : '#F0F5FA', borderColor: isDark ? palette.line : '#E6EEF5' }]}>
         <Icon name="bag-handle" color={isDark ? ink : '#1267B5'} size={22}/>
         <Text style={[styles.activeOrderText, { color: ink }]}>{t('Заказ уже в работе')}</Text>
         <Icon name="chevron-forward" color={muted} size={19}/>
       </SpringPressable>}
 
-      <SpringPressable accessibilityRole={promoBanner?.actionType === 'NONE' ? 'image' : 'button'}
-        accessibilityLabel={promoBanner?.title || t('Быстрые заказы рядом')}
-        onPress={promoBanner ? (promoBanner.actionType === 'NONE' ? undefined : () => onBanner(promoBanner)) : onTaxi} pressScale={.99}>
-        <LinearGradient colors={isDark ? ['#957719', '#5A491B'] : ['#FFE45C', '#FFDE47']}
-          start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={[styles.promo, { height: promoHeight }]}>
-          <Image source={promoBanner ? foodImage(promoBanner.imageKey, promoBanner.imageUrl, 'nearby-promo')
-            : require('../../assets/home/promo-nearby-map.png')} resizeMode="contain" style={styles.promoImage}/>
-          <View style={styles.promoCopy}>
-            <Text numberOfLines={2} adjustsFontSizeToFit style={[styles.promoTitle, tight && styles.promoTitleTight]}>
-              {promoBanner?.title || t('Быстрые\nзаказы рядом!')}</Text>
-            <Text numberOfLines={2} adjustsFontSizeToFit style={[styles.promoSubtitle, tight && styles.promoSubtitleTight]}>
-              {promoBanner?.subtitle || t('Всё, что нужно —\nуже рядом')}</Text>
+      <View testID="service-home-restaurants" style={styles.restaurants}>
+        {restaurants.map(restaurant => <SpringPressable key={restaurant.id} testID={`home-restaurant-${restaurant.id}`}
+          accessibilityRole="button" accessibilityLabel={`${t('Открыть')} ${restaurant.name}${restaurant.isOpen === false ? `, ${t('Сейчас закрыто')}` : ''}`}
+          onPress={() => onRestaurant ? onRestaurant(restaurant) : onFood()} pressScale={.985}
+          containerStyle={{ width: restaurantWidth }} style={styles.restaurantCard}>
+          <FoodPhoto imageKey={restaurant.imageKey} imageUrl={restaurant.imageUrl} fallbackKey={restaurant.heroImageKey}
+            resizeMode="cover" style={[styles.restaurantPhoto, { width: restaurantWidth, height: restaurantWidth }]}/>
+          <View style={styles.restaurantCopy}>
+            <Text numberOfLines={1} style={[styles.restaurantName, { color: ink }]}>{restaurant.name}</Text>
+            <View style={styles.restaurantMeta}>
+              <Text numberOfLines={1} style={[styles.restaurantCuisine, { color: muted }]}>{t(restaurant.cuisine || restaurant.categories.join(', '))}</Text>
+              {restaurant.rating > 0 && <View style={styles.restaurantRating}><Icon name="star" size={12} color={ink}/><Text style={[styles.restaurantRatingText, { color: ink }]}>{restaurant.rating.toFixed(1)}</Text></View>}
+            </View>
+            <View style={styles.restaurantStatus}>
+              <Icon name={restaurant.isOpen === false ? 'moon' : 'walk'} size={16} color={restaurant.isOpen === false ? muted : ink}/>
+              <Text numberOfLines={1} style={[styles.restaurantStatusText, { color: restaurant.isOpen === false ? muted : ink }]}>
+                {restaurant.isOpen === false ? t('Сейчас закрыто') : `${restaurant.etaMin}–${restaurant.etaMax} ${t('мин')}`}
+              </Text>
+            </View>
           </View>
-        </LinearGradient>
-      </SpringPressable>
+        </SpringPressable>)}
+      </View>
+      {loading && !restaurants.length && <View style={styles.catalogState}><ActivityIndicator color={palette.accent}/><Text style={[styles.catalogStateText, { color: muted }]}>{t('Ищем рестораны…')}</Text></View>}
+      {!!error && !restaurants.length && <Pressable accessibilityRole="button" onPress={onRetry} style={styles.catalogState}>
+        <Text style={[styles.catalogStateText, { color: muted }]}>{error}</Text><Text style={{ color: isDark ? ink : '#087FFF', fontFamily: fonts.semibold }}>{t('Повторить')}</Text>
+      </Pressable>}
+      {!loading && !error && !restaurants.length && <Pressable accessibilityRole="button" onPress={onFood} style={styles.catalogState}>
+        <Icon name="restaurant-outline" size={27} color={muted}/><Text style={[styles.catalogStateText, { color: muted }]}>{t('Рестораны скоро появятся')}</Text>
+      </Pressable>}
+      </ScrollView>
     </View>
 
     {inboxOpen && <BottomPanel onClose={() => setInboxOpen(false)} label={t('Закрыть уведомления')}>
-      <View style={{ height: Math.min(510, height * .64), paddingHorizontal: 19, paddingTop: 8 }}>
+      <View style={{ height: Math.min(680, height * .78), paddingHorizontal: 19, paddingTop: 8 }}>
         <Text style={[styles.inboxTitle, { color: ink }]}>{t('Уведомления')}</Text>
         {inboxLoading && <ActivityIndicator style={{ marginTop: 30 }} color={palette.accent}/>}
         {!!inboxError && <Pressable accessibilityRole="button" accessibilityLabel={t('Повторить загрузку уведомлений')}
@@ -243,8 +264,10 @@ export function ServiceHomeScreen({ userId, language = 'ru', currentAddress, onC
 }
 
 const styles = StyleSheet.create({
-  content: { flex: 1, paddingHorizontal: 18, paddingTop: 6, justifyContent: 'space-between' },
-  heading: { alignItems: 'center' },
+  content: { flex: 1 },
+  heading: { alignItems: 'center', paddingHorizontal: 18, paddingTop: 4, paddingBottom: 8 },
+  body: { flex: 1 },
+  bodyContent: { paddingHorizontal: 18, paddingTop: 22, gap: 17 },
   header: { width: '100%', height: 48, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   headerCompact: { height: 44 },
   headerButton: { width: 43, height: 44, alignItems: 'center', justifyContent: 'center' },
@@ -265,22 +288,27 @@ const styles = StyleSheet.create({
   searchCompact: { minHeight: 52 },
   searchTitle: { fontFamily: fonts.bold, fontSize: 20 },
   places: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 1 },
-  placesTight: { marginTop: 0 },
   placeTouch: { width: '33.333%' },
   place: { alignItems: 'center', paddingHorizontal: 3, paddingVertical: 1 },
   placeIcon: { width: 57, height: 57, borderRadius: 29, alignItems: 'center', justifyContent: 'center' },
-  placeIconTight: { width: 48, height: 48, borderRadius: 24 },
-  placeTitle: { fontFamily: fonts.medium, fontSize: 15, marginTop: 7, textAlign: 'center' },
-  placeAddress: { fontSize: 10, marginTop: 2, textAlign: 'center', maxWidth: '100%' },
-  activeOrder: { minHeight: 52, borderRadius: 16, flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 15 },
+  placeIconCompact: { width: 48, height: 48, borderRadius: 24 },
+  placeTitle: { fontFamily: fonts.medium, fontSize: 14, lineHeight: 17, marginTop: 5, textAlign: 'center' },
+  placeAddress: { fontSize: 10, lineHeight: 10, marginTop: 2, textAlign: 'center', maxWidth: '100%' },
+  activeOrder: { minHeight: 52, borderRadius: 16, borderWidth: 1, flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 15 },
   activeOrderText: { flex: 1, fontFamily: fonts.semibold, fontSize: 14 },
-  promo: { borderRadius: 20, overflow: 'hidden', justifyContent: 'center' },
-  promoImage: { position: 'absolute', width: '64%', height: '125%', right: -16, bottom: -18 },
-  promoCopy: { width: '59%', paddingLeft: 20, gap: 7 },
-  promoTitle: { fontFamily: fonts.extraBold, fontSize: 25, lineHeight: 26, letterSpacing: -.6, color: INK },
-  promoSubtitle: { fontFamily: fonts.medium, fontSize: 14, lineHeight: 17, color: '#3C3830' },
-  promoTitleTight: { fontSize: 21, lineHeight: 22 },
-  promoSubtitleTight: { fontSize: 12, lineHeight: 15 },
+  restaurants: { flexDirection: 'row', flexWrap: 'wrap', columnGap: 14, rowGap: 21, paddingTop: 1 },
+  restaurantCard: { width: '100%' },
+  restaurantPhoto: { borderRadius: 19, overflow: 'hidden', backgroundColor: '#F2F4F1' },
+  restaurantCopy: { paddingHorizontal: 5, paddingTop: 8, gap: 3 },
+  restaurantName: { fontFamily: fonts.semibold, fontSize: 14, lineHeight: 18 },
+  restaurantMeta: { flexDirection: 'row', alignItems: 'center', gap: 4 },
+  restaurantCuisine: { flexShrink: 1, fontSize: 12, lineHeight: 16 },
+  restaurantRating: { flexDirection: 'row', alignItems: 'center', gap: 2 },
+  restaurantRatingText: { fontFamily: fonts.medium, fontSize: 12, lineHeight: 16 },
+  restaurantStatus: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 1 },
+  restaurantStatusText: { fontFamily: fonts.semibold, fontSize: 13, lineHeight: 18 },
+  catalogState: { minHeight: 100, alignItems: 'center', justifyContent: 'center', gap: 10, paddingVertical: 18, paddingHorizontal: 12 },
+  catalogStateText: { fontSize: 14, textAlign: 'center', lineHeight: 20 },
   inboxTitle: { fontFamily: fonts.bold, fontSize: 22, marginBottom: 8 },
   emptyInbox: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 10 },
   notificationRow: { minHeight: 78, paddingVertical: 12, borderBottomWidth: StyleSheet.hairlineWidth, flexDirection: 'row' },

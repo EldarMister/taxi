@@ -1,5 +1,5 @@
 import React from 'react';
-import { ActivityIndicator, Alert, Image, Linking, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Alert, Linking, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Icon } from '../ui';
 import { Reveal } from '../design/motion';
@@ -8,7 +8,7 @@ import { fonts } from '../design/typography';
 import { FoodButton, FoodHeader, foodColors as c, money } from './components';
 import { useFoodColors, useFoodStyles } from './foodTheme';
 import { useTheme } from '../design/theme';
-import { foodImage } from './assets';
+import { FoodPhoto } from './FoodPhoto';
 import type { FoodOrder } from './types';
 import { useFoodLanguage, useFoodT } from './i18n';
 
@@ -26,7 +26,7 @@ export function foodOrderTitle(order: FoodOrder) {
 }
 const time = (value: string, language: 'ru' | 'ky' | 'en') => new Date(value).toLocaleTimeString(language === 'ky' ? 'ky-KG' : language === 'en' ? 'en-US' : 'ru-RU', { hour: '2-digit', minute: '2-digit' });
 
-export function FoodOrderScreen({ order, onBack, error, onRetry }: { order: FoodOrder; onBack: () => void; error: string; onRetry: () => void }) {
+export function FoodOrderScreen({ order, onBack, error, onRetry, relatedOrders = [], onSelectOrder }: { order: FoodOrder; onBack: () => void; error: string; onRetry: () => void; relatedOrders?: FoodOrder[]; onSelectOrder?: (order: FoodOrder) => void }) {
   const t = useFoodT();
   const language = useFoodLanguage();
   const s = useFoodStyles(baseStyles);
@@ -40,6 +40,11 @@ export function FoodOrderScreen({ order, onBack, error, onRetry }: { order: Food
   const subtitle = order.status === 'PLACED' ? 'Ресторан принимает ваш заказ' : order.status === 'READY' ? 'Передаём заказ курьеру' : order.status === 'DELIVERING' ? 'Курьер скоро будет у вас' : order.status === 'COMPLETED' ? 'Спасибо за заказ!' : cancelled ? 'Ресторан отменил заказ' : 'Ресторан уже готовит блюда';
   return <SafeAreaView style={s.screen} edges={['top', 'left', 'right']}>
     <FoodHeader title={`${t('Заказ')} #${order.id.slice(-4).toUpperCase()}`} onBack={onBack} />
+    {relatedOrders.length > 1 && <ScrollView horizontal testID="food-order-restaurant-tabs" showsHorizontalScrollIndicator={false} style={s.orderTabsRail} contentContainerStyle={s.orderTabs}>
+      {relatedOrders.map(item => <Pressable key={item.id} testID={`food-order-tab-${item.id}`} accessibilityRole="tab" accessibilityState={{ selected: item.id === order.id }} accessibilityLabel={`${item.restaurant.name}, ${t(foodOrderTitle(item))}`} onPress={() => onSelectOrder?.(item)} style={[s.orderTab, item.id === order.id && { borderColor: palette.blue, backgroundColor: palette.blueSoft }]}>
+        <Text numberOfLines={1} style={[s.orderTabName, item.id === order.id && { color: palette.blue }]}>{item.restaurant.name}</Text><Text style={s.orderTabStatus}>{t(foodOrderTitle(item))}</Text>
+      </Pressable>)}
+    </ScrollView>}
     <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 18, paddingTop: 10, paddingBottom: Math.max(20, insets.bottom + 12), flexGrow: 1 }}>
       <Reveal delay={20} style={[s.statusCard, cancelled && s.statusCardCancelled]}>
         <View style={s.statusTop}>
@@ -61,7 +66,7 @@ export function FoodOrderScreen({ order, onBack, error, onRetry }: { order: Food
       <Reveal delay={65} style={s.sectionCard}>
         <View style={s.sectionHeading}><Text style={s.sectionTitle}>{t('Ваш заказ')}</Text><Text style={s.itemCount}>{order.items.reduce((sum, item) => sum + item.quantity, 0)} {t('поз.')}</Text></View>
         {order.items.map((item, index) => <View key={`${item.dishId}:${index}`} style={[s.orderItem, index > 0 && s.orderItemBorder]}>
-          <Image source={foodImage(item.dishId, item.imageUrl, item.imageKey)} style={s.itemImage} />
+          <FoodPhoto imageKey={item.dishId} imageUrl={item.imageUrl} fallbackKey={item.imageKey} style={s.itemImage} />
           <View style={{ flex: 1, gap: 3 }}><Text style={s.itemName}>{item.name}</Text><Text style={s.muted}>{item.quantity} × {money(item.unitPrice)}</Text>{item.options.length > 0 && <Text numberOfLines={1} style={s.itemOptions}>{item.options.map(option => option.name).join(', ')}</Text>}</View>
           <Text style={s.itemTotal}>{money(item.lineTotal)}</Text>
         </View>)}
@@ -79,7 +84,7 @@ export function FoodOrderScreen({ order, onBack, error, onRetry }: { order: Food
       </Reveal>
 
       <Reveal delay={145} style={s.restaurant}>
-        <Image source={foodImage(order.restaurant.id === 'sushi-roll' ? 'restaurant-order' : order.restaurant.imageKey, order.restaurant.imageUrl)} style={s.restaurantImage} />
+        <FoodPhoto imageKey={order.restaurant.id === 'sushi-roll' ? 'restaurant-order' : order.restaurant.imageKey} imageUrl={order.restaurant.imageUrl} style={s.restaurantImage} />
         <View style={{ flex: 1, gap: 3 }}><Text style={s.restaurantName}>{order.restaurant.name}</Text><Text style={s.muted}>{t('Доставка')} {order.restaurant.etaMin}–{order.restaurant.etaMax} {t('мин')}</Text></View><Icon name="chevron-forward" color={c.muted} size={18} />
       </Reveal>
       <FoodButton secondary label={t('Связаться с рестораном')} onPress={() => {
@@ -105,13 +110,18 @@ export function FoodHistoryScreen({ orders, loading, error, onBack, onOrder, onR
       {loading && !orders.length && <ActivityIndicator size="large" color={c.blue} style={{ marginTop: 40 }} />}
       {!!error && <View style={s.notice}><Text style={[s.muted, { textAlign: 'center', marginBottom: 12 }]}>{error}</Text><FoodButton label={t('Повторить')} onPress={onRetry} secondary /></View>}
       {!loading && !error && !orders.length && <View style={s.empty}><Icon name="receipt-outline" color={c.blue} size={64} /><Text style={{ color: c.ink, fontFamily: fonts.bold, fontSize: 23 }}>{t('Заказов пока нет')}</Text><Text style={[s.muted, { textAlign: 'center' }]}>{t('Здесь появятся ваши заказы из ресторанов.')}</Text></View>}
-      <Reveal delay={45}>{orders.map(order => <Pressable accessibilityRole="button" key={order.id} onPress={() => onOrder(order)} style={s.historyRow}><Image source={foodImage(order.restaurant.imageKey, order.restaurant.imageUrl)} style={s.restaurantImage} /><View style={{ flex: 1, gap: 5 }}><Text style={s.historyName}>{order.restaurant.name}</Text><Text style={s.historyStatus}>{t(foodOrderTitle(order))}</Text><Text style={s.muted}>{new Date(order.createdAt).toLocaleDateString(language === 'ky' ? 'ky-KG' : language === 'en' ? 'en-US' : 'ru-RU')} · {money(order.total)}</Text></View><Icon name="chevron-forward" color={c.muted} /></Pressable>)}</Reveal>
+      <Reveal delay={45}>{orders.map(order => <Pressable accessibilityRole="button" key={order.id} onPress={() => onOrder(order)} style={s.historyRow}><FoodPhoto imageKey={order.restaurant.imageKey} imageUrl={order.restaurant.imageUrl} style={s.restaurantImage} /><View style={{ flex: 1, gap: 5 }}><Text style={s.historyName}>{order.restaurant.name}</Text><Text style={s.historyStatus}>{t(foodOrderTitle(order))}</Text><Text style={s.muted}>{new Date(order.createdAt).toLocaleDateString(language === 'ky' ? 'ky-KG' : language === 'en' ? 'en-US' : 'ru-RU')} · {money(order.total)}</Text></View><Icon name="chevron-forward" color={c.muted} /></Pressable>)}</Reveal>
     </ScrollView>
   </SafeAreaView>;
 }
 
 const baseStyles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: palette.canvas },
+  orderTabsRail: { flexGrow: 0, flexShrink: 0 },
+  orderTabs: { paddingHorizontal: 18, paddingBottom: 8, gap: 8 },
+  orderTab: { minWidth: 142, maxWidth: 230, borderWidth: 1, borderColor: palette.line, backgroundColor: c.white, borderRadius: 16, paddingHorizontal: 13, paddingVertical: 10, gap: 3 },
+  orderTabName: { color: c.ink, fontFamily: fonts.semibold, fontSize: 15, lineHeight: 21 },
+  orderTabStatus: { color: c.muted, fontFamily: fonts.regular, fontSize: 11, lineHeight: 17 },
   statusCard: { marginBottom: 12, padding: 16, borderRadius: radii.hero, backgroundColor: '#EAF4FF', borderWidth: 1, borderColor: '#CFE4FF' },
   statusCardCancelled: { backgroundColor: '#FFF2F2', borderColor: '#FFD7D7' },
   statusTop: { flexDirection: 'row', alignItems: 'center', gap: 11 },

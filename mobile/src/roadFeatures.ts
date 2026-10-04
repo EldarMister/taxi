@@ -33,7 +33,7 @@ export function roadFeatureWindow(prepared: PreparedRoute, along: number): RoadF
 
 export function visibleRoadFeatures(features: RoadFeature[], along: number): RoadFeature[] {
   const relevant = features.filter(feature => Number.isFinite(feature.along)
-    && feature.along - along >= -10 && feature.along - along <= 400);
+    && feature.along - along >= -10 && feature.along - along <= 100);
   relevant.sort((a, b) => Math.abs(a.along - along) - Math.abs(b.along - along));
   const kinds = new Set<RoadFeatureKind>();
   return relevant.filter(feature => {

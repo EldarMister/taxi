@@ -127,7 +127,7 @@ test('Reduce Motion removes a nonpersistent previous page without retaining a le
   assert.equal(lifecycle.filter(event => event === 'unmount:dish').length, 1);
 });
 
-test('opening the cart keeps the current catalog visible beneath its own bottom sheet', async t => {
+test('opening the full-screen cart animates and returning restores the existing menu', async t => {
   const lifecycle = [];
   const { ScreenTransition, animations } = loadTransition(false);
   const screen = (routeKey, name) => React.createElement(ScreenTransition, { routeKey, direction: 'forward' },
@@ -139,7 +139,31 @@ test('opening the cart keeps the current catalog visible beneath its own bottom 
   const underlay = renderer.root.findAllByType('AnimatedView').find(node => node.findAllByType('Page').some(page => page.props.name === 'restaurant'));
   assert.ok(underlay);
   assert.equal(underlay.props.style.some(style => style?.display === 'none'), false);
-  assert.equal(animations.length, 0, 'the bottom panel provides the cart entrance animation');
+  assert.equal(animations.length, 1, 'the full-screen cart needs the normal screen entrance');
+  assert.equal(animations[0].config.useNativeDriver, true);
+  await act(async () => animations[0].finish());
   await act(async () => renderer.update(screen('restaurant:sushi-roll', 'restaurant')));
+  assert.equal(animations.length, 2, 'returning to the menu also has a transition');
+  await act(async () => animations[1].finish());
   assert.equal(lifecycle.filter(event => event === 'mount:restaurant').length, 1);
+  assert.equal(lifecycle.filter(event => event === 'unmount:cart').length, 1);
+});
+
+test('a dish opened from the cart keeps the cart visible and restores its state', async t => {
+  const lifecycle = [];
+  const { ScreenTransition, animations } = loadTransition(false);
+  const screen = (routeKey, name) => React.createElement(ScreenTransition, { routeKey, direction: 'forward' },
+    React.createElement(StatefulPage, { name, lifecycle }));
+  let renderer;
+  await act(async () => { renderer = create(screen('cart', 'cart')); });
+  t.after(async () => act(async () => renderer.unmount()));
+  await act(async () => renderer.root.findByType('Page').props.increment());
+  await act(async () => renderer.update(screen('dish:sushi-roll:philadelphia', 'dish')));
+  const cartLayer = renderer.root.findAllByType('AnimatedView').find(node => node.findAllByType('Page').some(page => page.props.name === 'cart'));
+  assert.ok(cartLayer, 'cart is retained under the dish sheet');
+  assert.equal(cartLayer.props.style.some(style => style?.display === 'none'), false);
+  assert.equal(animations.length, 0, 'only the dish sheet owns its animation');
+  await act(async () => renderer.update(screen('cart', 'cart')));
+  assert.equal(renderer.root.findByType('Page').props.count, 1);
+  assert.equal(lifecycle.filter(event => event === 'mount:cart').length, 1);
 });

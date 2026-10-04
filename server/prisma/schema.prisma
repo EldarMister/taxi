@@ -164,6 +164,8 @@ model Quote {
 }
 model Order {
   id String @id @default(uuid()) @db.Uuid
+  foodOrderId String? @unique @db.Uuid
+  foodOrder FoodOrder? @relation(fields:[foodOrderId],references:[id])
   clientId String @db.Uuid
   client User @relation("ClientOrders",fields:[clientId],references:[id])
   driverId String? @db.Uuid
@@ -463,6 +465,7 @@ model FoodRestaurant {
   sortOrder Int @default(0)
   updatedAt DateTime @updatedAt
   orders FoodOrder[]
+  members RestaurantMembership[]
 }
 model FoodOrder {
   id String @id @default(uuid()) @db.Uuid
@@ -479,6 +482,11 @@ model FoodOrder {
   total Int
   fulfillment FoodFulfillment
   address String
+  deliveryPoint Json?
+  deliveryMethod String?
+  courierName String?
+  courierPhone String?
+  atlasDelivery Order?
   comment String @default("")
   paymentMethod FoodPaymentMethod
   status FoodOrderStatus @default(PLACED)
@@ -490,6 +498,46 @@ model FoodOrder {
   @@unique([clientId,requestId])
   @@index([clientId,createdAt])
   @@index([status,createdAt])
+}
+
+model RestaurantAccount {
+  id String @id @default(uuid()) @db.Uuid
+  phone String @unique
+  name String @default("")
+  passwordHash String
+  active Boolean @default(true)
+  sessionVersion Int @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  memberships RestaurantMembership[]
+  sessions RestaurantSession[]
+}
+model RestaurantMembership {
+  id String @id @default(uuid()) @db.Uuid
+  accountId String @db.Uuid
+  account RestaurantAccount @relation(fields:[accountId],references:[id],onDelete:Cascade)
+  restaurantId String
+  restaurant FoodRestaurant @relation(fields:[restaurantId],references:[id])
+  role String
+  permissions String[] @default([])
+  active Boolean @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  @@unique([accountId,restaurantId])
+  @@index([restaurantId,active])
+}
+model RestaurantSession {
+  id String @id @default(uuid()) @db.Uuid
+  accountId String @db.Uuid
+  account RestaurantAccount @relation(fields:[accountId],references:[id],onDelete:Cascade)
+  tokenHash String @unique
+  familyId String @db.Uuid
+  sessionVersion Int
+  expiresAt DateTime
+  revokedAt DateTime?
+  createdAt DateTime @default(now())
+  @@index([accountId,revokedAt])
+  @@index([familyId])
 }
 model FoodStatusHistory {
   id String @id @default(uuid()) @db.Uuid

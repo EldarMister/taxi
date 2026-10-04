@@ -14,6 +14,8 @@ function load(file, dependencies = {}) {
     exports,
     require: id => {
       if (Object.hasOwn(dependencies, id)) return dependencies[id];
+      if (id === './dishOptions') return load('dishOptions.ts');
+      if (id === './promotions') return load('promotions.ts');
       throw new Error(`Unexpected dependency ${id}`);
     },
   });
@@ -21,7 +23,108 @@ function load(file, dependencies = {}) {
 }
 
 const plain = value => JSON.parse(JSON.stringify(value));
-const { addCartLine, cartLineKey, cartSummary, changeCartQuantity } = load('cart.ts');
+const { addCartLine, cartLineKey, cartSummary, changeCartQuantity, increaseCatalogDish, decreaseCatalogDish } = load('cart.ts');
+const { initialDishOptions, toggleDishOption, dishOptionsValid, requiresDishConfiguration, dishLinePrice } = load('dishOptions.ts');
+const { foodDeliveryTerms } = load('promotions.ts');
+
+test('threshold promotions use the base basket with extras, discount dishes once and keep extras at full price', () => {
+  const restaurant = menu();
+  restaurant.dishes[0] = { ...restaurant.dishes[0], price: 468, promotionBasePrice: 520, originalPrice: 520 };
+  restaurant.options.find(option => option.id === 'wasabi').priceScope = 'PER_ITEM';
+  restaurant.promotions = [
+    { id: 'always', title: '10%', type: 'PERCENT', value: 10, minSubtotal: 0, dishIds: [], active: true },
+    { id: 'threshold', title: '20%', type: 'PERCENT', value: 20, minSubtotal: 1000, dishIds: ['philadelphia'], active: true },
+    { id: 'fixed', title: '60 сом', type: 'FIXED', value: 60, minSubtotal: 1000, dishIds: [], active: true },
+  ];
+  const one = cartSummary(restaurant, [{ dishId: 'philadelphia', quantity: 1, optionIds: ['ginger', 'wasabi'] }]);
+  assert.equal(one.subtotalBeforeDiscount, 545);
+  assert.equal(one.subtotal, 493, 'pre-discounted API price must not receive the 10% promotion twice');
+  const two = cartSummary(restaurant, [{ dishId: 'philadelphia', quantity: 2, optionIds: ['ginger', 'wasabi'] }]);
+  assert.equal(two.subtotalBeforeDiscount, 1080);
+  assert.equal(two.items[0].dish.price, 416, 'the best eligible discount wins without stacking');
+  assert.equal(two.items[0].dish.originalPrice, 520);
+  assert.equal(two.subtotal, 872, 'both per-portion and per-item extras remain full price');
+  assert.equal(two.invalid, false);
+  assert.equal(restaurant.dishes[0].price, 468, 'cart pricing does not mutate the catalog');
+});
+
+test('free-delivery promotions use the pre-discount basket while standard thresholds use the discounted subtotal', () => {
+  const restaurant = { ...menu(), freeDeliveryThreshold: 1000, promotions: [
+    { id: 'half', title: '50%', type: 'PERCENT', value: 50, minSubtotal: 0, dishIds: [], active: true },
+    { id: 'delivery', title: 'Доставка', type: 'FREE_DELIVERY', value: 0, minSubtotal: 1000, dishIds: [], active: true },
+  ] };
+  const lines = [{ dishId: 'philadelphia', quantity: 2, optionIds: [] }];
+  const free = cartSummary(restaurant, lines);
+  assert.equal(free.subtotal, 520);
+  assert.equal(free.deliveryFee, 0);
+  const terms = foodDeliveryTerms(restaurant, free.subtotal, free.subtotalBeforeDiscount);
+  assert.equal(terms.free, true);
+  const regular = cartSummary({ ...restaurant, promotions: [restaurant.promotions[0]] }, lines);
+  assert.equal(regular.deliveryFee, 100, 'ordinary minimum remains based on the final food subtotal');
+  const below = cartSummary(restaurant, [{ ...lines[0], quantity: 1 }]);
+  const belowTerms = foodDeliveryTerms(restaurant, below.subtotal, below.subtotalBeforeDiscount);
+  assert.equal(belowTerms.remaining, 480);
+  assert.equal(belowTerms.amount, 520);
+  assert.equal(belowTerms.threshold, 1000);
+});
+
+test('disabled, future and expired promotions do not reduce totals and cached unconditional prices can expire', () => {
+  const promo = { id: 'promo', title: 'Акция', type: 'PERCENT', value: 50, minSubtotal: 0, dishIds: [], active: true };
+  const restaurant = { ...menu(), deliveryFee: 0, promotionBaseDeliveryFee: 100, promotions: [
+    { ...promo, active: false },
+    { ...promo, id: 'future', startsAt: '2099-01-01T00:00:00Z' },
+    { ...promo, id: 'expired', endsAt: '2000-01-01T00:00:00Z' },
+    { ...promo, id: 'old-free', type: 'FREE_DELIVERY', value: 0, endsAt: '2000-01-01T00:00:00Z' },
+  ] };
+  restaurant.dishes[0] = { ...restaurant.dishes[0], price: 260, promotionBasePrice: 520 };
+  const summary = cartSummary(restaurant, [{ dishId: 'philadelphia', quantity: 1, optionIds: [] }]);
+  assert.equal(summary.subtotal, 520);
+  assert.equal(summary.deliveryFee, 100);
+  assert.equal(summary.total, 620);
+});
+
+test('fixed promotions are limited to selected dishes, never negative and do not affect another restaurant', () => {
+  const restaurant = { ...menu(), promotions: [
+    { id: 'fixed', title: 'Подарок', type: 'FIXED', value: 600, minSubtotal: 0, dishIds: ['philadelphia'], active: true },
+  ] };
+  const lines = [{ dishId: 'philadelphia', quantity: 1, optionIds: ['ginger'] }, { dishId: 'california', quantity: 1, optionIds: [] }];
+  const summary = cartSummary(restaurant, lines);
+  assert.equal(summary.items[0].total, 15);
+  assert.equal(summary.items[1].total, 460);
+  assert.equal(cartSummary(menu(), lines).subtotal, 995);
+  assert.equal(summary.invalid, false);
+});
+
+test('catalog repeats a configured dish, rapid changes clamp at 20 and the last minus removes it', () => {
+  const dish = menu().dishes[0];
+  let lines = addCartLine([], dish, 1, ['ginger']);
+  for (let i = 0; i < 30; i++) lines = increaseCatalogDish(lines, dish);
+  assert.equal(lines[0].quantity, 20);
+  assert.deepEqual(plain(lines[0].optionIds), ['ginger']);
+  for (let i = 0; i < 20; i++) lines = decreaseCatalogDish(lines, dish);
+  assert.deepEqual(plain(lines), []);
+  lines = addCartLine([], dish, 19, []);
+  lines = addCartLine(lines, dish, 5, ['ginger']);
+  assert.deepEqual(plain(lines.map(line => line.quantity)), [19, 1]);
+  assert.equal(changeCartQuantity(lines, cartLineKey(lines[0]), 20)[0].quantity, 19);
+});
+
+test('required groups, radio replacement, defaults and per-position prices share one calculation', () => {
+  const restaurant = menu();
+  const dish = { ...restaurant.dishes[0], defaultOptionIds: [], optionGroups: [{ id: 'variant', name: 'Вариант', optionIds: ['soy', 'ginger'], minSelected: 1, maxSelected: 1 }] };
+  restaurant.dishes[0] = dish;
+  restaurant.options.find(option => option.id === 'wasabi').priceScope = 'PER_ITEM';
+  assert.equal(requiresDishConfiguration(dish), true);
+  assert.deepEqual(plain(initialDishOptions(dish, restaurant.options)), []);
+  assert.equal(dishOptionsValid(dish, restaurant.options, []), false);
+  assert.equal(dishOptionsValid(dish, restaurant.options, ['soy', 'ginger']), false);
+  const selected = toggleDishOption(['soy', 'wasabi'], 'ginger', dish.optionGroups[0]);
+  assert.deepEqual(plain(selected), ['wasabi', 'ginger']);
+  assert.equal(dishOptionsValid(dish, restaurant.options, selected), true);
+  assert.equal(dishLinePrice(dish, 3, restaurant.options, selected), 1615);
+  assert.equal(cartSummary(restaurant, [{ dishId: dish.id, quantity: 3, optionIds: selected }]).subtotal, 1615);
+  assert.equal(cartSummary(restaurant, [{ dishId: dish.id, quantity: 1, optionIds: [] }]).invalid, true);
+});
 
 function menu() {
   const philadelphia = { id: 'philadelphia', name: 'Филадельфия', price: 520, available: true, optionIds: ['soy', 'ginger', 'wasabi'] };

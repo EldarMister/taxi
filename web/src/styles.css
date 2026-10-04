@@ -33,11 +33,11 @@ img { max-width: 100%; }
 button, a, summary { -webkit-tap-highlight-color: transparent; }
 :focus-visible { outline: 2px solid var(--accent-dark); outline-offset: 4px; }
 .container { width: min(calc(100% - 48px), 1180px); margin-inline: auto; }
-.product-mark { display: inline-grid; place-items: center; flex: none; width: 30px; height: 30px; border-radius: 9px; color: #fff; background: #9890ff; }
-.product-mark svg { width: 27px; height: 27px; }
-.product-mark-dark { color: #d2beff; background: #44394e; }
-.product-mark-small { width: 24px; height: 24px; border-radius: 7px; }
-.product-mark-small svg { width: 22px; height: 22px; }
+.product-mark { display: inline-grid; place-items: center; flex: none; width: 30px; height: 30px; }
+.product-mark img { width: 100%; height: 100%; object-fit: contain; }
+.product-mark-client, .product-mark-driver { width: 48px; height: 48px; border-radius: 25%; overflow: hidden; }
+.product-mark-client img, .product-mark-driver img { border-radius: inherit; }
+.product-mark-small { width: 32px; height: 32px; }
 
 /* Shared navigation */
 .site-header {
@@ -246,8 +246,7 @@ button, a, summary { -webkit-tap-highlight-color: transparent; }
 }
 .download-card-top { display: flex; align-items: center; gap: 12px; }
 .app-icon { display: grid; place-items: center; width: 48px; height: 48px; flex: none; }
-.app-icon .product-mark { width: 48px; height: 48px; border-radius: 12px; }
-.app-icon .product-mark svg { width: 31px; height: 31px; }
+.app-icon .product-mark { width: 48px; height: 48px; }
 .download-card-name { display: grid; gap: 3px; }
 .download-card-name strong { font-size: 19px; font-weight: 600; letter-spacing: -.02em; }
 .download-card-name small { color: var(--muted); font-size: 12px; }
@@ -327,7 +326,7 @@ a.apk-link:active { transform: scale(.97); }
 .faq-list p { max-width: 540px; margin: -4px 0 24px; color: var(--muted); font-size: 14px; line-height: 1.65; }
 .site-footer { padding: 68px 0 74px; border-top: 1px solid var(--line); background: #faf9fb; }
 .footer-grid { display: grid; grid-template-columns: 2fr 1fr 1.25fr 1fr; gap: 38px; }
-.footer-brand .logo { width: 115px; }
+.footer-brand .logo { width: 48px; }
 .footer-brand p { margin: 20px 0 0; color: var(--muted); font-size: 14px; }
 .footer-grid > div:not(.footer-brand) { display: flex; flex-direction: column; gap: 13px; }
 .footer-grid strong { margin-bottom: 5px; font-size: 13px; font-weight: 600; }
@@ -420,7 +419,6 @@ a.apk-link:active { transform: scale(.97); }
 .tutorial-grid p { margin: 0; color: var(--muted); font-size: 13px; line-height: 1.6; }
 .tutorial-help { background: #f4f0ff; }
 .tutorial-help .product-mark { position: absolute; top: 68px; right: 55px; width: 50px; height: 50px; }
-.tutorial-help .product-mark svg { width: 34px; height: 34px; }
 .driver-download-section { margin: 0 24px 24px; border-radius: var(--panel-radius); background: #f4f0ff; }
 .driver-download-grid { display: grid; grid-template-columns: minmax(0, 1fr) 450px; align-items: center; gap: 80px; }
 .driver-download-grid > div > p { margin-top: 0; }

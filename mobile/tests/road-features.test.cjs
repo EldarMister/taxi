@@ -25,12 +25,12 @@ test('shows several approaching warnings and retires each 10 metres after passin
     { id: 'c', kind: 'speed_camera', along: 700 }, { id: 'd', kind: 'stop', along: 610 },
     { id: 'e', kind: 'give_way', along: 950 },
   ];
-  assert.deepEqual(visibleRoadFeatures(signs, 250).map(sign => sign.id), ['a', 'b']);
-  assert.deepEqual(visibleRoadFeatures(signs, 640).map(sign => sign.id), ['b', 'c', 'e']);
+  assert.deepEqual(visibleRoadFeatures(signs, 250).map(sign => sign.id), []);
+  assert.deepEqual(visibleRoadFeatures(signs, 600).map(sign => sign.id), ['a', 'b', 'c']);
   assert.ok(visibleRoadFeatures([signs[0]], 610).some(sign => sign.id === 'a'));
   assert.ok(visibleRoadFeatures([signs[0]], 611).every(sign => sign.id !== 'a'));
   assert.ok(visibleRoadFeatures(signs, 801).every(sign => sign.id !== 'b'));
-  assert.equal(visibleRoadFeatures([...signs, { id: 'f', kind: 'stop', along: 880 }], 640).filter(sign => sign.kind === 'stop').length, 1);
+  assert.equal(visibleRoadFeatures([...signs, { id: 'f', kind: 'stop', along: 680 }], 640).filter(sign => sign.kind === 'stop').length, 1);
   assert.equal(roadFeatureDistanceLabel(signs[0], 250), '350 м');
   assert.equal(roadFeatureDistanceLabel(signs[0], 360), '240 м');
   assert.equal(roadFeatureDistanceLabel(signs[0], 620), 'позади');

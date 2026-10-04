@@ -7,6 +7,7 @@ import { activateKeepAwakeAsync, deactivateKeepAwake } from 'expo-keep-awake';
 import { api, messageOf } from './api';
 import { ingestDriverLocation, requestDriverBackgroundAccess, setDriverTrackingRoute, setDriverTrackingSession, startDriverBackgroundTracking, subscribeDriverFix } from './native/driverTracking';
 import { routeVoice } from './native/routeVoice';
+import { recordTrackingEvent } from './native/trackingRecorder';
 import type { Language, Order } from './types';
 import { DrivingRoute, GuidanceCue, NavigationFix, NavigationProgress, PreparedRoute, PreviousRouteProgress, bestVoiceForLanguage, distanceBetween, guidanceCue, navigationDestination, offRouteThreshold, prepareRoute, routeProgress, shouldReroute, unsupportedRouteOptions, usableNavigationFix } from './navigation';
 import { RoadFeature, roadFeatureAnnouncement, roadFeatureWindow, visibleRoadFeatures } from './roadFeatures';
@@ -75,7 +76,6 @@ export function useDriverNavigation({ userId, order, enabled, locationEnabled, m
   const destinationRef = useRef(destination); destinationRef.current = destination;
   const fixRef = useRef(position); fixRef.current = position;
   const routeRef = useRef<PreparedRoute | null>(null);
-  const recentFixes = useRef<NavigationFix[]>([]);
   const progressRef = useRef<PreviousRouteProgress | undefined>(undefined);
   const latestGuidanceRef = useRef<NavigationProgress | null>(null);
   const routeVersionRef = useRef(0);
@@ -98,15 +98,10 @@ export function useDriverNavigation({ userId, order, enabled, locationEnabled, m
   const voiceRef = useRef(voiceEnabled); voiceRef.current = voiceEnabled;
   const foregroundRef = useRef(foreground); foregroundRef.current = foreground;
   const selectedVoice = useRef<string | undefined>(undefined);
-  const lastHeading = useRef<number | undefined>(undefined);
-  const acceptFix = useCallback((raw: NavigationFix) => {
-    // The shared driver tracker already checked age, accuracy, order and jumps.
-    // The UI only preserves the last reliable course while the car is stopped.
-    const movingHeading = raw.heading != null && raw.heading >= 0 && (raw.speed ?? 0) >= 1.5 ? raw.heading : undefined;
-    const fix: NavigationFix = { ...raw, heading: movingHeading ?? lastHeading.current };
+  const acceptFix = useCallback((fix: NavigationFix) => {
+    // The shared local tracker already validates course, including displacement
+    // when the OS has no speed/course. Filtering again here loses those turns.
     setHasInaccurateFix(false);
-    if (movingHeading != null) lastHeading.current = movingHeading;
-    recentFixes.current = [...recentFixes.current, fix].slice(-8);
     setPosition(previous => previous && previous.timestamp >= fix.timestamp ? previous : fix);
     setGpsError('');
   }, []);
@@ -118,7 +113,7 @@ export function useDriverNavigation({ userId, order, enabled, locationEnabled, m
     speechTimer.current = undefined;
     void routeVoice.stop().catch(() => undefined);
   }, []);
-  const say = useCallback((text: string, cue?: GuidanceCue, onStarted?: () => void) => {
+  const say = useCallback((text: string, cue?: GuidanceCue, onStarted?: () => void, stillRelevant?: () => boolean) => {
     if (!voiceRef.current || !foregroundRef.current || !sessionRef.current) return false;
     const priority = cue?.priority ?? 0;
     if (speechBusy.current && priority <= speechPriority.current) return false;
@@ -145,7 +140,18 @@ export function useDriverNavigation({ userId, order, enabled, locationEnabled, m
         }
         currentCue = refreshed; text = refreshed.text;
       }
+      const requestedDistance = latestGuidanceRef.current?.maneuverDistance;
       routeVoice.speak(text, { language, systemVoice: selectedVoice.current,
+        shouldStart: () => {
+          if (version !== speechVersion.current || !voiceRef.current || !foregroundRef.current || !sessionRef.current
+            || stillRelevant?.() === false) return false;
+          if (!currentCue) return true;
+          const progress = latestGuidanceRef.current;
+          const atStart = progress && usableNavigationFix(fixRef.current) && Date.now() - fixRef.current!.timestamp <= 15_000
+            ? guidanceCue(progress, language, routeVersionRef.current, legIndexRef.current) : null;
+          return !!atStart && atStart.key === currentCue.key
+            && (currentCue.stage !== 100 || requestedDistance == null || Math.abs(progress!.maneuverDistance - requestedDistance) <= 20);
+        },
         onStart: () => {
           if (version !== speechVersion.current) return;
           if (currentCue) {
@@ -159,6 +165,8 @@ export function useDriverNavigation({ userId, order, enabled, locationEnabled, m
             }
           }
           pendingSpeech.current = null; setVoiceError('');
+          recordTrackingEvent('voice', { stage: 'started', source: 'foreground', text, cueKey: currentCue?.key ?? null,
+            routeVersion: routeVersionRef.current, maneuverDistance: latestGuidanceRef.current?.maneuverDistance ?? null });
           onStarted?.();
           if (currentCue) {
             activeSpeechCue.current = currentCue.key;
@@ -264,7 +272,6 @@ export function useDriverNavigation({ userId, order, enabled, locationEnabled, m
     featureRequestRef.current?.abort(); featureRequestRef.current = null;
     featureLoadedUntil.current = 0; featureRetryAfter.current = 0; setRoadFeatures([]);
     routeRef.current = null; progressRef.current = undefined; latestGuidanceRef.current = null; routeVersionRef.current = 0;
-    recentFixes.current = [];
     setDriverTrackingRoute?.(null);
     setRoute(null); setProgress(null); setLoading(false); setRouteError('');
     lastRequest.current = 0; offRouteCount.current = 0; offRouteSince.current = 0; offRouteStart.current = null; spoken.current.clear(); announcedSigns.current.clear(); stopSpeech(); setRouteVersion(0); setRerouteReason('');
@@ -286,33 +293,17 @@ export function useDriverNavigation({ userId, order, enabled, locationEnabled, m
     const controller = new AbortController(); requestRef.current = controller;
     const version = ++requestVersion.current;
     lastRequest.current = Date.now(); setLoading(true); setRouteError('');
+    const requestedAt = Date.now();
+    recordTrackingEvent('route', { stage: 'requested', source: 'foreground', version, reason, measuredAtMs: fix.timestamp });
     setRerouteReason(reason);
     if (rerouting) { stopSpeech(); say(language === 'ky' ? 'Маршрутту кайра куруп жатам.' : language === 'en' ? 'Recalculating the route.' : 'Перестраиваю маршрут.'); }
     try {
-      let origin = { latitude: fix.latitude, longitude: fix.longitude };
-      let bearing = fix.heading != null && (fix.speed ?? 0) >= 1.5 ? fix.heading : undefined;
-      const trace = recentFixes.current.filter(point => point.accuracy <= 30 && fix.timestamp - point.timestamp <= 10_000);
-      const distinct = trace.filter((point, index) => index === 0 || distanceBetween(point, trace[index - 1]) > 3);
-      if (rerouting && reason === 'off-route' && distinct.length >= 3
-        && distanceBetween(distinct[0], distinct[distinct.length - 1]) >= 10) {
-        const matchController = new AbortController();
-        const timeout = setTimeout(() => matchController.abort(), 1200);
-        try {
-          const match = await api.request<{latitude:number;longitude:number;bearing:number|null;confidence:number;distanceM:number}|null>('/routes/match', {
-            method: 'POST', signal: matchController.signal, body: JSON.stringify({ points: distinct.slice(-8).map(point => ({
-              latitude: point.latitude, longitude: point.longitude, accuracy: point.accuracy,
-              heading: point.heading, speed: point.speed })) }),
-          });
-          if (match && Number.isFinite(match.latitude) && Number.isFinite(match.longitude)
-            && match.confidence >= .55 && match.distanceM <= offRouteThreshold(fix.accuracy)
-            && fixRef.current?.timestamp === fix.timestamp) {
-            origin = { latitude: match.latitude, longitude: match.longitude };
-            if (match.bearing != null) bearing = match.bearing;
-          }
-        } catch { /* A delayed matcher must never block the reroute. */ }
-        finally { clearTimeout(timeout); }
-      }
-      const basicRequest = { pickup: { ...origin, address: 'Положение водителя' }, dropoff: target, language: language === 'en' ? 'ru' : language };
+      // Request directly from the latest measured fix. A separate road-match
+      // network round trip delayed every reroute and could use an older origin.
+      const origin = { latitude: fix.latitude, longitude: fix.longitude };
+      const bearing = fix.heading != null && (fix.courseSource != null || (fix.speed ?? 0) >= 1.5) ? fix.heading : undefined;
+      const basicRequest = { pickup: { ...origin, address: 'Положение водителя' }, dropoff: target,
+        language: language === 'en' ? 'ru' : language };
       const advancedRequest = { ...basicRequest, ...(bearing != null ? { bearing } : {}), ...(rerouting ? { fast: true } : {}) };
       const requestRoute = (body: typeof basicRequest | typeof advancedRequest) => api.request<DrivingRoute>('/routes', {
         method: 'POST', signal: controller.signal, body: JSON.stringify(body),
@@ -327,11 +318,13 @@ export function useDriverNavigation({ userId, order, enabled, locationEnabled, m
           result = await requestRoute(basicRequest);
         }
       }
+      recordTrackingEvent('route', { stage: 'received', source: 'foreground', version, reason, latencyMs: Date.now() - requestedAt });
       if (version !== requestVersion.current || currentSession !== sessionRef.current || controller.signal.aborted) return;
       const prepared = prepareRoute(result);
       const latest = fixRef.current;
       if (rerouting && latest && latest.timestamp > fix.timestamp + 1500
         && routeProgress(prepared, latest, undefined, language).offRouteMeters > offRouteThreshold(latest.accuracy)) {
+        recordTrackingEvent('route', { stage: 'discarded', source: 'foreground', version, reason: 'origin-moved' });
         lastRequest.current = Date.now() - 3500;
         return;
       }
@@ -339,7 +332,9 @@ export function useDriverNavigation({ userId, order, enabled, locationEnabled, m
       routeRef.current = prepared; progressRef.current = { along: 0, timestamp: fix.timestamp, stepIndex: 1 }; latestGuidanceRef.current = null;
       routeVersionRef.current = version; spoken.current.clear(); offRouteCount.current = 0; offRouteSince.current = 0; offRouteStart.current = null;
       setRoute(prepared.route); setProgress(null); setRouteVersion(version);
+      recordTrackingEvent('route', { stage: 'applied', source: 'foreground', version, reason, latencyMs: Date.now() - requestedAt });
     } catch (error) {
+      recordTrackingEvent('route', { stage: controller.signal.aborted ? 'cancelled' : 'failed', source: 'foreground', version, reason, latencyMs: Date.now() - requestedAt });
       if (version === requestVersion.current && !controller.signal.aborted) {
         // Retain the last road route if an attempted refresh loses network;
         // off-route guidance remains muted until an on-route GPS fix returns.
@@ -386,7 +381,7 @@ export function useDriverNavigation({ userId, order, enabled, locationEnabled, m
       && next.offRouteMeters > offRouteThreshold(position.accuracy)) {
       progressRef.current = { ...progressRef.current, timestamp: position.timestamp }; latestGuidanceRef.current = null;
       setProgress(null); stopSpeech();
-      if (Date.now() - lastRequest.current >= 15_000) void loadRoute(true, 'gps-gap');
+      if (Date.now() - lastRequest.current >= 3500) void loadRoute(true, 'gps-gap');
       return;
     }
     latestGuidanceRef.current = next;
@@ -399,7 +394,7 @@ export function useDriverNavigation({ userId, order, enabled, locationEnabled, m
       progressRef.current = { ...progressRef.current, along: progressRef.current?.along ?? 0, timestamp: position.timestamp };
       setProgress(next); stopSpeech();
       if (shouldReroute(offRouteCount.current, offRouteSince.current, position.timestamp,
-        offRouteStart.current ? distanceBetween(offRouteStart.current, position) : 0)
+        offRouteStart.current ? distanceBetween(offRouteStart.current, position) : 0, position.accuracy)
         && Date.now() - lastRequest.current >= 3500) void loadRoute(true, 'off-route');
       return;
     }
@@ -408,15 +403,24 @@ export function useDriverNavigation({ userId, order, enabled, locationEnabled, m
       pendingStepIndex: next.pendingStepIndex, pendingStepCount: next.pendingStepCount }; setProgress(next);
     const cue = guidanceCue(next, language, routeVersionRef.current, legIndexRef.current);
     if (cue && voiceEnabled && !spoken.current.has(cue.key) && pendingSpeech.current !== cue.key) say(cue.text, cue);
-  }, [active, foreground, usable, position, route, now, voiceEnabled, language, loadRoute, stopSpeech]);
+  }, [active, foreground, usable, position, route, now, loading, voiceEnabled, language, loadRoute, stopSpeech]);
   useEffect(() => {
     if (!active || !foreground || !usable || !voiceEnabled || loading || !progress ||
       progress.offRouteMeters > offRouteThreshold(position?.accuracy ?? 20)) return;
     const newlyVisible = visibleRoadFeatures(roadFeatures, progress.along)
       .filter(feature => feature.along >= progress.along && !announcedSigns.current.has(feature.id));
     if (!newlyVisible.length) return;
+    const requestedAlong = progress.along, requestedVersion = routeVersionRef.current;
     say(roadFeatureAnnouncement(newlyVisible, progress.along, language), undefined,
-      () => { for (const feature of newlyVisible) announcedSigns.current.add(feature.id); });
+      () => { for (const feature of newlyVisible) announcedSigns.current.add(feature.id); },
+      () => {
+        const latest = latestGuidanceRef.current;
+        return requestedVersion === routeVersionRef.current && !!latest && usableNavigationFix(fixRef.current)
+          && Date.now() - fixRef.current!.timestamp <= 15_000
+          && latest.offRouteMeters <= offRouteThreshold(fixRef.current!.accuracy)
+          && Math.abs(latest.along - requestedAlong) <= 20
+          && newlyVisible.every(feature => feature.along >= latest.along && feature.along - latest.along <= 100);
+      });
   }, [active, foreground, usable, voiceEnabled, loading, progress?.along, progress?.offRouteMeters,
     position?.timestamp, position?.accuracy, roadFeatures, routeVersion, language, now, say]);
   const changeVoice = useCallback((enabled: boolean) => {

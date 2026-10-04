@@ -127,3 +127,27 @@ export function snapCarToRoad(fix: CarFix & { heading?: number; speed?: number }
   }
   return chosen;
 }
+
+/** Small display-only correction to the road centreline, never a GPS measurement.
+ * A poor fix, ambiguous road, or departing/reversing course keeps its real position.
+ * The route does not provide the vehicle's course, and is not lane-level geometry.
+ */
+export function navigationDisplayMatch(fix: CarFix & { heading?: number | null; speed?: number | null;
+  courseDeg?: number | null; speedMps?: number | null; courseAccuracyDeg?: number | null; matched?: boolean },
+  route: CarPoint[]): RoadMatch | null {
+  const accuracy = fix.accuracyM ?? fix.accuracy;
+  const heading = fix.courseDeg !== undefined ? fix.courseDeg : fix.heading;
+  if (accuracy == null || !Number.isFinite(accuracy) || accuracy < 0 || accuracy > 15
+    || heading == null || !Number.isFinite(heading) || fix.matched === false
+    || fix.courseAccuracyDeg != null && fix.courseAccuracyDeg > 30) return null;
+  const match = snapCarToRoad({ ...fix, heading, speed: fix.speedMps ?? fix.speed ?? undefined }, route);
+  if (!match || match.distance >= 8) return null;
+  const difference = Math.abs(((heading - match.heading + 540) % 360) - 180);
+  if (difference >= 40) return null;
+  // Fade towards the measured position at the confidence boundary. A hard
+  // snap/raw switch would turn sub-metre GPS noise into several-metre jumps.
+  const weight = Math.min(1, (8 - match.distance) / 4, (15 - accuracy) / 7, (40 - difference) / 20);
+  if (weight <= 0) return null;
+  return { ...match, latitude: fix.latitude + (match.latitude - fix.latitude) * weight,
+    longitude: fix.longitude + (match.longitude - fix.longitude) * weight };
+}

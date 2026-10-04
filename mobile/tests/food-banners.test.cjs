@@ -16,6 +16,11 @@ function loadAssets() {
   const exports = {};
   vm.runInNewContext(compile('assets.ts'), { exports, require: id => {
     if (id === '../api') return { api: { socketUrl: 'https://taxi.test' } };
+    if (id === './foodPhotography') {
+      const photographs = {};
+      vm.runInNewContext(compile('foodPhotography.ts'), { exports: photographs, require: asset => asset });
+      return photographs;
+    }
     if (/\.(png|jpe?g)$/i.test(id)) return id;
     throw new Error(`Unexpected dependency ${id}`);
   } });
@@ -26,7 +31,7 @@ test('uploaded and remote menu images override bundled reference images', () => 
   const { foodImage } = loadAssets();
   assert.equal(foodImage('sushi-roll', '/api/content/media/image-id').uri, 'https://taxi.test/api/content/media/image-id');
   assert.equal(foodImage('philadelphia', 'https://images.test/dish.jpg').uri, 'https://images.test/dish.jpg');
-  assert.match(foodImage('philadelphia'), /sushi-roll\.png$/);
+  assert.match(foodImage('philadelphia'), /photography\/real\/philadelphia\.jpg$/);
   assert.equal(typeof foodImage('sushi-roll', 'javascript:alert(1)'), 'string');
 });
 
@@ -50,7 +55,7 @@ test('food cards, text and primary buttons keep contrast when dark theme is acti
   assert.equal(dark.title.color, '#FFFFFF');
   assert.equal(dark.caption.color, '#B0B0B0');
   assert.equal(dark.button.backgroundColor, '#FFFFFF');
-  assert.equal(dark.buttonText.color, '#050505');
+  assert.equal(dark.buttonText.color, '#222222');
   isDark = false;
   assert.equal(exports.useFoodStyles(light), light, 'light styles remain exactly as designed');
 });

@@ -20,7 +20,7 @@ function deferred() { let resolve; const promise = new Promise(r => { resolve = 
 async function setup(options = {}) {
   let clock = Date.now(), props = { userId: 'driver1', enabled: true, locationEnabled: true, mapVisible: options.initialMapVisible ?? true, language: options.language ?? 'ru', order: options.initialOrder === undefined ? order : options.initialOrder }, value, renderer;
   let appStateListener, gps, gpsError, watchConfig, backgroundFix, speechOptions, removed = 0, stops = 0;
-  const speaks = [], requests = [], intervals = new Map();
+  const speaks = [], requests = [], diagnosticEvents = [], intervals = new Map();
   const voiceStorage = options.voiceStorage ?? new Map();
   class TestDate extends Date { static now() { return clock; } }
   const navigation = compile('../src/navigation.ts', {}, { Date: TestDate });
@@ -52,6 +52,7 @@ async function setup(options = {}) {
       stop: async () => { stops++; if (options.speechStopPending && speaks.length) await options.speechStopPending.promise; },
       speak: (text, options) => { speaks.push(text); speechOptions = options; },
     } },
+    './native/trackingRecorder': { recordTrackingEvent: (type, data) => diagnosticEvents.push({ type, data }) },
     'expo-keep-awake': { activateKeepAwakeAsync: async () => {}, deactivateKeepAwake: async () => {} },
     './api': { messageOf: error => error.message, api: { request: async (path, init) => {
       if (path === '/routes/road-features') return { features: options.roadFeatures ?? [] };
@@ -69,9 +70,9 @@ async function setup(options = {}) {
   function Probe() { value = hook.useDriverNavigation(props); return null; }
   await act(async () => { renderer = create(React.createElement(Probe)); });
   return {
-    get value() { return value; }, get removed() { return removed; }, get stops() { return stops; }, get speechOptions() { return speechOptions; }, get watchConfig() { return watchConfig; }, speaks, requests, voiceStorage,
+    get value() { return value; }, get removed() { return removed; }, get stops() { return stops; }, get speechOptions() { return speechOptions; }, get watchConfig() { return watchConfig; }, speaks, requests, voiceStorage, diagnosticEvents,
     async gps(point = a, accuracy = 5) { clock += 1000; await act(async () => { gps({ timestamp: clock, coords: { ...point, accuracy, speed: 10, heading: 0 } }); }); },
-    async serviceFix(point = a, accuracy = 5) { clock += 1000; await act(async () => { backgroundFix?.({ ...point, timestamp: clock, accuracy, speed: 10, heading: 0 }); }); },
+    async serviceFix(point = a, accuracy = 5, motion = {}) { clock += 1000; await act(async () => { backgroundFix?.({ ...point, timestamp: clock, accuracy, speed: 10, heading: 0, ...motion }); }); },
     async advance(milliseconds) { clock += milliseconds; await act(async () => { for (const callback of intervals.values()) callback(); }); },
     async state(state) { await act(async () => appStateListener(state)); },
     async gpsFailure() { await act(async () => gpsError('GPS unavailable')); },
@@ -138,7 +139,7 @@ test('active navigation resumes a paused camera after a short inspection and a f
 test('navigation uses authenticated endpoint and does not reload on each GPS fix; cue is spoken once', async () => {
   const app = await setup();
   try {
-    await app.gps({ ...a, latitude: 42.8741 });
+    await app.gps({ ...a, latitude: 42.87411 });
     assert.equal(app.requests[0].path, '/routes'); assert.equal(app.requests[0].body.dropoff.latitude, b.latitude);
     assert.ok(app.speaks.some(text => /100 метров/.test(text)));
     const count = app.speaks.length;
@@ -148,9 +149,9 @@ test('navigation uses authenticated endpoint and does not reload on each GPS fix
 });
 test('a visible road sign speaks once and its remaining distance follows GPS progress', async () => {
   const signs = [
-    { id: 'stop-1', kind: 'stop', latitude: 42.8727, longitude: 74.59, along: 300 },
-    { id: 'stop-2', kind: 'stop', latitude: 42.873, longitude: 74.59, along: 330 },
-    { id: 'light-1', kind: 'traffic_light', latitude: 42.8732, longitude: 74.59, along: 350 },
+    { id: 'stop-1', kind: 'stop', latitude: 42.8727, longitude: 74.59, along: 80 },
+    { id: 'stop-2', kind: 'stop', latitude: 42.873, longitude: 74.59, along: 90 },
+    { id: 'light-1', kind: 'traffic_light', latitude: 42.8732, longitude: 74.59, along: 100 },
   ];
   const app = await setup({ roadFeatures: signs });
   try {
@@ -226,7 +227,7 @@ test('route voice choice persists for the driver across app sessions', async () 
 test('driver route request carries the selected language into road-name lookup', async () => {
   const app = await setup({ language: 'ky' });
   try {
-    await app.gps({ ...a, latitude: 42.8741 });
+    await app.gps({ ...a, latitude: 42.87411 });
     assert.equal(app.requests[0].body.language, 'ky');
     assert.equal(app.speechOptions.language, 'ky');
   } finally { await app.close(); }
@@ -265,6 +266,18 @@ test('foreground navigation accepts a fresh service GPS fix when the watch strea
   } finally { await app.close(); }
 });
 
+test('navigation preserves validated displacement course when the OS cannot report speed', async () => {
+  const app = await setup();
+  try {
+    await app.serviceFix(a, 3, { speed: undefined, heading: 90, courseSource: 'displacement', courseAccuracyDeg: 20 });
+    assert.equal(app.value.position.heading, 90);
+    assert.equal(app.value.position.courseSource, 'displacement');
+    assert.equal(app.requests[0].body.bearing, 90, 'routing uses the same validated movement course as the marker');
+    await app.serviceFix(a, 3, { speed: 0, heading: 90, courseSource: null });
+    assert.equal(app.value.position.heading, 90, 'stopping retains the tracker course');
+  } finally { await app.close(); }
+});
+
 test('driver position ignores a single far GPS spike and reacquires on confirmation', async () => {
   const app = await setup();
   try {
@@ -279,7 +292,7 @@ test('driver position ignores a single far GPS spike and reacquires on confirmat
 test('speech failure leaves a cue eligible for the next GPS update', async () => {
   const app = await setup();
   try {
-    await app.gps({ ...a, latitude: 42.8741 });
+    await app.gps({ ...a, latitude: 42.87411 });
     const first = app.speaks.length;
     await app.speechFailed();
     await app.gps({ ...a, latitude: 42.87411 });
@@ -295,7 +308,7 @@ test('a queued instruction refreshes its distance immediately before speech star
     await app.gps({ ...a, latitude: 42.8732 });
     assert.equal(app.speaks.length, 1, 'the new cue waits while the old speech queue is cleared');
     await app.advance(10000);
-    await app.gps({ ...a, latitude: 42.8741 });
+    await app.gps({ ...a, latitude: 42.87411 });
     await app.run(() => speechStopPending.resolve());
     assert.match(app.speaks.at(-1), /100 метров/);
     assert.doesNotMatch(app.speaks.at(-1), /200 метров/);
@@ -304,7 +317,7 @@ test('a queued instruction refreshes its distance immediately before speech star
 test('a GPS gap on the same road resumes guidance without replacing the route', async () => {
   const app = await setup();
   try {
-    await app.gps({ ...a, latitude: 42.8741 });
+    await app.gps({ ...a, latitude: 42.87411 });
     await app.speechStarted();
     const first = app.speaks.length;
     await app.advance(31000);
@@ -329,7 +342,7 @@ test('Android can use its Russian default voice when enumeration is empty', asyn
   const app = await setup({ voices: [] });
   try {
     assert.equal(app.value.voiceError, '');
-    await app.gps({ ...a, latitude: 42.8741 });
+    await app.gps({ ...a, latitude: 42.87411 });
     assert.equal(app.speechOptions.language, 'ru');
     assert.equal(app.speechOptions.voice, undefined);
   } finally { await app.close(); }
@@ -337,7 +350,7 @@ test('Android can use its Russian default voice when enumeration is empty', asyn
 test('returning from background keeps the route and already spoken instructions', async () => {
   const app = await setup();
   try {
-    await app.gps({ ...a, latitude: 42.8741 });
+    await app.gps({ ...a, latitude: 42.87411 });
     await app.speechStarted();
     const cues = app.speaks.length;
     await app.state('background'); await app.state('active');
@@ -355,16 +368,34 @@ test('trip start changes target; terminal status aborts old work and stops guida
     assert.equal(app.value.active, false); assert.equal(app.value.route, null);
   } finally { await app.close(); }
 });
-test('a short GPS deviation is ignored, then sustained travel away triggers rerouting', async () => {
+test('rerouting starts on the third distinct departing fix without an extra matcher round trip', async () => {
   const app = await setup();
   try {
     await app.gps(); await app.advance(7000);
     const away = { latitude: 42.87, longitude: 74.5908 };
     await app.gps(away); assert.equal(app.requests.length, 1);
-    for (let index = 0; index < 5; index++) { await app.gps({ ...away, longitude: away.longitude + index * .00005 }); if (index === 3) await app.advance(1); }
+    await app.gps({ ...away, longitude: away.longitude + .00010 });
     assert.equal(app.requests.length, 1);
-    for (let index = 5; index < 9; index++) { await app.gps({ ...away, longitude: away.longitude + index * .00005 }); if (index === 7) await app.advance(1); }
+    await app.gps({ ...away, longitude: away.longitude + .00020 });
     assert.equal(app.requests.length, 2);
+    assert.equal(app.requests[1].body.fast, true);
+    assert.equal(app.requests[1].body.language, 'ru');
+    assert.equal(app.requests[1].body.pickup.longitude, away.longitude + .00020);
+    assert.deepEqual(app.diagnosticEvents.filter(event => event.type === 'route' && event.data.reason === 'off-route')
+      .map(event => event.data.stage), ['requested', 'received', 'applied']);
+  } finally { await app.close(); }
+});
+
+test('speech delayed by synthesis is rejected before playback when its distance or maneuver has expired', async () => {
+  const app = await setup();
+  try {
+    await app.serviceFix({ ...a, latitude: 42.87411 });
+    const queued = app.speechOptions;
+    assert.equal(queued.shouldStart(), true);
+    await app.serviceFix({ ...a, latitude: 42.87445 });
+    assert.equal(queued.shouldStart(), false, 'a hundred-metre instruction cannot start after another 38 metres of driving');
+    await app.serviceFix({ ...a, latitude: 42.8749 });
+    assert.equal(queued.shouldStart(), false, 'an arrival/next stage also invalidates the old clip');
   } finally { await app.close(); }
 });
 test('a failed reroute retains the previous geometry and reports the unavailable service', async () => {
@@ -374,9 +405,37 @@ test('a failed reroute retains the previous geometry and reports the unavailable
     const original = app.value.route;
     await app.advance(8000);
     const away = { latitude: 42.87, longitude: 74.5908 };
-    for (let index = 0; index < 9; index++) { await app.gps({ ...away, longitude: away.longitude + index * .00005 }); if (index === 3 || index === 7) await app.advance(1); }
+    for (let index = 0; index < 3; index++) await app.gps({ ...away, longitude: away.longitude + index * .00010 });
     assert.equal(app.requests.length, 2);
     assert.equal(app.value.route, original);
     assert.match(app.value.error, /Сеть недоступна/);
+  } finally { await app.close(); }
+});
+
+test('reroute ignores a single excursion, repeated timer renders and stationary off-road jitter', async () => {
+  const app = await setup();
+  try {
+    await app.serviceFix(a);
+    await app.serviceFix({ ...a, longitude: a.longitude + .0005 });
+    await app.advance(3000);
+    assert.equal(app.requests.length, 1, 'timer renders do not count as distinct GPS fixes');
+    await app.serviceFix(a);
+    for (let i = 0; i < 8; i++) await app.serviceFix({ ...a, longitude: a.longitude + .0005 + (i % 2) * .00003 }, 5, { speed: 0 });
+    assert.equal(app.requests.length, 1, 'standing GPS wobble cannot confirm departure');
+  } finally { await app.close(); }
+});
+
+test('distant traffic lights stay silent until their 100 metre approach', async () => {
+  const app = await setup({ roadFeatures: [{ id: 'light', kind: 'traffic_light', along: 150 }] });
+  try {
+    await app.gps(a); await app.speechStarted(); await app.run(() => app.speechOptions?.onDone?.());
+    assert.equal(app.value.roadFeatures.length, 0);
+    assert.ok(app.speaks.every(text => !text.includes('светофор')));
+    await app.serviceFix({ ...a, latitude: a.latitude + .0005 });
+    assert.equal(app.value.roadFeatures.length, 1);
+    assert.match(app.speaks.at(-1), /светофор/);
+    await app.speechStarted(); await app.run(() => app.speechOptions?.onDone?.());
+    await app.serviceFix({ ...a, latitude: a.latitude + .0006 });
+    assert.equal(app.speaks.filter(text => text.includes('светофор')).length, 1);
   } finally { await app.close(); }
 });

@@ -8,7 +8,6 @@ import { RegistrationAdminService } from './registration-admin';
 @Injectable()
 export class BackgroundJobs {
   private dispatchRunning=false;
-  private pushRunning=false;
   private registrationExpiryRunning=false;
   private readonly logger=new Logger(BackgroundJobs.name);
   constructor(private readonly orders:OrdersService,private readonly push:PushService,private readonly db:PrismaService,private readonly registrationAdmin:RegistrationAdminService) {}
@@ -17,10 +16,11 @@ export class BackgroundJobs {
     if(this.dispatchRunning)return;this.dispatchRunning=true;
     try{await this.orders.dispatchPending();}catch{this.logger.error('Dispatch failed; will retry');}finally{this.dispatchRunning=false;}
   }
-  @Interval(5000)
+  @Interval(1000)
   async notifications() {
-    if(this.pushRunning)return;this.pushRunning=true;
-    try{await this.push.deliverPending();}catch{this.logger.error('Push worker failed; will retry');}finally{this.pushRunning=false;}
+    // PushService bounds concurrency and protects selection/claims. Keeping a
+    // global running flag here would stall all phones behind one slow request.
+    try{await this.push.deliverPending();}catch{this.logger.error('Push worker failed; will retry');}
   }
   @Interval(600000)
   async registrationDocumentExpiry() {

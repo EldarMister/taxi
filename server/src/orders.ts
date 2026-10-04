@@ -11,6 +11,8 @@ import { visibleDriverLocation } from './tracking';
 import { nextDriver, OFFER_SECONDS, POSITION_MAX_AGE_MS, IDLE_POSITION_MAX_AGE_MS } from './dispatch-ranking';
 import { driverCanTake } from './driver-eligibility';
 import { detectMediaMime, normalizeContentImage } from './content-domain';
+import { isRestaurantDelivery, ordinaryClientOrders, RESTAURANT_DELIVERY_KEY, syncRestaurantFoodStatus } from './restaurant-delivery-state';
+import { serializeFoodOrder } from './food';
 
 const chatMessageFields = {id:true,orderId:true,senderId:true,clientMessageId:true,text:true,createdAt:true,imageMime:true} as const;
 function chatMessageView(row:{id:string;orderId:string;senderId:string;clientMessageId:string;text:string;createdAt:Date;imageMime:string|null}) {
@@ -34,6 +36,7 @@ export class OrdersService {
   }
   async create(actor:Actor,dto:CreateOrderDto) {
     if(actor.role !== 'CLIENT') throw new ForbiddenException('Заказ доступен клиенту');
+    if(dto.idempotencyKey.startsWith(RESTAURANT_DELIVERY_KEY))throw new BadRequestException('Недопустимый ключ заказа');
     await this.limits.take(`orders:${actor.id}`,15,60);
     const passenger=dto.passenger?{name:dto.passenger.name.trim(),phone:dto.passenger.phone.replace(/[\s()-]/g,'')}:null;
     if(passenger&&passenger.name.length<2)throw new BadRequestException('Укажите имя пассажира');
@@ -46,7 +49,7 @@ export class OrdersService {
         if(existing.quoteId !== dto.quoteId || existing.comment !== (dto.comment?.trim()??'') || existing.passengerName !== (passenger?.name??null) || existing.passengerPhone !== (passenger?.phone??null) || this.stable(existing.deliveryDetails)!==this.stable(this.deliveryDetails(existing.kind,dto,false))) throw new ConflictException('Ключ повтора уже использован с другими данными');
         return existing;
       }
-      if(await tx.order.findFirst({where:{clientId:actor.id,status:{in:ACTIVE_STATUSES}}})) throw new ConflictException('У вас уже есть активный заказ');
+      if(await tx.order.findFirst({where:{clientId:actor.id,...ordinaryClientOrders,status:{in:ACTIVE_STATUSES}}})) throw new ConflictException('У вас уже есть активный заказ');
       const quote = await tx.quote.findFirst({where:{id:dto.quoteId,userId:actor.id,expiresAt:{gt:new Date()}},include:{order:true,tariff:true}});
       if(!quote) throw new BadRequestException('Расчёт стоимости истёк. Постройте маршрут ещё раз.');
       if(quote.order) throw new ConflictException('Этот расчёт уже использован');
@@ -66,13 +69,13 @@ export class OrdersService {
   private async push(tx:Prisma.TransactionClient,users:string[],event:string,orderId:string) {
     if(users.length) await tx.pushJob.createMany({data:[...new Set(users)].map(userId=>({userId,event,orderId}))});
   }
-  private participants(order:Order) {return [order.clientId,...(order.driverId?[order.driverId]:[])];}
+  private participants(order:Order) {return [...(isRestaurantDelivery(order)?[]:[order.clientId]),...(order.driverId?[order.driverId]:[])];}
   async active(actor:Actor) {
-    const order = await this.db.order.findFirst({where:{...(actor.role==='DRIVER'?{driverId:actor.id}:{clientId:actor.id}),status:{in:ACTIVE_STATUSES}},orderBy:{createdAt:'desc'}});
+    const order = await this.db.order.findFirst({where:{...(actor.role==='DRIVER'?{driverId:actor.id}:{clientId:actor.id,...ordinaryClientOrders}),status:{in:ACTIVE_STATUSES}},orderBy:{createdAt:'desc'}});
     return order?this.serialize(order.id,false,actor.id):null;
   }
   async history(actor:Actor,period:string) {
-    const orders = await this.db.order.findMany({where:{...(actor.role==='DRIVER'?{driverId:actor.id}:{clientId:actor.id}),createdAt:{gte:historySince(period)}},orderBy:{createdAt:'desc'},take:100});
+    const orders = await this.db.order.findMany({where:{...(actor.role==='DRIVER'?{driverId:actor.id}:{clientId:actor.id,...ordinaryClientOrders}),createdAt:{gte:historySince(period)}},orderBy:{createdAt:'desc'},take:100});
     return Promise.all(orders.map(order=>this.serialize(order.id,false,actor.id)));
   }
   async get(actor:Actor,id:string) {return this.serialize(id,false,actor.id);}
@@ -100,12 +103,19 @@ export class OrdersService {
       ? calculateWaiting(order.arrivedAt,new Date(),order)
       : {phase:'FINISHED' as const,elapsedSeconds:0,remainingSeconds:0,billedMinutes:order.waitingBilledMinutes,charge:order.waitingCharge}
       : null;
-    return {driverLocation:offer?null:visibleDriverLocation(order),assignmentId:assignment?.id??null,id:order.id,kind:order.kind,deliveryDetails:order.deliveryDetails,dispatchAfter:order.dispatchAfter,status:order.status,pickup:order.pickup,dropoff:order.dropoff,geometry:order.geometry,distanceMeters:order.distanceMeters,durationSeconds:order.durationSeconds,actualDurationSeconds,price:order.price,basePrice:order.price-order.waitingCharge,waiting:waiting?{...waiting,arrivedAt:order.arrivedAt,graceMinutes:order.waitingGraceMinutes,freeMinutes:order.freeWaitingMinutes,pricePerMinute:order.waitingPricePerMinute,totalPrice:order.status==='ARRIVED'?order.price+waiting.charge:order.price}:null,currency:'KGS',paymentMethod:'CASH',comment:order.comment,passenger:order.passengerName?{name:order.passengerName,phone:offer?undefined:order.passengerPhone}:null,createdAt:order.createdAt,updatedAt:order.updatedAt,searchExpiresAt:order.searchExpiresAt,completedAt:order.completedAt,driver,client:safeClient,rating:order.rating?.score??null,clientRating:clientRating._avg.score??null,driverRating:order.clientRating?.score??null,tariff:order.quote.tariff,routeProvider:order.quote.routeProvider};
+    return {foodOrderId:order.foodOrderId??null,restaurantDelivery:isRestaurantDelivery(order),driverLocation:offer?null:visibleDriverLocation(order),assignmentId:assignment?.id??null,id:order.id,kind:order.kind,deliveryDetails:order.deliveryDetails,dispatchAfter:order.dispatchAfter,status:order.status,pickup:order.pickup,dropoff:order.dropoff,geometry:order.geometry,distanceMeters:order.distanceMeters,durationSeconds:order.durationSeconds,actualDurationSeconds,price:order.price,basePrice:order.price-order.waitingCharge,waiting:waiting?{...waiting,arrivedAt:order.arrivedAt,graceMinutes:order.waitingGraceMinutes,freeMinutes:order.freeWaitingMinutes,pricePerMinute:order.waitingPricePerMinute,totalPrice:order.status==='ARRIVED'?order.price+waiting.charge:order.price}:null,currency:'KGS',paymentMethod:'CASH',comment:order.comment,passenger:order.passengerName?{name:order.passengerName,phone:offer?undefined:order.passengerPhone}:null,createdAt:order.createdAt,updatedAt:order.updatedAt,searchExpiresAt:order.searchExpiresAt,completedAt:order.completedAt,driver,client:safeClient,rating:order.rating?.score??null,clientRating:clientRating._avg.score??null,driverRating:order.clientRating?.score??null,tariff:order.quote.tariff,routeProvider:order.quote.routeProvider};
   }
   async publish(id:string,additionalUsers:string[]=[]) {
     const snapshot=await this.serialize(id);
-    const users=[snapshot.client?.id,snapshot.driver?.id].filter((value):value is string=>Boolean(value));
+    const users=[...(!snapshot.restaurantDelivery?[snapshot.client?.id]:[]),snapshot.driver?.id].filter((value):value is string=>Boolean(value));
     this.events.publish(users,'order:updated',snapshot);
+    if(snapshot.foodOrderId) {
+      const food=await this.db.foodOrder.findUnique({where:{id:snapshot.foodOrderId}});
+      if(food) {
+        this.events.publish([food.clientId],'food:order:updated',serializeFoodOrder(food));
+        this.events.adminChanged('food-orders',food.id);
+      }
+    }
     if(additionalUsers.length)this.events.publish(additionalUsers.filter(userId=>!users.includes(userId)),'order:updated',{...snapshot,status:'SEARCHING',driver:null,client:undefined});
     if(snapshot.status!=='SEARCHING') {
       const offered=await this.db.orderOffer.findMany({where:{orderId:id},select:{driverId:true}});
@@ -145,7 +155,8 @@ export class OrdersService {
       }
       if(existing.length||order.searchExpiresAt.getTime()<=now){
         await tx.order.update({where:{id},data:{status:'NO_DRIVER',history:{create:{status:'NO_DRIVER',reason:'SEARCH_TIMEOUT'}}}});
-        await this.push(tx,[order.clientId],'order:updated',id);
+        await syncRestaurantFoodStatus(tx,order,'NO_DRIVER');
+        if(!isRestaurantDelivery(order))await this.push(tx,[order.clientId],'order:updated',id);
         return {offered:null,withdrawn,expired:true};
       }
       return {offered:null,withdrawn,expired:false};
@@ -186,7 +197,7 @@ export class OrdersService {
       if(!offer||offer.skipped||offer.expiresAt.getTime()<=Date.now()) throw new ForbiddenException('Предложение истекло или заказ не был предложен вам');
       if(await tx.order.findFirst({where:{driverId:actor.id,status:{in:ACTIVE_STATUSES}}})) throw new ConflictException('У вас уже есть активный заказ');
       await tx.order.update({where:{id},data:{status:'ASSIGNED',driverId:actor.id,driverLocation:Prisma.DbNull,history:{create:{status:'ASSIGNED',actorId:actor.id}}}});
-      await this.push(tx,[order.clientId],'order:assigned',id);
+      if(!isRestaurantDelivery(order))await this.push(tx,[order.clientId],'order:assigned',id);
     });
     await this.publish(id);return this.serialize(id,false,actor.id);
   }
@@ -214,7 +225,8 @@ export class OrdersService {
       const now=new Date();
       const waiting=status==='IN_PROGRESS'&&order.arrivedAt?calculateWaiting(order.arrivedAt,now,order):null;
       await tx.order.update({where:{id},data:{status,...(status==='ARRIVED'?{arrivedAt:now}:{}),...(waiting?{waitingCharge:waiting.charge,waitingBilledMinutes:waiting.billedMinutes,price:order.price+waiting.charge}:{}),...(status==='COMPLETED'?{completedAt:now,driverLocation:Prisma.DbNull}:{}),history:{create:{status,actorId:actor.id}}}});
-      if(status==='ARRIVED') await this.push(tx,[order.clientId],'trip:arrived',id);
+      await syncRestaurantFoodStatus(tx,order,status,actor.id);
+      if(status==='ARRIVED'&&!isRestaurantDelivery(order)) await this.push(tx,[order.clientId],'trip:arrived',id);
       else await this.push(tx,this.participants(order),status==='COMPLETED'?'trip:completed':'order:updated',id);
     });
     await this.publish(id);return this.serialize(id,false,actor.id);
@@ -225,6 +237,7 @@ export class OrdersService {
     await this.db.$transaction(async tx=>{
       const order = await this.lockOrder(tx,id);
       if(order.clientId !== actor.id && order.driverId !== actor.id) throw new ForbiddenException();
+      if(isRestaurantDelivery(order)&&actor.role==='CLIENT')throw new ForbiddenException('Доставкой еды управляет ресторан');
       if(order.status==='CANCELLED'&&order.clientId===actor.id) return;
       if(!['SEARCHING','ASSIGNED','ARRIVED'].includes(order.status)) throw new BadRequestException('После начала поездки отмена недоступна');
       previousDriver=order.driverId??undefined;
@@ -237,6 +250,7 @@ export class OrdersService {
       }
       const status = byDriver?'SEARCHING':'CANCELLED';
       await tx.order.update({where:{id},data:{status,driverLocation:Prisma.DbNull,...(byDriver?{driverId:null,arrivedAt:null,searchExpiresAt:new Date(Date.now()+OFFER_SECONDS*1000)}:{}),history:{create:{status,actorId:actor.id,reason:byDriver?'DRIVER_CANCELLED':'CLIENT_CANCELLED'}}}});
+      await syncRestaurantFoodStatus(tx,order,status,actor.id);
       await this.push(tx,this.participants(order),'order:updated',id);
     });
     await this.publish(id,previousDriver?[previousDriver]:[]);await this.dispatchOrder(id);

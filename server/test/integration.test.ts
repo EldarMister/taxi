@@ -659,6 +659,40 @@ test('food pickup has no delivery charge or courier stage; early cancellation fr
   assert.equal((await api.get('/api/food/orders/active').set(headers(client)).expect(200)).body,null);
 });
 
+test('multi-restaurant food checkout validates all carts, persists atomically and restores every active order',async()=>{
+  const data={orders:[foodBody(),{...foodBody(),restaurantId:'kfc',items:[{dishId:'chicken-burger',quantity:1,optionIds:[]}]}]};
+  const countBefore=await db.foodOrder.count();
+  await api.post('/api/food/orders/batch').send(data).expect(401);
+  await api.get('/api/food/orders/active-all').expect(401);
+  await api.post('/api/food/orders/batch').set(headers(driver1)).send(data).expect(403);
+  await api.post('/api/food/orders/batch').set(headers(client2)).send({orders:[]}).expect(400);
+  await api.post('/api/food/orders/batch').set(headers(client2)).send({orders:[{...data.orders[0],items:[{...data.orders[0].items[0],quantity:1.5}]}]}).expect(400);
+  await api.post('/api/food/orders/batch').set(headers(client2)).send({orders:[data.orders[0],{...data.orders[1],paymentMethod:'CARD'}]}).expect(400);
+  await api.post('/api/food/orders/batch').set(headers(client2)).send({orders:[data.orders[0],{...data.orders[1],items:[{dishId:'missing',quantity:1,optionIds:[]}]}]}).expect(400);
+  await api.post('/api/food/orders/batch').set(headers(client2)).send({orders:[data.orders[0],{...data.orders[1],restaurantId:'missing'}]}).expect(404);
+  await api.post('/api/food/orders/batch').set(headers(client2)).send({orders:[data.orders[0],{...data.orders[0],requestId:randomUUID()}]}).expect(400);
+  assert.equal(await db.foodOrder.count(),countBefore);
+  const responses=await Promise.all(Array.from({length:5},()=>api.post('/api/food/orders/batch').set(headers(client2)).send(data)));
+  assert.ok(responses.every(response=>response.status===201),JSON.stringify(responses.map(response=>response.body)));
+  const created=responses[0].body;
+  assert.equal(created.orders.length,2);assert.equal(created.total,1430);assert.equal(created.currency,'KGS');
+  for(const response of responses)assert.deepEqual(response.body.orders.map((item:any)=>item.id),created.orders.map((item:any)=>item.id));
+  assert.equal(await db.foodOrder.count(),countBefore+2);
+  for(const order of created.orders)assert.equal(await db.foodStatusHistory.count({where:{orderId:order.id}}),1);
+  const active=(await api.get('/api/food/orders/active-all').set(headers(client2)).expect(200)).body;
+  assert.deepEqual(active.map((item:any)=>item.id).sort(),created.orders.map((item:any)=>item.id).sort());
+  assert.deepEqual((await api.get('/api/food/orders/active-all').set(headers(client)).expect(200)).body,[]);
+  await api.post('/api/food/orders/batch').set(headers(client2)).send({orders:[data.orders[0]]}).expect(409);
+  await api.post('/api/food/orders/batch').set(headers(client2)).send({orders:[data.orders[0],{...data.orders[1],address:'ул. Киевская, 125'}]}).expect(409);
+  await api.post('/api/food/orders/batch').set(headers(client2)).send({orders:data.orders.map(item=>({...item,requestId:randomUUID()}))}).expect(409);
+  await api.post(`/api/food/orders/${created.orders[0].id}/cancel`).set(headers(client2)).expect(201);
+  assert.equal((await api.get('/api/food/orders/active-all').set(headers(client2)).expect(200)).body.length,1);
+  await api.post(`/api/food/orders/${created.orders[1].id}/cancel`).set(headers(client2)).expect(201);
+  assert.deepEqual((await api.get('/api/food/orders/active-all').set(headers(client2)).expect(200)).body,[]);
+  const retried=(await api.post('/api/food/orders/batch').set(headers(client2)).send({orders:data.orders.toReversed()}).expect(201)).body;
+  assert.deepEqual(retried.orders.map((item:any)=>item.id),created.orders.map((item:any)=>item.id).reverse());
+});
+
 test('admin reads and mutations reject clients/drivers; SMS cannot authenticate any ADMIN account',async()=>{
   for(const path of ['/api/admin/me','/api/admin/dashboard','/api/admin/orders','/api/admin/tariffs','/api/admin/drivers','/api/admin/audit','/api/admin/restaurants','/api/admin/banners']) {
     await api.get(path).expect(401);

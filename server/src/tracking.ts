@@ -13,7 +13,7 @@ export class TrackingRoadPointDto {
 export class DriverLocationDto {
   @IsNumber() @Min(-90) @Max(90) latitude!: number;
   @IsNumber() @Min(-180) @Max(180) longitude!: number;
-  @IsOptional() @IsNumber() @Min(0) @Max(100) accuracy?: number;
+  @IsOptional() @IsNumber() @Min(0) @Max(100) accuracy?: number | null;
   @IsOptional() @IsInt() @Min(0) timestamp?: number;
   @IsOptional() @IsNumber() @Min(0) @Max(359.999) heading?: number;
   @IsOptional() @IsNumber() @Min(0) @Max(100) speed?: number;
@@ -23,7 +23,9 @@ export class DriverLocationDto {
   @IsOptional() @IsInt() @Min(0) measuredAtMs?: number;
   @IsOptional() @IsNumber() @Min(0) @Max(1000) accuracyM?: number | null;
   @IsOptional() @IsNumber() @Min(0) @Max(100) speedMps?: number | null;
-  @IsOptional() @IsNumber() @Min(0) @Max(359.999) courseDeg?: number | null;
+  @IsOptional() @IsNumber() @Min(0) @Max(360) courseDeg?: number | null;
+  @IsOptional() @IsNumber() @Min(0) @Max(180) courseAccuracyDeg?: number | null;
+  @IsOptional() @IsIn(['gps', 'displacement']) courseSource?: 'gps' | 'displacement' | null;
   @IsOptional() @IsInt() @Min(0) trackingStartedAtMs?: number;
   // The original fields remain accepted while already installed APKs update.
   @IsOptional() @IsUUID() driverId?: string;
@@ -56,6 +58,8 @@ type NormalizedDriverLocation = DriverLocationDto & {
   accuracyM: number | null;
   speedMps: number | null;
   courseDeg: number | null;
+  courseAccuracyDeg: number | null;
+  courseSource: 'gps' | 'displacement' | null;
 };
 
 export function normalizeDriverLocation(dto: DriverLocationDto, orderId: string, now = Date.now()): NormalizedDriverLocation {
@@ -74,17 +78,27 @@ export function normalizeDriverLocation(dto: DriverLocationDto, orderId: string,
   const accuracyM = v1 ? dto.accuracyM! : dto.accuracyM ?? dto.accuracy!;
   const speedMps = v1 ? dto.speedMps! : dto.speedMps ?? dto.speed ?? null;
   const courseDeg = v1 ? dto.courseDeg! : dto.bearingDeg ?? dto.heading ?? null;
+  // Course is clockwise from true north, never the device compass. Old
+  // senders cannot provide a quality estimate, so absence stays explicit.
+  const courseAccuracyDeg = dto.courseAccuracyDeg ?? null;
+  const courseSource = dto.courseSource ?? null;
   const trackingStartedAtMs = v1 ? dto.trackingStartedAtMs : dto.trackingStartedAt;
   if (!Number.isFinite(measuredAtMs) || !Number.isInteger(measuredAtMs)
-    || !Number.isFinite(dto.latitude) || !Number.isFinite(dto.longitude)
-    || (accuracyM !== null && !Number.isFinite(accuracyM))
-    || (speedMps !== null && !Number.isFinite(speedMps))
-    || (courseDeg !== null && !Number.isFinite(courseDeg))) throw new BadRequestException('Некорректные координаты водителя');
+    || measuredAtMs < 0 || !Number.isFinite(dto.latitude) || Math.abs(dto.latitude) > 90
+    || !Number.isFinite(dto.longitude) || Math.abs(dto.longitude) > 180
+    || (accuracyM !== null && (!Number.isFinite(accuracyM) || accuracyM < 0 || accuracyM > 1000))
+    || (speedMps !== null && (!Number.isFinite(speedMps) || speedMps < 0 || speedMps > 100))
+    || (courseDeg !== null && (!Number.isFinite(courseDeg) || courseDeg < 0 || courseDeg >= 360))
+    || (courseAccuracyDeg !== null && (!Number.isFinite(courseAccuracyDeg) || courseAccuracyDeg < 0 || courseAccuracyDeg > 180))
+    || (courseSource !== null && courseSource !== 'gps' && courseSource !== 'displacement'))
+    throw new BadRequestException('Некорректные координаты водителя');
+  if (courseDeg == null && (courseAccuracyDeg != null || courseSource != null))
+    throw new BadRequestException('Для качества направления не указан курс');
   if (now - measuredAtMs > 15000 || measuredAtMs > now + 5000) throw new BadRequestException('Координаты устарели');
   if (trackingStartedAtMs != null && trackingStartedAtMs > measuredAtMs + 5000) throw new BadRequestException('Неверное время сессии координат');
   return {
     ...dto, measuredAtMs, measuredAt: measuredAtMs, timestamp: measuredAtMs,
-    accuracyM, accuracy: accuracyM, speedMps, courseDeg,
+    accuracyM, accuracy: accuracyM, speedMps, courseDeg, courseAccuracyDeg, courseSource,
     ...(speedMps == null ? {} : { speed: speedMps }),
     ...(courseDeg == null ? {} : { heading: courseDeg, bearingDeg: courseDeg }),
     ...(trackingStartedAtMs == null ? {} : { trackingStartedAtMs, trackingStartedAt: trackingStartedAtMs }),
@@ -109,11 +123,17 @@ export function isNewDriverFix(previous: DriverFix | null, incoming: DriverLocat
     return previous.schemaVersion !== 1 && (!previous.trackingSessionId || now - previous.receivedAt > 15000);
   }
   if (previous.schemaVersion === 1 && incoming.schemaVersion !== 1) return false;
-  if (incoming.trackingSessionId === previous.trackingSessionId) return incoming.sequence > (previous.sequence ?? 0);
   // A new process/session can arrive after its first packet was lost. Its
   // start time distinguishes it from late packets of the retired process.
   const startedAt = incoming.trackingStartedAtMs ?? incoming.trackingStartedAt;
   const previousStartedAt = previous.trackingStartedAtMs ?? previous.trackingStartedAt;
+  if (incoming.trackingSessionId === previous.trackingSessionId) {
+    if (startedAt != null && previousStartedAt != null && startedAt !== previousStartedAt) return false;
+    return incoming.sequence > (previous.sequence ?? 0);
+  }
+  // Once a versioned stream owns an assignment, a delayed sequence=1
+  // without a session start must never resurrect a retired process.
+  if (previous.schemaVersion === 1) return startedAt != null && startedAt > (previousStartedAt ?? previousMeasuredAt);
   if (startedAt != null && previousStartedAt != null) return startedAt > previousStartedAt;
   if (!previous.trackingSessionId) return true;
   return incoming.sequence === 1 || now - previous.receivedAt > 15000;
@@ -132,8 +152,9 @@ export function plausibleDriverFix(previous: DriverFix | null, incoming: DriverL
 
 @Injectable()
 export class TrackingService {
-  private readonly live = new Map<string, DriverFix>();
-  private readonly persistedAt = new Map<string, number>();
+  // Rejected relocation candidates are short-lived confirmation state, never
+  // visible positions. Losing them on restart only requires another good fix.
+  private readonly relocationCandidates = new Map<string, { location: DriverFix; baseTimestamp: number; recordedAt: number }>();
   constructor(private readonly db: PrismaService, private readonly events: RealtimeEvents, private readonly limits: RateLimits) {}
   async get(actor: Actor, id: string) {
     const order = await this.db.order.findUnique({ where: { id } });
@@ -142,10 +163,9 @@ export class TrackingService {
     const assignment = order.driverId && ASSIGNED_STATUSES.includes(order.status)
       ? await this.db.statusHistory.findFirst({ where: { orderId: id, status: 'ASSIGNED', actorId: order.driverId }, orderBy: { createdAt: 'desc' }, select: { id: true } })
       : null;
-    const cached = this.live.get(id);
     const persisted = order.driverLocation as DriverFix | null;
-    const location = visibleDriverLocation({ ...order, driverLocation: cached?.driverId === order.driverId && cached.assignmentId === assignment?.id
-      ? cached : persisted && (!persisted.assignmentId || persisted.assignmentId === assignment?.id) ? persisted : null });
+    const location = visibleDriverLocation({ ...order,
+      driverLocation: persisted && (!persisted.assignmentId || persisted.assignmentId === assignment?.id) ? persisted : null });
     return { orderId: id, assignmentId: assignment?.id ?? null, driverId: order.driverId, status: order.status,
       serverTimeMs: Date.now(), stateVersion: location?.stateVersion ?? 0, location };
   }
@@ -173,30 +193,48 @@ export class TrackingService {
       const assignment = await tx.statusHistory.findFirst({ where: { orderId: id, status: 'ASSIGNED', actorId: actor.id }, orderBy: { createdAt: 'desc' }, select: { id: true } });
       if (!assignment) throw new ForbiddenException('Назначение водителя не найдено');
       if (dto.schemaVersion === 1 && dto.assignmentId !== assignment.id) throw new ForbiddenException('Назначение водителя изменилось');
-      const cached = this.live.get(id);
       const persisted = order.driverLocation as DriverFix | null;
       const previous = visibleDriverLocation({ ...order,
-        driverLocation: cached?.driverId === actor.id && cached.assignmentId === assignment.id ? cached
-          : persisted && (!persisted.assignmentId || persisted.assignmentId === assignment.id) ? persisted : null }, now);
-      const fresh = isNewDriverFix(previous, incoming, now) && plausibleDriverFix(previous, incoming);
+        driverLocation: persisted && (!persisted.assignmentId || persisted.assignmentId === assignment.id) ? persisted : null }, now);
+      const ordered = isNewDriverFix(previous, incoming, now);
+      let plausible = plausibleDriverFix(previous, incoming);
+      let pendingRelocation: { location: DriverFix; baseTimestamp: number; recordedAt: number } | undefined;
+      const precise = incoming.accuracyM != null && incoming.accuracyM <= 25;
+      if (ordered && previous && !plausible && precise) {
+        const candidate = this.relocationCandidates.get(id);
+        const elapsed = candidate ? incoming.measuredAtMs - candidate.location.timestamp : 0;
+        plausible = !!candidate && now - candidate.recordedAt <= 10_000
+          && candidate.baseTimestamp === previous.timestamp
+          && candidate.location.assignmentId === assignment.id && candidate.location.driverId === actor.id
+          && candidate.location.trackingSessionId === incoming.trackingSessionId
+          && elapsed >= 800 && elapsed <= 10_000
+          && isNewDriverFix(candidate.location, incoming, now)
+          && plausibleDriverFix(candidate.location, incoming);
+        if (!plausible && (!candidate || incoming.measuredAtMs > candidate.location.timestamp)) {
+          pendingRelocation = { location: { ...incoming, orderId: id, assignmentId: assignment.id,
+            driverId: actor.id, receivedAt: now }, baseTimestamp: previous.timestamp, recordedAt: now };
+        }
+      }
+      const fresh = ordered && plausible;
       const location: DriverFix = fresh
         ? { ...incoming, orderId: id, assignmentId: assignment.id, driverId: actor.id,
           receivedAt: now, receivedAtMs: now, stateVersion: (previous?.stateVersion ?? 0) + 1 }
         : previous!;
-      // A hot trip is held in process memory; SQL is a recovery checkpoint,
-      // not a one-write-per-GPS-fix event stream. Assignment/status are still
-      // checked in the transaction before each accepted update.
+      // Persist the accepted ordering watermark with the fix before publishing.
+      // A process restart/reconnect must not roll stateVersion or a session back
+      // to a ten-second checkpoint. No in-memory point can survive a rollback.
       if (fresh) {
-        this.live.set(id, location);
-        if (this.live.size > 10000) this.live.delete(this.live.keys().next().value!);
-        if (now - (this.persistedAt.get(id) ?? 0) >= 10_000) {
-          await tx.order.update({ where: { id }, data: { driverLocation: { ...location }, updatedAt: order.updatedAt } });
-          this.persistedAt.set(id, now);
-        }
+        await tx.order.update({ where: { id }, data: { driverLocation: { ...location }, updatedAt: order.updatedAt } });
       }
-      return { clientId: order.clientId, fresh, payload: { orderId: id, assignmentId: assignment.id, driverId: actor.id,
+      return { clientId: order.clientId, fresh, pendingRelocation, clearRelocation: fresh || ordered && !precise,
+        payload: { orderId: id, assignmentId: assignment.id, driverId: actor.id,
         status: order.status, stateVersion: location.stateVersion ?? 0, location }, pickup: order.pickup, dropoff: order.dropoff };
     });
+    if (result.clearRelocation) this.relocationCandidates.delete(id);
+    else if (result.pendingRelocation) {
+      this.relocationCandidates.set(id, result.pendingRelocation);
+      if (this.relocationCandidates.size > 1000) this.relocationCandidates.delete(this.relocationCandidates.keys().next().value!);
+    }
     const payload = { ...result.payload, serverTimeMs: Date.now() };
     if (result.fresh) {
       this.events.publish([result.clientId], 'driver:location', payload);
@@ -204,6 +242,7 @@ export class TrackingService {
       this.events.publishOrder(id, 'driver:location:update', { ...payload,
         lat: fix.latitude, lng: fix.longitude, bearing: fix.courseDeg ?? fix.heading ?? null,
         speed: fix.speedMps ?? fix.speed ?? null, accuracy: fix.accuracyM ?? fix.accuracy,
+        courseAccuracyDeg: fix.courseAccuracyDeg ?? null, courseSource: fix.courseSource ?? null,
         timestamp: fix.measuredAtMs ?? fix.timestamp, seq: fix.sequence ?? null,
         routeIndex: fix.routeIndex ?? null, routeProgress: fix.routeProgress ?? null,
         distanceToRoute: fix.distanceToRoute ?? null, matched: fix.matched ?? false });

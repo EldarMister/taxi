@@ -48,10 +48,10 @@ export function FoodButton({ label, onPress, disabled, busy, secondary, style }:
     disabled={disabled || busy}
     pressScale={.985}
     containerStyle={{ alignSelf: 'stretch' }}
-    style={[s.button, secondary && s.secondaryButton, style]}
+    style={[s.button, secondary ? s.secondaryButton : { backgroundColor: palette.blue }, style, disabled && { opacity: .5 }]}
   >
-    {busy && <ActivityIndicator color={secondary ? foodColors.blue : foodColors.white} />}
-    <Text style={[s.buttonText, secondary && { color: foodColors.blue }]}>{label}</Text>
+    {busy && <ActivityIndicator color={secondary ? foodColors.blue : '#FFFFFF'} />}
+    <Text style={[s.buttonText, { color: secondary ? foodColors.blue : '#FFFFFF' }]}>{label}</Text>
   </SpringPressable>;
 }
 
@@ -84,7 +84,7 @@ export function FoodFavoriteButton({ favorite, onPress, item }: { favorite: bool
   const s = useFoodStyles(baseStyles);
   return <SpringPressable accessibilityRole="button" accessibilityLabel={favorite ? `${t('Убрать из избранного')}: ${t(item)}` : `${t('Добавить в избранное')}: ${t(item)}`}
     accessibilityState={{ selected: favorite }} onPress={onPress} hitSlop={8} pressScale={.9} style={s.favoriteButton}>
-    <Ionicons name={favorite ? 'heart' : 'heart-outline'} color="#FFFFFF" size={28} />
+    <Ionicons name={favorite ? 'heart' : 'heart-outline'} color={favorite ? '#FF4E42' : '#FFFFFF'} size={28} />
   </SpringPressable>;
 }
 
@@ -92,18 +92,18 @@ export function FoodHeader({ title, onBack, right, backDisabled, backBusy }: { t
   const t = useFoodT();
   const s = useFoodStyles(baseStyles);
   return <View style={s.header}>
-    <FoodIconButton name="chevron-back" label={backBusy ? t('Назад недоступно: заказ оформляется') : t('Назад')} onPress={onBack} disabled={backDisabled} busy={backBusy} size={30} />
+    <FoodIconButton name="arrow-back" label={backBusy ? t('Назад недоступно: заказ оформляется') : t('Назад')} onPress={onBack} disabled={backDisabled} busy={backBusy} size={26} />
     <Text style={s.headerTitle} numberOfLines={1}>{title}</Text>
     <View style={s.headerRight}>{right}</View>
   </View>;
 }
 
 const baseStyles = StyleSheet.create({
-  button: { minHeight: 58, backgroundColor: foodColors.blue, borderRadius: radii.medium, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 18, paddingVertical: 15, flexDirection: 'row', gap: 8, shadowColor: palette.blueDark, shadowOpacity: .12, shadowOffset: { width: 0, height: 6 }, shadowRadius: 12, elevation: 2 },
-  secondaryButton: { backgroundColor: palette.blueSoft, shadowOpacity: 0, elevation: 0 },
-  buttonText: { color: foodColors.white, fontFamily: fonts.bold, fontSize: 17, lineHeight: 23, textAlign: 'center' },
+  button: { minHeight: 58, borderRadius: 16, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 18, paddingVertical: 15, flexDirection: 'row', gap: 8 },
+  secondaryButton: { backgroundColor: '#F5F4F2' },
+  buttonText: { color: '#222222', fontFamily: fonts.medium, fontSize: 17, lineHeight: 23, textAlign: 'center' },
   iconButton: { width: 42, height: 42, borderRadius: 21, alignItems: 'center', justifyContent: 'center' },
-  favoriteButton: { ...foodHeroActionStyle, alignItems: 'center', justifyContent: 'center' },
+  favoriteButton: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
   header: { height: 64, marginHorizontal: 12, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   headerTitle: { flex: 1, textAlign: 'center', color: foodColors.ink, fontFamily: fonts.bold, fontSize: 21, letterSpacing: -.55, paddingHorizontal: 3 },
   headerRight: { width: 42, minHeight: 42, alignItems: 'center', justifyContent: 'center' },

@@ -5,12 +5,12 @@ apply plugin: "com.facebook.react"
 def projectRoot = rootDir.getAbsoluteFile().getParentFile().getAbsolutePath()
 def taxiAppVariant = (System.getenv("APP_VARIANT") ?: "client").trim().toLowerCase()
 if (!(taxiAppVariant in ["client", "driver"])) {
-    throw new GradleException("APP_VARIANT must be client or driver")
+    throw new GradleException("APP_VARIANT must be client or driver; use restaurant-mobile for Atlas Restaurant")
 }
 def taxiApplicationId = taxiAppVariant == "driver" ? "kg.taxigo.driver" : "kg.taxigo.app"
 def taxiAppName = taxiAppVariant == "driver" ? "Atlas pro" : "Atlas"
 def taxiAppIcon = taxiAppVariant == "driver" ? "@drawable/edu_drive_icon" : "@drawable/edu_go_client_logo"
-def taxiAppRoundIcon = taxiAppVariant == "driver" ? "@drawable/edu_drive_icon" : "@drawable/edu_go_client_logo"
+def taxiAppRoundIcon = taxiAppIcon
 def taxiSplashTheme = taxiAppVariant == "driver" ? "@style/Theme.EduDrive.SplashScreen" : "@style/Theme.EduGo.SplashScreen"
 def taxiAppScheme = taxiAppVariant == "driver" ? "taxi-go-driver" : "taxi-go"
 def taxiGoogleServicesVariable = taxiAppVariant == "driver" ? "DRIVER_GOOGLE_SERVICES_FILE" : "CLIENT_GOOGLE_SERVICES_FILE"
@@ -167,8 +167,8 @@ android {
         ]
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 73
-        versionName "1.1.62"
+        versionCode 96
+        versionName "1.1.85"
 
           // Include phones and the x86_64 emulator in the direct-install APK.
         ndk {

@@ -44,6 +44,7 @@ async function setup(t) {
     advance: async seconds => act(async () => { now += seconds * 1000; intervals.forEach(callback => callback()); }),
     appState: async state => act(async () => { appListeners.forEach(listener => listener(state)); }),
     refresh: async () => act(async () => current.refresh()),
+    clear: async () => act(async () => current.clear()),
   };
 }
 test('selecting addresses automatically loads real prices for each tariff; switching tariff reuses its quote', async t => {
@@ -78,6 +79,84 @@ test('a consumed or expired quote keeps its displayed price while a new quote is
   await h.advance(301);
   assert.equal(h.value.quote, null);
   assert.equal(h.value.previewQuote.price, 150);
+});
+
+test('order again unlocks as soon as the selected fresh quote arrives, without waiting for another tariff', async t => {
+  const h = await setup(t); await h.flush(); await h.resolve(0, 150); await h.resolve(1, 180);
+  await h.change({ enabled: false }); await h.clear(); await h.change({ enabled: true });
+  assert.equal(h.value.quote, null, 'the consumed quote cannot book another order');
+  assert.equal(h.value.previewQuote.price, 150);
+  await h.flush(); await h.resolve(2, 160);
+  assert.equal(h.value.quote.id, 'quote-2');
+  assert.equal(h.value.quote.price, 160);
+  assert.equal(h.value.calculating, false, 'a pending Comfort quote must not block Standard');
+  await h.change({ tariffId: 'comfort' });
+  assert.equal(h.value.quote, null); assert.equal(h.value.calculating, true);
+  await h.resolve(3, 190);
+  assert.equal(h.value.quote.price, 190);
+});
+
+test('invalidating after booking resumes immediately replaces the request instead of waiting thirty seconds', async t => {
+  const h = await setup(t); await h.flush(); await h.resolve(0, 150); await h.resolve(1, 180);
+  await h.change({ enabled: false }); await h.change({ enabled: true }); await h.flush();
+  await h.clear(); await h.flush();
+  assert.equal(h.calls.length, 6, 'invalidation schedules a replacement even when enabled has not changed');
+  await h.resolve(2, 155); await h.resolve(3, 185);
+  assert.equal(h.value.quote, null, 'the invalidated in-flight response is ignored');
+  await h.resolve(4, 170);
+  assert.equal(h.value.quote.id, 'quote-4'); assert.equal(h.value.quote.price, 170);
+});
+
+test('a stalled unselected tariff preserves an already received price and surfaces its own error', async t => {
+  const h = await setup(t); await h.flush(); await h.resolve(0, 150);
+  assert.equal(h.value.quote.price, 150);
+  await h.timeout();
+  assert.equal(h.value.quote.price, 150); assert.equal(h.value.quoteError, '');
+  await h.change({ tariffId: 'comfort' });
+  assert.equal(h.value.calculating, false);
+  assert.match(h.value.quoteError, /Повторяем расчёт автоматически/);
+  await h.resolve(1, 180);
+  assert.equal(h.value.quote, null, 'a late timed-out response cannot clear the error');
+});
+
+test('a selected tariff failure appears before another pending tariff finishes', async t => {
+  const h = await setup(t); await h.flush(); await h.reject(0);
+  assert.equal(h.value.calculating, false); assert.equal(h.value.quoteError, 'Нет соединения');
+  await h.resolve(1, 190); await h.change({ tariffId: 'comfort' });
+  assert.equal(h.value.quote.price, 190);
+});
+
+test('order again waits for local dismissal storage but releases booking before slow profile synchronization', async () => {
+  const app = fs.readFileSync(path.join(__dirname, '../App.tsx'), 'utf8');
+  const syntax = ts.createSourceFile('App.tsx', app, ts.ScriptTarget.ES2022, true, ts.ScriptKind.TSX);
+  const functions = [];
+  function visit(node) {
+    if (ts.isFunctionDeclaration(node) && node.name?.text === 'run') functions.push(node.getText(syntax));
+    if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.name.text === 'done') functions.push(`const done = ${node.initializer.getText(syntax)};`);
+    ts.forEachChild(node, visit);
+  }
+  visit(syntax); assert.equal(functions.length, 2);
+  const code = ts.transpileModule(functions.join('\n') + '\nglobalThis.done = done;', { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText;
+  let saved, synced, quoteClears = 0, syncCalls = 0;
+  const storage = new Promise(resolve => { saved = resolve; }), synchronization = new Promise(resolve => { synced = resolve; });
+  const noop = () => {}, context = {
+    orderRef: { current: { id: 'finished', status: 'COMPLETED', kind: 'RIDE' } }, busyRef: { current: false },
+    dismissedOrderIds: { current: new Set() }, driver: false, orderKey: { current: { quoteId: 'used' } },
+    writeLastOrderId: () => storage, setBusy: noop, setError: noop, messageOf: error => error.message,
+    applyOrder: value => { context.orderRef.current = value; }, clearQuotes: () => quoteClears++, clearDeliveryQuotes: noop,
+    sync: () => { syncCalls++; return synchronization; }, emptyRideDetails: {}, emptyDeliveryDetails: {},
+    setPage: noop, setService: noop, setMapField: noop, setMapFocus: noop, setAddressField: noop,
+    setPickup: noop, markManualPickup: noop, setDropoff: noop, setRecenter: noop, setComing: noop, setRideDetails: noop, setDeliveryDetails: noop,
+  };
+  vm.runInNewContext(code, context);
+  context.done('finished');
+  assert.equal(context.busyRef.current, true); assert.equal(context.orderRef.current.id, 'finished');
+  saved(); await new Promise(resolve => setImmediate(resolve));
+  const busyDuringSync = context.busyRef.current;
+  synced(); await new Promise(resolve => setImmediate(resolve));
+  assert.equal(busyDuringSync, false, 'the booking button is available while profile synchronization is pending');
+  assert.equal(context.orderRef.current, null); assert.equal(context.orderKey.current, null);
+  assert.equal(quoteClears, 1); assert.equal(syncCalls, 1);
 });
 
 test('a stalled quote request stops calculating and retries automatically', async t => {

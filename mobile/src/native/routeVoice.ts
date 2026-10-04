@@ -14,6 +14,8 @@ const PLAYBACK_TIMEOUT_MS = 20_000;
 export type RouteVoiceOptions = {
   language: Language;
   systemVoice?: string;
+  /** Recheck the live route after synthesis, before any audio starts. */
+  shouldStart?: () => boolean;
   onStart?: () => void;
   onDone?: () => void;
   onStopped?: () => void;
@@ -112,13 +114,18 @@ async function synthesize(text: string, item: ActiveSpeech): Promise<File> {
 
 function speakWithSystem(text: string, options: RouteVoiceOptions, item: ActiveSpeech) {
   if (active !== item || generation !== item.generation) return;
+  if (options.shouldStart?.() === false) { finish(item, options.onStopped); return; }
   Speech.speak(text, {
     language: options.language === 'ky' ? 'ky-KG' : options.language === 'en' ? 'en-US' : Platform.OS === 'android' ? 'ru' : 'ru-RU',
     voice: options.systemVoice,
     rate: .9,
     volume: 1,
     useApplicationAudioSession: false,
-    onStart: () => { if (active === item) options.onStart?.(); },
+    onStart: () => {
+      if (active !== item) return;
+      if (options.shouldStart?.() === false) { void Speech.stop().catch(() => undefined); finish(item, options.onStopped); return; }
+      options.onStart?.();
+    },
     onDone: () => finish(item, options.onDone),
     onStopped: () => finish(item, options.onStopped),
     onError: error => finish(item, () => options.onError?.(error)),
@@ -136,6 +143,7 @@ async function speakWithSilero(text: string, options: RouteVoiceOptions, item: A
     }).catch(error => { audioMode = undefined; throw error; });
     await audioMode;
     if (active !== item || generation !== item.generation) return;
+    if (options.shouldStart?.() === false) { finish(item, options.onStopped); return; }
     const player = createAudioPlayer(file.uri, { updateInterval: 100 });
     item.player = player;
     player.volume = 1;

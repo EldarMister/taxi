@@ -56,14 +56,36 @@ export function safePushFailureReason(error: unknown) {
 @Injectable()
 export class PushService {
   private readonly logger = new Logger(PushService.name);
+  private selecting = false;
+  private readonly activeJobs = new Set<string>();
+  private readonly activeUsers = new Set<string>();
+  private readonly concurrency = 6;
   constructor(private readonly db:PrismaService,private readonly config:AppConfig) {
     if (config.pushProvider === 'firebase' && !getApps().length) initializeApp({credential:applicationDefault()});
   }
   async deliverPending() {
-    const jobs = await this.db.pushJob.findMany({where:{sentAt:null,attempts:{lt:8},availableAt:{lte:new Date()}},orderBy:{createdAt:'asc'},take:50});
-    for (const job of jobs) {
+    if (this.selecting || this.activeJobs.size >= this.concurrency) return;
+    this.selecting = true;
+    const deliveries: Promise<void>[] = [];
+    try {
+      const jobs = await this.db.pushJob.findMany({where:{sentAt:null,attempts:{lt:8},availableAt:{lte:new Date()},
+        ...(this.activeUsers.size ? { userId: { notIn: [...this.activeUsers] } } : {})},orderBy:{createdAt:'asc'},take:50});
+      for (const job of jobs) {
+        if (this.activeJobs.size >= this.concurrency) break;
+        // Keep one recipient's events ordered, but a slow provider request for
+        // one phone must not block delivery to every other recipient.
+        if (this.activeJobs.has(job.id) || this.activeUsers.has(job.userId)) continue;
+        this.activeJobs.add(job.id); this.activeUsers.add(job.userId);
+        deliveries.push(this.deliverJob(job).catch(error => {
+          this.logger.warn(`Push worker deferred job ${job.id}: ${safePushFailureReason(error)}`);
+        }).finally(() => { this.activeJobs.delete(job.id); this.activeUsers.delete(job.userId); }));
+      }
+    } finally { this.selecting = false; }
+    await Promise.all(deliveries);
+  }
+  private async deliverJob(job: {id:string;userId:string;event:string;orderId:string|null;payload:unknown;attempts:number;createdAt:Date}) {
       const claimed = await this.db.pushJob.updateMany({where:{id:job.id,sentAt:null,availableAt:{lte:new Date()}},data:{availableAt:new Date(Date.now()+60000),attempts:{increment:1}}});
-      if (!claimed.count) continue;
+      if (!claimed.count) return;
       try {
         const user = await this.db.user.findUnique({where:{id:job.userId},select:{
           notifications:true,
@@ -74,9 +96,9 @@ export class PushService {
           const { title, body, sound, channelId } = pushPresentation(job.event, user.role);
           let ttl = pushTtlSeconds(job.event);
           if (job.event === 'order:offer') {
-            if(!job.orderId) {await this.db.pushJob.update({where:{id:job.id},data:{sentAt:new Date()}});continue;}
+            if(!job.orderId) {await this.db.pushJob.update({where:{id:job.id},data:{sentAt:new Date()}});return;}
             const offer = await this.db.orderOffer.findFirst({where:{orderId:job.orderId,driverId:job.userId,skipped:false,expiresAt:{gt:new Date()},driver:{online:true,verified:true},order:{status:'SEARCHING'}},include:{order:true}});
-            if (!offer) { await this.db.pushJob.update({where:{id:job.id},data:{sentAt:new Date()}}); continue; }
+            if (!offer) { await this.db.pushJob.update({where:{id:job.id},data:{sentAt:new Date()}}); return; }
             ttl = pushTtlSeconds(job.event, offer.expiresAt);
           }
           if (this.config.pushProvider === 'expo') {
@@ -100,10 +122,10 @@ export class PushService {
           }
         }
         await this.db.pushJob.update({where:{id:job.id},data:{sentAt:new Date()}});
+        this.logger.log(`Push job ${job.id} event=${job.event} provider=${this.config.pushProvider} processed ageMs=${Date.now()-job.createdAt.getTime()}`);
       } catch (error) {
         this.logger.warn(`Push job ${job.id} event=${job.event} provider=${this.config.pushProvider} attempt=${job.attempts+1} failed reason=${safePushFailureReason(error)}; queued for retry`);
         await this.db.pushJob.update({where:{id:job.id},data:{availableAt:new Date(Date.now()+Math.min(3600,2**job.attempts*15)*1000)}});
       }
-    }
   }
 }

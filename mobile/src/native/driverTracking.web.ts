@@ -4,8 +4,9 @@ export const startDriverBackgroundTracking = async () => false;
 export const requestDriverBackgroundAccess = async () => false;
 export const reportDriverPosition = async (_fix: unknown) => {};
 export const ingestDriverLocation = (_fix: unknown) => null;
+import { getTrackingRecording } from './trackingRecorder.web';
 export const getDriverTrackingDiagnostics = () => ({ raw: null, processed: null, ageMs: null, trackingSessionId: null, sequence: 0,
-  assignmentId: null, protocol: 'legacy', transportStatus: 'idle', lastDropReason: '', diagnosticMode: 'off', recordedFixCount: 0 });
+  assignmentId: null, protocol: 'legacy', transportStatus: 'idle', lastDropReason: '', diagnosticMode: 'off', recordedFixCount: 0, recording: getTrackingRecording() });
 export const startDriverGpsRecording = () => false;
 export const stopDriverGpsRecording = () => [];
 export const freezeDriverGps = () => false;

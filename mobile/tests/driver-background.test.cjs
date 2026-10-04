@@ -11,15 +11,17 @@ function compile(path, dependencies, globals = {}) {
 }
 function setup(options = {}) {
   let now = Date.now(), callback, started = false, starts = 0, stops = 0, tokens = true, releaseNetwork = () => {};
-  const storage = new Map(), uploads = [], speaks = [], routes = [];
+  const storage = new Map(), uploads = [], speaks = [], routes = [], recordingEvents = [];
+  let recording = false;
   const AppState = { currentState: options.foreground ? 'active' : 'background' };
   class Clock extends Date { static now() { return now; } }
-  class ApiError extends Error { constructor(status) { super('error'); this.status = status; } }
-  const a = { latitude: 41.1987, longitude: 72.1802, address: 'Подача' }, b = { ...a, latitude: 41.1996 }, c = { ...b, longitude: 72.181 };
+  class ApiError extends Error { constructor(status, message = 'error') { super(message); this.status = status; } }
+  const a = { latitude: 41.1987, longitude: 72.1802, address: 'Подача' }, b = { ...a, latitude: 41.19959 }, c = { ...b, longitude: 72.181 };
   const step = (type, location, geometry) => ({ name: 'улица Ленина', geometry, distanceMeters: 100, durationSeconds: 20, maneuver: { type, modifier: 'right', location, bearingBefore: 0, bearingAfter: 90 } });
   const order = { id: 'order', assignmentId: '00000000-0000-4000-8000-000000000001', status: 'ASSIGNED', pickup: c, dropoff: a };
   const session = { userId: 'driver', order, voice: true };
   const navigation = compile('../src/navigation.ts', {}, { Date: Clock });
+  const driverGps = compile('../src/driverGps.ts', { './navigation': navigation });
   const animation = compile('../src/native/carRouteAnimation.ts', {});
   const roadMatching = compile('../src/native/roadMatch.ts', { './carRouteAnimation': animation });
   const module = compile('../src/native/driverTracking.ts', {
@@ -28,20 +30,23 @@ function setup(options = {}) {
     'expo-secure-store': { getItemAsync: async key => storage.get(key), setItemAsync: async (key, value) => storage.set(key, value), deleteItemAsync: async key => storage.delete(key) },
     'expo-speech': { getAvailableVoicesAsync: async () => [{ identifier: 'ru-offline', language: 'ru-RU', quality: 'Enhanced' }], stop: async () => {}, speak: text => speaks.push(text) },
     './routeVoice': { routeVoice: { stop: async () => {}, speak: text => speaks.push(text) } },
+    './trackingRecorder': { getTrackingRecording: () => ({ recording, points: recordingEvents.filter(event => event.type === 'gps').length, fileName: null, error: null }),
+      startTrackingRecording: () => { recording = true; return true; }, stopTrackingRecording: () => { recording = false; },
+      recordTrackingEvent: (type, data) => { if (recording) recordingEvents.push({ type, data }); } },
     './roadMatch': options.realRoadMatch ? roadMatching : { snapCarToRoad: () => null },
     'react-native': { AppState, Platform: { OS: 'android' }, Alert: {}, Linking: {} },
-    '../appVariant': { isRoleAllowed: () => !options.client }, '../navigation': navigation,
-    '../api': { ApiError, api: { getTokens: () => tokens, restore: async () => tokens, patch: async (path, fix) => { uploads.push({ path, fix }); if (options.rejected) throw new ApiError(403); if (options.networkFailure) throw new Error('offline'); if (options.hangingNetwork || (options.hangFirst && uploads.length === 1)) await new Promise(resolve => { releaseNetwork = resolve; }); return { orderId: 'order', driverId: 'driver', status: 'ASSIGNED', pickup: c, dropoff: a }; }, post: async (path, body) => { routes.push(body); return { provider: 'osrm', distanceMeters: 170, durationSeconds: 30, geometry: [a,b,c], steps: [step('depart',a,[a,b]),step('turn',b,[b,c]),step('arrive',c,[c])] }; } } },
+    '../appVariant': { isRoleAllowed: () => !options.client }, '../navigation': navigation, '../driverGps': driverGps,
+    '../api': { ApiError, api: { getTokens: () => tokens, restore: async () => tokens, patch: async (path, fix) => { uploads.push({ path, fix }); if (options.rejected) throw new ApiError(403); if (options.validationMessage) throw new ApiError(400, options.validationMessage); if (options.oldServer && 'courseSource' in fix) throw new ApiError(400, ['property courseAccuracyDeg should not exist', 'property courseSource should not exist'].join(options.oldServer === 'newline' ? '\n' : ', ')); if (options.networkFailure) throw new Error('offline'); if (options.hangingNetwork || (options.hangFirst && uploads.length === 1)) await new Promise(resolve => { releaseNetwork = resolve; }); return { orderId: 'order', driverId: 'driver', status: 'ASSIGNED', pickup: c, dropoff: a }; }, post: async (path, body) => { routes.push(body); return { provider: 'osrm', distanceMeters: 170, durationSeconds: 30, geometry: [a,b,c], steps: [step('depart',a,[a,b]),step('turn',b,[b,c]),step('arrive',c,[c])] }; } } },
   }, { Date: Clock, __DEV__: options.diagnosticDev === true,
     process: { env: { EXPO_PUBLIC_TRACKING_DIAGNOSTICS: options.diagnosticDev || options.diagnosticRelease ? '1' : undefined } },
     setTimeout, clearTimeout });
-  return { module, session, AppState, uploads, speaks, routes, storage, releaseNetwork: () => releaseNetwork(),
+  return { module, session, AppState, uploads, speaks, routes, storage, recordingEvents, releaseNetwork: () => releaseNetwork(),
     advance: ms => { now += ms; }, get starts() { return starts; }, get stops() { return stops; }, get started() { return started; },
     async batch(points) { now += 3000; await callback({ data: { locations: points.map(({ age = 0, coords = {} }) => ({ timestamp: now - age,
       coords: { ...a, accuracy: 8, heading: 0, speed: 10, ...coords } })) } }); },
     async fix(age = 0, coords = {}) { now += 3000; await callback({ data: { locations: [{ timestamp: now - age, coords: { ...a, accuracy: 8, heading: 0, speed: 10, ...coords } }] } }); } };
 }
-test('driver uploads its snapped position and road corners in both protocol versions', async () => {
+test('a planned road never replaces the measured position or course in either protocol', async () => {
   for (const legacy of [false, true]) {
     const h = setup({ foreground: true, realRoadMatch: true });
     if (legacy) delete h.session.order.assignmentId;
@@ -49,16 +54,49 @@ test('driver uploads its snapped position and road corners in both protocol vers
     const road = [{ latitude: 41.1987, longitude: 72.1802 }, { latitude: 41.1996, longitude: 72.1802 },
       { latitude: 41.1996, longitude: 72.181 }];
     h.module.setDriverTrackingRoute({ geometry: road });
-    await h.fix(0, { latitude: 41.199, longitude: 72.18027, accuracy: 12 });
+    await h.fix(0, { latitude: 41.199, longitude: 72.18027, accuracy: 12, heading: 90 });
     const sent = h.uploads[0].fix;
     const processed = h.module.getDriverTrackingDiagnostics().processed;
-    assert.equal(sent.matched, true);
-    assert.equal(sent.longitude, processed.snappedLongitude);
-    assert.equal(sent.latitude, processed.snappedLatitude);
-    assert.equal(sent.longitude, 72.1802, 'raw GPS beside the street is not sent to the client');
-    assert.ok(sent.matchedPath.some(p => p.latitude === road[1].latitude && p.longitude === road[1].longitude));
+    assert.equal(sent.matched, undefined);
+    assert.equal(sent.longitude, processed.longitude);
+    assert.equal(sent.latitude, processed.latitude);
+    assert.equal(sent.longitude, 72.18027, 'a nearby parallel road is not silently replaced by the plan');
+    assert.equal(sent.matchedPath, undefined, 'planned corners are not a measured travel history');
     assert.equal(sent.courseDeg ?? sent.heading, processed.heading);
+    assert.equal(processed.heading, 90, 'actual eastward course wins over the northbound plan');
+    assert.equal(sent.courseSource, 'gps');
+    assert.equal(sent.courseAccuracyDeg, null, 'Expo provides no course accuracy');
     assert.equal('snappedLatitude' in sent, false, 'internal navigation fields never leak into the DTO');
+    await h.module.setDriverTrackingSession(null);
+  }
+});
+
+test('older servers receive the same fix without unsupported course quality fields in either protocol', async () => {
+  for (const legacy of [false, true]) {
+    const h = setup({ foreground: true, oldServer: legacy ? 'newline' : true });
+    if (legacy) delete h.session.order.assignmentId;
+    await h.module.setDriverTrackingSession(h.session);
+    await h.fix(0, { heading: 0, speed: 0 });
+    assert.equal(h.uploads.length, 2);
+    const { courseAccuracyDeg, courseSource, ...original } = h.uploads[0].fix;
+    assert.deepEqual(JSON.parse(JSON.stringify(h.uploads[1].fix)), original, 'coordinates, null course, zero speed, time and sequence are preserved');
+    assert.equal(h.module.getDriverTrackingDiagnostics().transportStatus, 'connected');
+    await h.fix(0, { heading: 0, speed: 0 });
+    assert.equal(h.uploads.length, 3, 'subsequent uploads use the compatible format directly');
+    assert.equal('courseSource' in h.uploads[2].fix, false);
+    assert.equal(h.uploads[2].fix.sequence, 2);
+    await h.module.setDriverTrackingSession(null);
+  }
+});
+
+test('other validation failures are never retried by removing course quality', async () => {
+  for (const message of ['latitude must be a number', 'property courseSource should not exist, assignmentId must be a UUID',
+    'property matched should not exist', '']) {
+    const h = setup({ foreground: true, validationMessage: message || 'Bad Request' });
+    await h.module.setDriverTrackingSession(h.session);
+    await h.fix();
+    assert.equal(h.uploads.length, 1);
+    assert.equal(h.module.getDriverTrackingDiagnostics().transportStatus, 'delayed');
     await h.module.setDriverTrackingSession(null);
   }
 });
@@ -71,10 +109,10 @@ test('a turn away from the assigned road keeps the moving driver at the new GPS 
     { latitude: 41.1996, longitude: 72.1802 },
   ] });
   await h.fix(0, { latitude: 41.199, longitude: 72.1802, accuracy: 8, heading: 0, speed: 5 });
-  assert.equal(h.module.getDriverTrackingDiagnostics().processed.matched, true);
+  assert.equal(h.module.getDriverTrackingDiagnostics().processed.matched, undefined);
   await h.fix(0, { latitude: 41.199, longitude: 72.18002, accuracy: 20, heading: 270, speed: 5 });
   const processed = h.module.getDriverTrackingDiagnostics().processed;
-  assert.equal(processed.matched, false);
+  assert.equal(processed.matched, undefined);
   assert.ok(processed.longitude < 72.1801, 'the driver leaves the old road instead of staying at its last matched point');
   await h.module.setDriverTrackingSession(null);
 });
@@ -99,16 +137,17 @@ test('background task uploads only the active order and announces metres plus st
   await h.module.setDriverTrackingSession(null); await h.fix(); assert.equal(h.uploads.length, 2);
 });
 
-test('stationary background fixes suppress drift after two readings while preserving measurement time', async () => {
+test('stationary fixes hold position and unknown course while publishing fresh measurement times', async () => {
   const h = setup(); await h.module.setDriverTrackingSession(h.session);
   await h.fix(0, { speed: 0, heading: 90, accuracy: 20 });
   await h.fix(0, { speed: 0, heading: 240, accuracy: 20, latitude: 41.19875 });
-  assert.equal(h.uploads.length, 1);
-  await h.fix(0, { speed: 0, heading: 250, accuracy: 20, latitude: 41.19876 });
   assert.equal(h.uploads.length, 2);
-  assert.equal(h.uploads[1].fix.latitude, h.uploads[0].fix.latitude);
-  assert.equal(h.uploads[1].fix.courseDeg, h.uploads[0].fix.courseDeg);
-  assert.ok(h.uploads[1].fix.measuredAtMs > h.uploads[0].fix.measuredAtMs);
+  await h.fix(0, { speed: 0, heading: 250, accuracy: 20, latitude: 41.19876 });
+  assert.equal(h.uploads.length, 3);
+  assert.equal(h.uploads[2].fix.latitude, h.uploads[0].fix.latitude);
+  assert.equal(h.uploads[2].fix.courseDeg, null, 'random stopped GPS headings are not accepted as a course');
+  assert.equal(h.uploads[2].fix.courseSource, null);
+  assert.ok(h.uploads[2].fix.measuredAtMs > h.uploads[0].fix.measuredAtMs);
 });
 
 test('background driver location reacquires after two matching GPS readings', async () => {
@@ -197,6 +236,8 @@ test('GPS replay requires an explicit diagnostic build and never publishes synth
   await h.fix(); await h.fix(0, { latitude: 41.1988 });
   const trace = h.module.stopDriverGpsRecording();
   assert.equal(trace.length, 2);
+  assert.equal(h.recordingEvents.filter(event => event.type === 'gps').length, 2);
+  assert.ok(h.recordingEvents.some(event => event.type === 'upload' && event.data.stage === 'accepted'));
   const actualUploads = h.uploads.length;
   assert.equal(h.module.freezeDriverGps(), true);
   await h.fix(0, { latitude: 41.1989 });
@@ -209,6 +250,27 @@ test('GPS replay requires an explicit diagnostic build and never publishes synth
   assert.equal(h.module.getDriverTrackingDiagnostics().diagnosticMode, 'replay');
   h.module.stopDriverGpsDiagnostic();
   assert.equal(h.module.getDriverTrackingDiagnostics().diagnosticMode, 'off');
+});
+
+test('diagnostic recording retains rejected GPS and failed uploads without altering live tracking', async () => {
+  const h = setup({ diagnosticRelease: true, networkFailure: true, foreground: true });
+  await h.module.setDriverTrackingSession(h.session);
+  assert.equal(h.module.startDriverGpsRecording(), true);
+  await h.fix();
+  await h.fix(0, { accuracy: 150 });
+  assert.equal(h.uploads.length, 1, 'rejected GPS is recorded without being published');
+  const gps = h.recordingEvents.filter(event => event.type === 'gps');
+  assert.equal(gps.length, 2);
+  assert.equal(gps[1].data.raw.accuracy, 150);
+  assert.equal(gps[1].data.processed, null);
+  assert.ok(gps[1].data.dropReason);
+  assert.ok(h.recordingEvents.some(event => event.type === 'upload' && event.data.stage === 'failed'));
+  h.module.stopDriverGpsRecording();
+  const count = h.recordingEvents.length;
+  h.module.freezeDriverGps();
+  await h.fix();
+  assert.equal(h.recordingEvents.length, count, 'synthetic/frozen positions never enter the real drive journal');
+  await h.module.setDriverTrackingSession(null);
 });
 test('background permission is required and the foreground service stops with the session', async () => {
   const denied = setup({ permission: false, foreground: true }); await denied.module.setDriverTrackingSession(denied.session);
@@ -227,6 +289,21 @@ test('background navigation still speaks when position upload fails temporarily'
   assert.equal(h.routes.length, 1);
   assert.match(h.speaks[0], /Через 100 метров/);
 });
+
+test('background navigation reroutes on the confirming departing fix without waiting for another batch', async () => {
+  const h = setup(); await h.module.setDriverTrackingSession(h.session);
+  await h.fix();
+  assert.equal(h.routes.length, 1);
+  await h.fix(0, { longitude: 72.1809, heading: 90 });
+  assert.equal(h.routes.length, 1);
+  await h.fix(0, { longitude: 72.1811, heading: 90 });
+  assert.equal(h.routes.length, 1);
+  await h.fix(0, { longitude: 72.1813, heading: 90 });
+  assert.equal(h.routes.length, 2);
+  assert.equal(h.routes[1].fast, true);
+  assert.equal(h.routes[1].language, 'ru');
+  await h.module.setDriverTrackingSession(null);
+});
 test('a slow position upload cannot delay an urgent background maneuver', async () => {
   const h = setup({ hangingNetwork: true }); await h.module.setDriverTrackingSession(h.session);
   const pending = h.fix();
@@ -234,6 +311,23 @@ test('a slow position upload cannot delay an urgent background maneuver', async 
   assert.equal(h.uploads.length, 1);
   assert.match(h.speaks[0], /Через 100 метров/);
   h.releaseNetwork(); await pending;
+});
+test('local subscribers receive accepted GPS while upload is unresolved and unsubscribe cleanly', async () => {
+  const h = setup({ foreground: true, hangingNetwork: true });
+  await h.module.setDriverTrackingSession(h.session);
+  const observed = [];
+  const unsubscribe = h.module.subscribeDriverFix(fix => observed.push(fix));
+  const pending = h.fix();
+  await new Promise(resolve => setTimeout(resolve, 10));
+  assert.equal(h.uploads.length, 1);
+  assert.equal(observed.length, 1, 'rendering does not await the network response');
+  assert.equal(observed[0].heading, 0);
+  unsubscribe();
+  await h.fix(0, { latitude: 41.1988 });
+  assert.equal(observed.length, 1, 'the removed map subscriber does not receive background updates');
+  h.releaseNetwork(); await pending;
+  // The latest queued fix can start a second request; release it as well.
+  h.releaseNetwork();
 });
 test('revoked assignment stops reporting and clears the persisted session; client task cannot upload', async () => {
   const h = setup({ rejected: true }); await h.module.setDriverTrackingSession(h.session);

@@ -30,7 +30,8 @@
 .l-devices { position:relative; width:min(100%,986px); height:638px; margin:72px auto 0; }
 .l-device { position:absolute; top:40px; width:323px; aspect-ratio:323/690; padding:7px; border:1px solid #79767e; border-radius:47px; background:linear-gradient(115deg,#a8a6af 0%,#222126 9%,#08080b 40%,#9b97a2 88%,#37353e); box-shadow:0 3px 0 1px #c4c0cc inset,0 28px 60px -28px #65588188; }
 .l-device::after { content:''; position:absolute; z-index:2; top:17px; left:50%; width:87px; height:23px; transform:translateX(-50%); border-radius:99px; background:#121116; }
-.l-device .media-slot { height:100%; border:1px solid #141217; border-radius:39px; }
+.l-device .media-slot { width:100%; min-width:0; height:100%; border:1px solid #141217; border-radius:39px; }
+.l-device:has(.media-slot--filled)::after { display:none; }
 .l-device-left { left:calc(50% - 413px); z-index:1; animation:l-device-side 650ms var(--ease-out) 1050ms both; }
 .l-device-center { left:50%; top:0; z-index:3; transform:translateX(-50%); animation:l-device-center 650ms var(--ease-out) 930ms both; }
 .l-device-right { right:calc(50% - 413px); z-index:2; animation:l-device-side 650ms var(--ease-out) 1120ms both; }
@@ -41,7 +42,8 @@
 .media-slot__placeholder { display:flex; flex-direction:column; align-items:center; justify-content:center; gap:14px; width:100%; height:100%; text-align:center; }
 .media-slot__brand { font-size:39px; line-height:1; font-weight:550; letter-spacing:-.065em; opacity:.8; }
 .media-slot__caption { color:#a59dae; font-size:10px; line-height:1.4; font-weight:450; letter-spacing:.01em; }
-.media-slot__image { display:block; width:100%; height:100%; object-fit:cover; object-position:top; }
+.media-slot__picture { position:absolute; inset:0; display:block; }
+.media-slot__image { position:absolute; inset:0; display:block; width:100%; height:100%; object-fit:cover; object-position:top; }
 
 .l-overview { min-height:490px; padding:48px 0; border:1px solid #eeebf1; background:#fff; }
 .l-overview h2 { margin:0 0 43px; text-align:center; font-size:24px; line-height:1.4; letter-spacing:-.035em; font-weight:500; }
@@ -56,12 +58,14 @@
 
 .l-pro { padding:122px 0 64px; color:#f5f3f8; background:radial-gradient(ellipse 100% 55% at 20% 110%,#30243e 0%,transparent 100%),#0f0f10; }
 .l-pro .l-product-label { color:#a5a0ae; }
+.l-pro .product-mark-chevron { background:#e9e1ff; border-radius:7px; }
 .l-pro h2 { color:#f4f0fb; }
 .l-pro h2 span { color:#b7a8ff; }
 .l-pro .l-section-heading p { color:#97919e; }
 .l-pro .l-button { min-height:42px; font-size:14px; padding-inline:20px; }
 .l-pro-preview { margin-top:83px; padding:6px; border:1px solid #3b3545; border-radius:20px; background:linear-gradient(140deg,#38313f,#1d1923 42%,#514758); box-shadow:0 38px 90px -28px #000; }
-.l-pro-preview .media-slot { min-height:540px; aspect-ratio:16/9; border:1px solid #36303f; border-radius:14px; color:#c9c0df; background:radial-gradient(ellipse at 50% 54%,#282030,#151218 74%); }
+.l-pro-preview .media-slot { width:100%; min-width:0; min-height:0; aspect-ratio:16/9; border:1px solid #36303f; border-radius:14px; color:#c9c0df; background:radial-gradient(ellipse at 50% 54%,#282030,#151218 74%); }
+.l-pro-preview .media-slot__image { object-fit:contain; object-position:center; }
 .l-pro-preview .media-slot__brand { font-size:54px; letter-spacing:-.06em; }
 .l-pro-preview .media-slot__caption { color:#6f657c; }
 .l-pro-summary { display:flex; align-items:flex-end; justify-content:space-between; gap:30px; margin:90px 0 36px; }
@@ -74,8 +78,7 @@
 .l-pro-features p { margin:0 0 30px; color:#b3aabb; font-size:15px; line-height:1.55; letter-spacing:-.015em; }
 .l-feature-tags { display:flex; align-content:flex-start; flex-wrap:wrap; gap:7px; margin-top:auto; padding-top:22px; border-top:1px solid #ffffff12; }
 .l-feature-tags > span { display:inline-flex; align-items:center; gap:5px; min-height:25px; padding:3px 9px; border-radius:99px; background:#ffffff09; color:#bfb5ca; font-size:12px; line-height:1.3; white-space:nowrap; }
-.l-feature-tags .product-mark { width:18px; height:18px; margin-left:-5px; border-radius:50%; background:#8f7ec9; color:#fff; }
-.l-feature-tags .product-mark svg { width:17px; height:17px; }
+.l-feature-tags .product-mark { width:32px; height:32px; margin-left:-5px; }
 
 .l-services { padding:118px 0 77px; background:radial-gradient(ellipse 68% 49% at 47% 58%,#ded4ff 0%,#eee8ff 44%,transparent 90%),#fcfbff; }
 .l-service-stage { display:grid; grid-template-columns:1.3fr 1fr; align-items:center; gap:35px; width:min(100% - 72px,1040px); min-height:470px; margin:50px auto 31px; }
@@ -128,23 +131,27 @@
   .l-device { width:300px; }
   .l-device-left { left:calc(50% - 375px); }
   .l-device-right { right:calc(50% - 375px); }
-  .l-pro-preview .media-slot { min-height:420px; }
 }
 @media (max-width:760px) {
   .l-panel { margin:0 8px 12px; border-radius:24px; }
   .l-container { width:calc(100% - 40px); }
   .l-product-label { font-size:18px; gap:10px; }
-  .l-hero { height:908px; }
+  .l-hero { height:auto; }
   .l-hero-copy { width:calc(100% - 36px); padding-top:100px; }
   .l-hero h1 { max-width:420px; margin:23px auto 18px; font-size:48px; line-height:1.08; letter-spacing:-.04em; }
   .l-hero-copy > p { max-width:340px; margin:auto; font-size:18px; line-height:1.45; }
   .l-hero .l-actions { flex-direction:column; align-items:center; gap:12px; margin-top:27px; }
   .l-hero .l-button { width:min(100%,300px); }
-  .l-devices { height:470px; margin-top:48px; }
-  .l-device { width:232px; border-radius:36px; padding:5px; }
-  .l-device .media-slot { border-radius:30px; }
-  .l-device::after { top:13px; width:65px; height:18px; }
-  .l-device-left,.l-device-right { display:none; }
+  .l-devices { width:min(calc(100% - 24px),560px); height:auto; aspect-ratio:826 / 554; margin-top:48px; }
+  .l-device { width:39.104%; top:7.2%; border-radius:clamp(18px,5.6vw,32px); padding:3px; box-shadow:0 2px 0 1px #c4c0cc inset,0 18px 35px -20px #65588188; }
+  .l-device .media-slot { border-radius:clamp(14px,4.6vw,27px); }
+  .l-device::after { top:8px; width:27%; height:auto; aspect-ratio:87 / 23; }
+  .l-device-left { left:0; }
+  .l-device-right { right:0; }
+  .l-device-center { top:0; }
+  .l-device .media-slot__placeholder { gap:8px; }
+  .l-device .media-slot__brand { font-size:clamp(19px,5.6vw,31px); }
+  .l-device .media-slot__caption { max-width:90%; font-size:clamp(6px,1.65vw,9px); }
   .media-slot__brand { font-size:33px; }
   .media-slot__caption { font-size:9px; }
   .l-overview { min-height:0; padding:61px 0 48px; }
@@ -163,7 +170,7 @@
   .l-pro .l-actions .l-button { width:min(100%,300px); min-height:48px; font-size:15px; }
   .l-pro h2 { font-size:46px; }
   .l-pro-preview { margin-top:57px; border-radius:15px; padding:4px; }
-  .l-pro-preview .media-slot { min-height:360px; aspect-ratio:1/1.08; border-radius:10px; }
+  .l-pro-preview .media-slot { aspect-ratio:3/4; border-radius:10px; }
   .l-pro-preview .media-slot__brand { font-size:38px; }
   .l-pro-summary { display:block; margin:45px 0 25px; padding-inline:8px; }
   .l-pro-summary h3 { font-size:30px; }

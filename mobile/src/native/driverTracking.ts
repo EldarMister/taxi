@@ -6,32 +6,15 @@ import { Alert, AppState, Linking, Platform } from 'react-native';
 import { api, ApiError } from '../api';
 import { isRoleAllowed } from '../appVariant';
 import type { DriverLocationUpdate, Language, Order, Point } from '../types';
-import { DrivingRoute, NavigationFix, NavigationProgress, PreparedRoute, PreviousRouteProgress, bestVoiceForLanguage, distanceBetween, guidanceCue, interpolateBearing, navigationConfig, navigationDestination, normalizeBearing, offRouteThreshold, prepareRoute, routeProgress, usableNavigationFix } from '../navigation';
+import { DrivingRoute, NavigationFix, NavigationProgress, PreparedRoute, PreviousRouteProgress, bestVoiceForLanguage, distanceBetween, guidanceCue, navigationDestination, offRouteThreshold, prepareRoute, routeProgress, shouldReroute, unsupportedRouteOptions, usableNavigationFix } from '../navigation';
+import { DriverGpsFilter, DRIVER_GPS_CONFIG } from '../driverGps';
 import { routeVoice } from './routeVoice';
-import { snapCarToRoad, trackingRoadWindow } from './roadMatch';
+import { getTrackingRecording, recordTrackingEvent, startTrackingRecording, stopTrackingRecording } from './trackingRecorder';
 
 const inForeground = () => AppState.currentState === 'active';
 const TASK = 'taxigo-driver-active-trip-v1';
 const KEY = 'taxi.driverTracking.v1';
-export const DRIVER_GPS_CONFIG = {
-  requestIntervalMs: 1000,
-  movingUploadMinMs: 900,
-  stationaryUploadMinMs: 2500,
-  maxFixAgeMs: 30_000,
-  maxFutureMs: 5_000,
-  maxAccuracyM: 80,
-  maxReportedSpeedMps: 100,
-  maximumTravelSpeedMps: 45,
-  jumpAllowanceM: 35,
-  jumpConfirmationMaxGapMs: 10_000,
-  jumpConfirmationMinRadiusM: 15,
-  jumpConfirmationMaxRadiusM: 40,
-  stationarySpeedMps: 1.5,
-  stationaryNoiseMinM: 5,
-  stationaryNoiseMaxM: 18,
-  stationaryNoiseAccuracyFactor: 0.35,
-  stationaryConfirmations: 2,
-} as const;
+export { DRIVER_GPS_CONFIG } from '../driverGps';
 type Session = { userId: string; order: Pick<Order, 'id' | 'status' | 'pickup' | 'dropoff' | 'assignmentId'>; voice: boolean; language?: Language; trackingSessionId?: string; trackingStartedAt?: number; sequence?: number };
 type Reply = { orderId: string; driverId: string; assignmentId?: string | null; status: Order['status']; pickup: Point; dropoff: Point };
 let session: Session | null | undefined;
@@ -40,20 +23,18 @@ let starting: Promise<boolean> | null = null;
 let generation = 0, lastSent = 0, sending = false;
 let sendingVersion: number | null = null;
 let queuedFix: NavigationFix | null = null;
+let omitCourseMetadata = false;
 let storage: Promise<unknown> = Promise.resolve();
 let bgRoute: PreparedRoute | null = null, bgSession = '', lastRoute = 0, offRoute = 0;
+let offRouteStart: NavigationFix | null = null;
+let legacyRouteServer = false;
 let guiding = false;
 let previous: PreviousRouteProgress | undefined;
 let bgRouteVersion = 0;
 let latestBgProgress: NavigationProgress | null = null;
 let lastReliableFix: NavigationFix | null = null;
-let activeTrackingRoute: DrivingRoute | null = null;
-let activeRouteAlong: number | undefined;
-let stableHeading: number | undefined;
+const gpsFilter = new DriverGpsFilter();
 let lastRawFix: NavigationFix | null = null;
-let pendingJump: NavigationFix | null = null;
-let stationaryCandidate: NavigationFix | null = null;
-let stationaryCount = 0;
 let lastDropReason = '';
 let transportStatus: 'idle' | 'connected' | 'delayed' = 'idle';
 let selectedVoice: Promise<string | undefined> | undefined;
@@ -68,25 +49,26 @@ let replayTimer: ReturnType<typeof setTimeout> | null = null;
 const diagnosticsAllowed = () => typeof process !== 'undefined' && process.env.EXPO_PUBLIC_TRACKING_DIAGNOSTICS === '1'
   && isRoleAllowed('DRIVER');
 const activeOrder = (order: Session['order'] | null | undefined) => !!order && ['ASSIGNED', 'ARRIVED', 'IN_PROGRESS'].includes(order.status);
-function resetGuidance() { bgRoute = null; previous = undefined; latestBgProgress = null; bgRouteVersion++; spoken.clear(); pendingSpeech = null; speaking = false; lastRoute = 0; offRoute = 0; selectedVoice = undefined; }
-export function setDriverTrackingRoute(route: DrivingRoute | null) {
-  if (activeTrackingRoute !== route) { activeTrackingRoute = route; activeRouteAlong = undefined; }
-}
+function resetGuidance() { bgRoute = null; previous = undefined; latestBgProgress = null; bgRouteVersion++; spoken.clear(); pendingSpeech = null; speaking = false; lastRoute = 0; offRoute = 0; offRouteStart = null; selectedVoice = undefined; }
+// Compatibility for navigation callers. A planned route is guidance, not
+// evidence that the car actually drove along that road or faces its tangent.
+export function setDriverTrackingRoute(_route: DrivingRoute | null) {}
 export function subscribeDriverFix(listener: (fix: NavigationFix) => void) { listeners.add(listener); return () => { listeners.delete(listener); }; }
 export function getDriverTrackingDiagnostics() {
   return { raw: lastRawFix, processed: lastReliableFix, ageMs: lastReliableFix ? Date.now() - lastReliableFix.timestamp : null,
     trackingSessionId: session?.trackingSessionId || null, sequence: session?.sequence || 0,
     assignmentId: session?.order.assignmentId || null, protocol: session?.order.assignmentId ? 'v1' : 'legacy',
     transportStatus, lastDropReason, diagnosticMode: diagnosticsAllowed() ? diagnosticMode : 'off',
-    recordedFixCount: diagnosticsAllowed() ? recordedFixes.length : 0 };
+    recordedFixCount: diagnosticsAllowed() ? recordedFixes.length : 0, recording: getTrackingRecording() };
 }
 
 /** Diagnostic sources are restricted to a development driver build and never sent to the server. */
 export function startDriverGpsRecording(): boolean {
-  if (!diagnosticsAllowed() || diagnosticMode !== 'off') return false;
+  if (!diagnosticsAllowed() || diagnosticMode !== 'off' || !startTrackingRecording()) return false;
   recordedFixes = []; recording = true; return true;
 }
 export function stopDriverGpsRecording(): NavigationFix[] {
+  stopTrackingRecording();
   recording = false;
   return diagnosticsAllowed() ? recordedFixes.slice() : [];
 }
@@ -94,11 +76,12 @@ export function stopDriverGpsDiagnostic() {
   if (!diagnosticsAllowed()) return;
   if (replayTimer) clearTimeout(replayTimer);
   replayTimer = null; diagnosticMode = 'off';
-  lastReliableFix = null; lastRawFix = null; pendingJump = null; stationaryCandidate = null; stationaryCount = 0;
+  lastReliableFix = null; lastRawFix = null; gpsFilter.reset();
 }
 export function freezeDriverGps(): boolean {
   if (!diagnosticsAllowed() || !lastReliableFix) return false;
   if (replayTimer) clearTimeout(replayTimer);
+  stopTrackingRecording();
   replayTimer = null; recording = false; queuedFix = null; diagnosticMode = 'freeze';
   return true;
 }
@@ -107,8 +90,9 @@ export function replayDriverGps(trace: NavigationFix[]): boolean {
     || trace.some((fix, index) => !Number.isFinite(fix.timestamp)
       || (index > 0 && fix.timestamp <= trace[index - 1].timestamp))) return false;
   if (replayTimer) clearTimeout(replayTimer);
+  stopTrackingRecording();
   replayTimer = null; recording = false; queuedFix = null; diagnosticMode = 'replay';
-  lastReliableFix = null; pendingJump = null; stationaryCandidate = null; stationaryCount = 0;
+  lastReliableFix = null; gpsFilter.reset();
   let index = 0;
   const emitNext = () => {
     if (diagnosticMode !== 'replay') return;
@@ -143,9 +127,8 @@ export async function setDriverTrackingSession(next: Session | null) {
   const previousGuidanceKey = session ? `${old}:${session.order.status}:${session.language || 'ru'}:${session.voice}` : '';
   if (key !== old) {
     stopDriverGpsDiagnostic();
-    generation++; lastSent = 0; lastReliableFix = null; lastRawFix = null; pendingJump = null; stationaryCandidate = null;
-    stationaryCount = 0; queuedFix = null; sending = false; sendingVersion = null; transportStatus = 'idle';
-    activeTrackingRoute = null; activeRouteAlong = undefined; stableHeading = undefined; resetGuidance();
+    generation++; lastSent = 0; lastReliableFix = null; lastRawFix = null; gpsFilter.reset();
+    queuedFix = null; sending = false; sendingVersion = null; transportStatus = 'idle'; resetGuidance();
   }
   else if (guidanceKey !== previousGuidanceKey) {
     generation++; lastSent = 0; sending = false; sendingVersion = null; queuedFix = null; resetGuidance();
@@ -215,21 +198,49 @@ async function backgroundGuidance(fix: NavigationFix, current: Session, version:
   const language = current.language || 'ru';
   const key = `${current.order.id}:${current.order.status}:${language}`;
   if (bgSession !== key) { bgSession = key; resetGuidance(); }
-  if (!bgRoute && Date.now() - lastRoute >= 3500) {
+  const loadRoute = async (rerouting: boolean) => {
     lastRoute = Date.now();
-    const route = await api.post<DrivingRoute>('/routes', { pickup: { latitude: fix.latitude, longitude: fix.longitude, address: 'Положение водителя' }, dropoff: target, language });
+    const requestedAt = Date.now();
+    recordTrackingEvent('route', { stage: 'requested', source: 'background', version: bgRouteVersion + 1,
+      reason: rerouting ? 'off-route' : 'initial', measuredAtMs: fix.timestamp });
+    const basic = { pickup: { latitude: fix.latitude, longitude: fix.longitude, address: 'Положение водителя' }, dropoff: target, language };
+    const bearing = fix.heading != null && (fix.courseSource != null || (fix.speed ?? 0) >= 1.5) ? fix.heading : undefined;
+    let route: DrivingRoute;
+    try { route = await api.post<DrivingRoute>('/routes', legacyRouteServer ? basic
+      : { ...basic, ...(bearing != null ? { bearing } : {}), ...(rerouting ? { fast: true } : {}) }); }
+    catch (error) {
+      if (!unsupportedRouteOptions(error) || version !== generation || inForeground()) {
+        recordTrackingEvent('route', { stage: 'failed', source: 'background', latencyMs: Date.now() - requestedAt });
+        throw error;
+      }
+      legacyRouteServer = true;
+      route = await api.post<DrivingRoute>('/routes', basic);
+    }
+    recordTrackingEvent('route', { stage: 'received', source: 'background', latencyMs: Date.now() - requestedAt });
     if (version !== generation || inForeground()) return;
     bgRoute = prepareRoute(route); setDriverTrackingRoute(bgRoute.route);
     previous = { along: 0, timestamp: fix.timestamp }; bgRouteVersion++; latestBgProgress = null; spoken.clear();
-  }
+    offRoute = 0; offRouteStart = null;
+    recordTrackingEvent('route', { stage: 'applied', source: 'background', version: bgRouteVersion, latencyMs: Date.now() - requestedAt });
+  };
+  if (!bgRoute && Date.now() - lastRoute >= 3500) await loadRoute(false);
   if (!bgRoute || version !== generation || inForeground()) return;
-  const progress = routeProgress(bgRoute, fix, previous, language);
+  let progress = routeProgress(bgRoute, fix, previous, language);
   if (progress.offRouteMeters > offRouteThreshold(fix.accuracy)) {
-    offRoute++;
-    if (offRoute >= navigationConfig.rerouteFixes && Date.now() - lastRoute >= 3500) { bgRoute = null; previous = undefined; latestBgProgress = null; }
-    pendingSpeech = null; speaking = false; await routeVoice.stop(); return;
+    if (previous?.timestamp !== fix.timestamp) { offRoute++; offRouteStart ??= fix; }
+    previous = { ...previous, along: previous?.along ?? 0, timestamp: fix.timestamp };
+    latestBgProgress = null;
+    pendingSpeech = null; speaking = false; await routeVoice.stop();
+    if (!offRouteStart || !shouldReroute(offRoute, offRouteStart.timestamp, fix.timestamp,
+      distanceBetween(offRouteStart, fix), fix.accuracy) || Date.now() - lastRoute < 3500) return;
+    // Start on the confirming fix, without waiting for another background batch.
+    // Keep the old geometry until a valid replacement arrives if the network fails.
+    await loadRoute(true);
+    if (!bgRoute || version !== generation || inForeground()) return;
+    progress = routeProgress(bgRoute, fix, previous, language);
+    if (progress.offRouteMeters > offRouteThreshold(fix.accuracy)) return;
   }
-  offRoute = 0; previous = { along: progress.along, timestamp: fix.timestamp, stepIndex: progress.stepIndex,
+  offRoute = 0; offRouteStart = null; previous = { along: progress.along, timestamp: fix.timestamp, stepIndex: progress.stepIndex,
     pendingStepIndex: progress.pendingStepIndex, pendingStepCount: progress.pendingStepCount };
   latestBgProgress = progress;
   const routeVersion = bgRouteVersion, legIndex = current.order.status === 'IN_PROGRESS' ? 1 : 0;
@@ -248,10 +259,21 @@ async function backgroundGuidance(fix: NavigationFix, current: Session, version:
     if (!refreshedCue || refreshedCue.key !== cue.key || spoken.has(refreshedCue.key)) return;
     pendingSpeech = { key: cue.key, at: Date.now() }; speaking = true;
     routeVoice.speak(refreshedCue.text, { language, systemVoice: voice,
+      shouldStart: () => {
+        if (version !== generation || inForeground() || !session?.voice || routeVersion !== bgRouteVersion
+          || !bgRoute || !usableNavigationFix(lastReliableFix) || Date.now() - lastReliableFix.timestamp > 15_000) return false;
+        const latestProgress = routeProgress(bgRoute, lastReliableFix, previous, language);
+        const atStart = guidanceCue(latestProgress, language, routeVersion, legIndex);
+        return !!atStart && atStart.key === cue.key
+          && (cue.stage !== 100 || Math.abs(latestProgress.maneuverDistance - refreshedProgress!.maneuverDistance) <= 20);
+      },
       onStart: () => {
         if (version !== generation || routeVersion !== bgRouteVersion || !usableNavigationFix(lastReliableFix)
           || Date.now() - lastReliableFix.timestamp > 15_000) { void routeVoice.stop(); return; }
         spoken.add(cue.key);
+        recordTrackingEvent('voice', { stage: 'started', source: 'background', text: refreshedCue.text,
+          cueKey: cue.key, routeVersion, maneuverDistance: bgRoute && lastReliableFix
+            ? routeProgress(bgRoute, lastReliableFix, previous, language).maneuverDistance : null });
         for (const key of refreshedCue.supersedes) spoken.add(key);
         pendingSpeech = null;
       },
@@ -286,24 +308,46 @@ export async function reportDriverPosition(fix: NavigationFix) {
   const payload: DriverLocationUpdate | Record<string, unknown> = current.order.assignmentId ? {
     schemaVersion: 1, orderId: current.order.id, assignmentId: current.order.assignmentId,
     trackingSessionId: current.trackingSessionId, trackingStartedAtMs: current.trackingStartedAt, sequence,
-    latitude: fix.snappedLatitude ?? fix.latitude, longitude: fix.snappedLongitude ?? fix.longitude, accuracyM: fix.accuracy,
+    latitude: fix.latitude, longitude: fix.longitude, accuracyM: fix.accuracy,
     speedMps: fix.speed ?? null, courseDeg: fix.heading ?? null, measuredAtMs: fix.timestamp,
-    ...(fix.matched ? { routeIndex: fix.routeIndex, routeProgress: fix.routeProgress,
-      distanceToRoute: fix.distanceToRoute, matched: true, matchedPath: fix.matchedPath } : {}),
-  } : { latitude: fix.snappedLatitude ?? fix.latitude, longitude: fix.snappedLongitude ?? fix.longitude,
-    timestamp: fix.timestamp, accuracy: fix.accuracy, heading: fix.heading, speed: fix.speed,
-    ...(fix.matched ? { matched: true, matchedPath: fix.matchedPath, routeIndex: fix.routeIndex,
-      routeProgress: fix.routeProgress, distanceToRoute: fix.distanceToRoute } : {}),
+    courseAccuracyDeg: fix.courseAccuracyDeg ?? null, courseSource: fix.courseSource ?? null,
+  } : { latitude: fix.latitude, longitude: fix.longitude,
+    timestamp: fix.timestamp, accuracy: fix.accuracy, heading: fix.heading ?? null, speed: fix.speed ?? null,
+    courseAccuracyDeg: fix.courseAccuracyDeg ?? null, courseSource: fix.courseSource ?? null,
     driverId: current.userId, tripId: current.order.id,
     trackingSessionId: current.trackingSessionId, trackingStartedAt: current.trackingStartedAt, sequence, measuredAt: fix.timestamp,
     accuracyM: fix.accuracy,
-    ...(fix.speed != null ? { speedMps: fix.speed } : {}),
-    ...(fix.heading != null ? { bearingDeg: fix.heading } : {}) };
+    speedMps: fix.speed ?? null, bearingDeg: fix.heading ?? null };
   storage = storage.catch(() => undefined).then(() => SecureStore.setItemAsync(KEY, JSON.stringify(current))).catch(() => undefined);
   try {
     if (version !== generation || diagnosticMode !== 'off') return;
-    const result = await api.patch<Reply>(`/orders/${current.order.id}/driver-location`, payload);
+    recordTrackingEvent('upload', { stage: 'sending', sequence, measuredAtMs: fix.timestamp,
+      trackingSessionId: current.trackingSessionId, orderId: current.order.id, assignmentId: current.order.assignmentId ?? null });
+    const path = `/orders/${current.order.id}/driver-location`;
+    const withoutCourseMetadata = () => {
+      const compatiblePayload: Record<string, unknown> = { ...payload };
+      delete compatiblePayload.courseAccuracyDeg;
+      delete compatiblePayload.courseSource;
+      return compatiblePayload;
+    };
+    let result: Reply;
+    try {
+      result = await api.patch<Reply>(path, omitCourseMetadata ? withoutCourseMetadata() : payload);
+    } catch (error) {
+      // Older servers strictly reject the two new optional quality fields.
+      // Retry only that explicit validation response, preserving the same fix.
+      const unsupportedMetadata = error instanceof ApiError && error.status === 400
+        && error.message.split(/[,\n]\s*/).every(message =>
+          /^property (courseAccuracyDeg|courseSource) should not exist$/.test(message.trim()));
+      if (omitCourseMetadata || !unsupportedMetadata) throw error;
+      omitCourseMetadata = true;
+      if (version !== generation || diagnosticMode !== 'off'
+        || Date.now() - fix.timestamp > DRIVER_GPS_CONFIG.maxFixAgeMs) return;
+      result = await api.patch<Reply>(path, withoutCourseMetadata());
+    }
     if (version === generation) transportStatus = 'connected';
+    recordTrackingEvent('upload', { stage: 'accepted', sequence, measuredAtMs: fix.timestamp,
+      trackingSessionId: current.trackingSessionId, orderId: current.order.id, currentSession: version === generation });
     if (version !== generation || result.driverId !== current.userId) return;
     if (result.status !== current.order.status) {
       await setDriverTrackingSession({ ...current, order: { id: result.orderId, status: result.status, pickup: result.pickup, dropoff: result.dropoff,
@@ -311,6 +355,9 @@ export async function reportDriverPosition(fix: NavigationFix) {
       return;
     }
   } catch (error) {
+    recordTrackingEvent('upload', { stage: 'failed', sequence, measuredAtMs: fix.timestamp,
+      trackingSessionId: current.trackingSessionId, orderId: current.order.id,
+      status: error instanceof ApiError ? error.status : null, currentSession: version === generation });
     if (version === generation) transportStatus = 'delayed';
     if (version === generation && error instanceof ApiError && [401, 403, 404].includes(error.status)) {
       await setDriverTrackingSession(null); await routeVoice.stop();
@@ -332,85 +379,12 @@ export function ingestDriverLocation(raw: NavigationFix, report = true, diagnost
   if (diagnosticMode !== 'off' && !diagnosticSource) return null;
   if (recording && !diagnosticSource && recordedFixes.length < 1000) recordedFixes.push({ ...raw });
   lastRawFix = raw;
-  if (raw.heading === 360) raw = { ...raw, heading: 0 };
-  const now = Date.now();
-  if (!Number.isFinite(raw.latitude) || Math.abs(raw.latitude) > 90
-    || !Number.isFinite(raw.longitude) || Math.abs(raw.longitude) > 180
-    || !Number.isFinite(raw.accuracy) || raw.accuracy < 0 || raw.accuracy > DRIVER_GPS_CONFIG.maxAccuracyM
-    || !Number.isFinite(raw.timestamp) || now - raw.timestamp > DRIVER_GPS_CONFIG.maxFixAgeMs
-    || raw.timestamp - now > DRIVER_GPS_CONFIG.maxFutureMs
-    || (raw.speed != null && (!Number.isFinite(raw.speed) || raw.speed < 0 || raw.speed > DRIVER_GPS_CONFIG.maxReportedSpeedMps))
-    || (raw.heading != null && (!Number.isFinite(raw.heading) || raw.heading < 0 || raw.heading >= 360))) {
-    lastDropReason = 'invalid-stale-or-inaccurate'; return null;
-  }
-  if (lastReliableFix && raw.timestamp <= lastReliableFix.timestamp) { lastDropReason = 'out-of-order'; return null; }
-  let fix = raw;
-  if (lastReliableFix && now - lastReliableFix.timestamp <= DRIVER_GPS_CONFIG.maxFixAgeMs) {
-    const elapsedSeconds = (raw.timestamp - lastReliableFix.timestamp) / 1000;
-    const distanceM = distanceBetween(lastReliableFix, raw);
-    const allowedM = DRIVER_GPS_CONFIG.jumpAllowanceM + elapsedSeconds * DRIVER_GPS_CONFIG.maximumTravelSpeedMps
-      + Math.max(lastReliableFix.accuracy, raw.accuracy);
-    if (distanceM > allowedM) {
-      const confirmationRadius = Math.max(DRIVER_GPS_CONFIG.jumpConfirmationMinRadiusM,
-        Math.min(DRIVER_GPS_CONFIG.jumpConfirmationMaxRadiusM, Math.max(pendingJump?.accuracy ?? 0, raw.accuracy)));
-      if (!pendingJump || raw.timestamp <= pendingJump.timestamp
-        || raw.timestamp - pendingJump.timestamp > DRIVER_GPS_CONFIG.jumpConfirmationMaxGapMs
-        || distanceBetween(pendingJump, raw) > confirmationRadius) {
-        pendingJump = raw;
-        stationaryCandidate = null;
-        stationaryCount = 0;
-        lastDropReason = 'implausible-jump';
-        return null;
-      }
-    } else if (raw.speed != null && raw.speed < DRIVER_GPS_CONFIG.stationarySpeedMps) {
-      const noiseM = Math.max(DRIVER_GPS_CONFIG.stationaryNoiseMinM,
-        Math.min(DRIVER_GPS_CONFIG.stationaryNoiseMaxM,
-          Math.max(lastReliableFix.accuracy, raw.accuracy) * DRIVER_GPS_CONFIG.stationaryNoiseAccuracyFactor));
-      if (distanceM < noiseM) {
-        if (!stationaryCandidate || raw.timestamp <= stationaryCandidate.timestamp
-          || distanceBetween(stationaryCandidate, raw) >= noiseM) {
-          stationaryCandidate = raw;
-          stationaryCount = 1;
-          lastDropReason = 'awaiting-stationary-confirmation';
-          return null;
-        }
-        stationaryCount++;
-        if (stationaryCount < DRIVER_GPS_CONFIG.stationaryConfirmations) {
-          stationaryCandidate = raw;
-          lastDropReason = 'awaiting-stationary-confirmation';
-          return null;
-        }
-        fix = { ...raw, latitude: lastReliableFix.latitude, longitude: lastReliableFix.longitude,
-          heading: lastReliableFix.heading };
-      }
-    }
-  }
-  pendingJump = null;
-  stationaryCandidate = fix === raw ? null : raw;
-  if (fix === raw) stationaryCount = 0;
-  if (lastReliableFix && fix.timestamp > lastReliableFix.timestamp && fix !== lastReliableFix) {
-    const movement = distanceBetween(lastReliableFix, fix);
-    const speed = fix.speed ?? (movement / Math.max(.5, (fix.timestamp - lastReliableFix.timestamp) / 1000));
-    const alpha = fix.accuracy > 30 ? .22 : speed > 3 ? .8 : speed > 1 ? .55 : .3;
-    if (movement < Math.max(70, fix.accuracy * 2)) fix = { ...fix,
-      latitude: lastReliableFix.latitude + (fix.latitude - lastReliableFix.latitude) * alpha,
-      longitude: lastReliableFix.longitude + (fix.longitude - lastReliableFix.longitude) * alpha };
-  }
-  const forwardWindow = lastReliableFix ? Math.max(180, Math.min(1000,
-    (fix.timestamp - lastReliableFix.timestamp) / 1000 * 55)) : 180;
-  const match = activeTrackingRoute?.geometry && snapCarToRoad(fix, activeTrackingRoute.geometry, activeRouteAlong, forwardWindow);
-  if (match) {
-    activeRouteAlong = match.along;
-    fix = { ...fix, snappedLatitude: match.latitude, snappedLongitude: match.longitude,
-      routeAlong: match.along, routeIndex: match.segmentIndex, routeProgress: match.progress,
-      distanceToRoute: match.distance, matched: true,
-      matchedPath: trackingRoadWindow(activeTrackingRoute!.geometry, match.along) };
-  } else if (activeTrackingRoute) fix = { ...fix, matched: false };
-  const speed = fix.speed ?? 0;
-  const course = match && speed >= 1 ? match.heading : speed >= 1.5 && fix.heading != null ? fix.heading : undefined;
-  if (course != null) stableHeading = stableHeading == null ? normalizeBearing(course)
-    : interpolateBearing(stableHeading, course, speed > 3 ? .45 : .2);
-  fix = { ...fix, heading: stableHeading ?? fix.heading };
+  const fix = gpsFilter.ingest(raw, Date.now());
+  lastDropReason = gpsFilter.lastDropReason;
+  if (!diagnosticSource) recordTrackingEvent('gps', { raw, processed: fix, dropReason: lastDropReason || null,
+    transportStatus, trackingSessionId: session?.trackingSessionId ?? null, sequence: session?.sequence ?? 0,
+    orderId: session?.order.id ?? null, assignmentId: session?.order.assignmentId ?? null, foreground: inForeground() });
+  if (!fix) return null;
   lastReliableFix = fix;
   lastDropReason = '';
   listeners.forEach(listener => listener(fix));

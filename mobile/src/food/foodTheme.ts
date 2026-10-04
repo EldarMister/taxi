@@ -11,14 +11,17 @@ const pale = new Set([
   '#F2F7FD', '#F5F8FD', '#F2F9FF', '#F8FBFF', '#E9F2FF', '#EAF4FF',
   '#F1F6FD', '#EAF1FB', '#E7F3FF', '#E1F0FF', '#E8F2FF', '#EEF6FF',
   '#EAF4FF', '#DDEEFF', '#F2F3F8', '#ECECE8', '#EEF4E8',
+  '#F5F4F2', '#F5F5F5', '#F4F4F4', '#F2F2F2', '#F7F7F7', '#EEEEEE', '#F3F3F3',
 ]);
 const textDark = new Set([
   '#111318', '#3F4652', '#101D38', '#111B38', '#0B1832', '#070D16',
   '#142440', '#0A1730', '#192A48', '#152C23', '#202330',
+  '#222222', '#202020', '#212121', '#1A1A1A', '#262626', '#111111', '#333333',
 ]);
 const textMuted = new Set([
   '#8A9099', '#7A8CA8', '#63718D', '#50678A', '#556179', '#6B737D',
   '#7183A4', '#94A0B7', '#3A5A7E', '#4D6380', '#356496', '#416A95',
+  '#999999', '#999', '#888888', '#777777', '#808080', '#858585',
 ]);
 const accent = new Set(['#087FFF', '#0567D6', '#0067D9', '#1B75E6']);
 
@@ -28,6 +31,7 @@ function replaceColor(value: string, property: string, name: string, theme: Retu
   if (property === 'shadowColor') return '#000000';
   if (property.toLowerCase().includes('border')) return theme.line;
   if (property === 'backgroundColor') {
+    if (/^(selectedLabel|radioChecked|discoveryCategorySelected|filterCount)$/.test(name)) return palette.blue;
     if (accent.has(color) || color === '#111318' || color === '#101D38') return theme.accent;
     if (color === '#FF5B4D' || color === '#FF5B56' || color === '#E95757') return value;
     if (pale.has(color) || color === 'WHITE' || color === '#FFFFFFDC') {
@@ -39,6 +43,7 @@ function replaceColor(value: string, property: string, name: string, theme: Retu
     return value;
   }
   if (property === 'color' || property === 'placeholderTextColor' || property === 'textShadowColor') {
+    if (name === 'buttonText') return '#222222';
     if (name === 'promoButtonText') return theme.accentText;
     if (color === '#B74747' || color === '#C74747') return '#FF8A8A';
     if (name === 'citySlogan') return theme.ink;

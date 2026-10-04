@@ -1,5 +1,5 @@
 import React from 'react';
-import { Image, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { SpringPressable } from '../design/motion';
@@ -7,7 +7,7 @@ import { palette, radii } from '../design/tokens';
 import { fonts } from '../design/typography';
 import { useFoodStyles } from './foodTheme';
 import { FoodHeader, money } from './components';
-import { foodImage } from './assets';
+import { FoodPhoto } from './FoodPhoto';
 import type { FoodDish, FoodRestaurant } from './types';
 import { useFoodT } from './i18n';
 
@@ -34,7 +34,7 @@ export function FavoritesScreen({ restaurants, dishes, onBack, onRestaurant, onD
         {restaurants.length > 0 && <View style={s.section}>
           <Text style={s.sectionTitle}>{t('Рестораны')}</Text>
           {restaurants.map(restaurant => <SpringPressable key={restaurant.id} accessibilityRole="button" accessibilityLabel={`Открыть ресторан ${restaurant.name}`} onPress={() => onRestaurant(restaurant)} pressScale={.98} style={s.row}>
-            <Image source={foodImage(restaurant.imageKey, restaurant.imageUrl)} style={s.image} resizeMode="cover" />
+            <FoodPhoto imageKey={restaurant.imageKey} imageUrl={restaurant.imageUrl} style={s.image} resizeMode="cover" />
             <View style={s.copy}><Text style={s.name} numberOfLines={1}>{restaurant.name}</Text><Text style={s.meta} numberOfLines={1}>{t(restaurant.cuisine)} · {restaurant.etaMin}–{restaurant.etaMax} {t('мин')}</Text><Text style={s.delivery} numberOfLines={1}>{restaurant.deliveryFee ? `${t('Доставка')} ${money(restaurant.deliveryFee)}` : t('Бесплатная доставка')}</Text></View>
             <Ionicons name="chevron-forward" size={20} color={palette.muted} />
           </SpringPressable>)}
@@ -42,7 +42,7 @@ export function FavoritesScreen({ restaurants, dishes, onBack, onRestaurant, onD
         {dishes.length > 0 && <View style={s.section}>
           <Text style={s.sectionTitle}>{t('Блюда')}</Text>
           {dishes.map(({ restaurant, dish }) => <SpringPressable key={`${restaurant.id}:${dish.id}`} accessibilityRole="button" accessibilityLabel={`Открыть блюдо ${dish.name} из ${restaurant.name}`} onPress={() => onDish(restaurant, dish)} pressScale={.98} style={s.row}>
-            <Image source={foodImage(dish.id, dish.imageUrl, dish.imageKey)} style={s.image} resizeMode="cover" />
+            <FoodPhoto imageKey={dish.id} imageUrl={dish.imageUrl} fallbackKey={dish.imageKey} style={s.image} resizeMode="cover" />
             <View style={s.copy}><Text style={s.name} numberOfLines={1}>{dish.name}</Text><Text style={s.meta} numberOfLines={1}>{restaurant.name} · {dish.portion}</Text><Text style={s.delivery}>{money(dish.price)}</Text></View>
             <Ionicons name="chevron-forward" size={20} color={palette.muted} />
           </SpringPressable>)}

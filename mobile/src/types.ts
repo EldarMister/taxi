@@ -68,9 +68,10 @@ export type OrderStatus =
   | "COMPLETED"
   | "CANCELLED"
   | "NO_DRIVER";
-export type DriverLocation = Coordinate & { driverId: string; timestamp: number; receivedAt: number; accuracy: number; heading?: number; speed?: number;
-  tripId?: string; trackingSessionId?: string; trackingStartedAt?: number; sequence?: number; measuredAt?: number; accuracyM?: number; speedMps?: number; bearingDeg?: number;
+export type DriverLocation = Coordinate & { driverId: string; timestamp: number; receivedAt: number; accuracy: number | null; heading?: number; speed?: number;
+  tripId?: string; trackingSessionId?: string; trackingStartedAt?: number; sequence?: number; measuredAt?: number; accuracyM?: number | null; speedMps?: number | null; bearingDeg?: number;
   schemaVersion?: 1; orderId?: string; assignmentId?: string; trackingStartedAtMs?: number; measuredAtMs?: number; courseDeg?: number | null;
+  courseAccuracyDeg?: number | null; courseSource?: 'gps' | 'displacement' | null;
   stateVersion?: number; receivedAtMs?: number; routeIndex?: number; routeProgress?: number; distanceToRoute?: number; matched?: boolean; matchedPath?: Coordinate[] };
 export type DriverLocationUpdate = {
   schemaVersion: 1;
@@ -84,6 +85,9 @@ export type DriverLocationUpdate = {
   accuracyM: number | null;
   speedMps: number | null;
   courseDeg: number | null;
+  /** Degrees from true north; accuracy is null when the GPS provider does not expose it. */
+  courseAccuracyDeg?: number | null;
+  courseSource?: 'gps' | 'displacement' | null;
   measuredAtMs: number;
   routeIndex?: number;
   routeProgress?: number;

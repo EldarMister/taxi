@@ -10,7 +10,9 @@ type LeavingPage = { routeKey: string; direction: ScreenDirection };
 
 const isRestaurantPage = (routeKey: string) => routeKey.startsWith('restaurant:');
 const isDishPage = (routeKey: string) => routeKey.startsWith('dish:');
-const isSheetPage = (routeKey: string) => routeKey === 'cart' || isDishPage(routeKey);
+// DishScreen owns its sheet animation. CartScreen is a regular full screen;
+// skipping its transition used to produce an abrupt cut into/out of the cart.
+const isSheetPage = isDishPage;
 const preservesLocalState = (routeKey: string) => routeKey === 'restaurants' || routeKey === 'favorites' || isRestaurantPage(routeKey);
 
 /**
@@ -34,7 +36,7 @@ export function ScreenTransition({ routeKey, direction, children }: {
 
   pages.set(routeKey, { node: children });
   if (isSheetPage(routeKey) && previousRoute.current !== routeKey) {
-    sheetUnderlay.current = preservesLocalState(previousRoute.current) ? previousRoute.current
+    sheetUnderlay.current = preservesLocalState(previousRoute.current) || previousRoute.current === 'cart' ? previousRoute.current
       : [...pages.keys()].reverse().find(isRestaurantPage) ?? 'restaurants';
   }
 
@@ -46,6 +48,7 @@ export function ScreenTransition({ routeKey, direction, children }: {
     }
   }
   for (const key of pages.keys()) {
+    if (isSheetPage(routeKey) && key === sheetUnderlay.current) continue;
     if (!preservesLocalState(key) && key !== routeKey && key !== previousRoute.current && key !== leaving?.routeKey) pages.delete(key);
   }
 

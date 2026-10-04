@@ -43,7 +43,7 @@ async function setup(t, options = {}) {
   const requests = [], posts = [], alerts = [], writes = [], intervals = new Map(), timeouts = new Map(), backListeners = new Set(), appListeners = new Set();
   let keyboardDismisses = 0;
   const values = new Map(Object.entries(options.saved ?? {}).map(([key, state]) => [key, clone(state)]));
-  let activeOrder = options.activeOrder ?? null, history = options.history ?? [], nextId = 0, renderer, unmounted = false, nextWriteGate;
+  let activeOrder = options.activeOrder ?? null, activeOrders = options.activeOrders ?? (options.activeOrder ? [options.activeOrder] : []), history = options.history ?? [], nextId = 0, renderer, unmounted = false, nextWriteGate;
   const native = {
     View: 'View',
     Alert: { alert: (...args) => alerts.push(args) },
@@ -59,6 +59,7 @@ async function setup(t, options = {}) {
       if (url === '/content/banners') return Promise.resolve({ banners: clone(options.banners ?? []) });
       if (url === '/food/catalog') return Promise.resolve(clone(catalog));
       if (url === '/food/orders/active') return Promise.resolve(clone(activeOrder));
+      if (url === '/food/orders/active-all') return Promise.resolve(clone(activeOrders));
       if (url === '/food/orders/history') return Promise.resolve(clone(history));
       const found = history.find(item => url === `/food/orders/${item.id}`) ?? (activeOrder && url === `/food/orders/${activeOrder.id}` ? activeOrder : null);
       if (found) return Promise.resolve(clone(found));
@@ -67,6 +68,13 @@ async function setup(t, options = {}) {
     post: (url, body) => { const pending = deferred(); posts.push({ url, body: clone(body), ...pending }); return pending.promise; },
   };
   const screens = Object.fromEntries(screenNames.map(name => [name, props => React.createElement(name, props)]));
+  screens.DishScreen = props => {
+    React.useEffect(() => {
+      const listener = native.BackHandler.addEventListener('hardwareBackPress', () => { props.onBack(); return true; });
+      return () => listener.remove();
+    }, [props.onBack]);
+    return React.createElement('DishScreen', props);
+  };
   const modules = {};
   function load(file) {
     if (modules[file]) return modules[file];
@@ -87,6 +95,10 @@ async function setup(t, options = {}) {
         if (id === '../ui') return { tr: () => text => text };
         if (id === '../address') return addressExports;
         if (id === './cart') return load('cart.ts');
+        if (id === './dishOptions') return load('dishOptions.ts');
+      if (id === './promotions') return load('promotions.ts');
+        if (id === './checkoutDetails') return load('checkoutDetails.ts');
+        if (id === './FoodAddressPicker') return { FoodAddressPicker: props => React.createElement('FoodAddressPicker', props) };
         if (id === './storage') return {
           readFoodState: async userId => clone(values.get(userId) ?? null),
           writeFoodState: async (userId, state) => {
@@ -121,7 +133,7 @@ async function setup(t, options = {}) {
     get transition() { return renderer.root.findByType('ScreenTransition').props; },
     press: async (callback, ...args) => act(async () => { h.view[callback](...args); }),
     alertButton: async label => act(async () => { const alert = alerts.at(-1); assert.ok(alert, 'expected a confirmation'); const button = alert[2].find(item => item.text === label); assert.ok(button, label); button.onPress?.(); }),
-    resolvePost: async (index, result) => act(async () => { activeOrder = result.status === 'COMPLETED' || result.status === 'CANCELLED' ? null : result; posts[index].resolve(result); }),
+    resolvePost: async (index, result) => act(async () => { activeOrders = (result.orders ?? [result]).filter(item => !['COMPLETED', 'CANCELLED'].includes(item.status)); activeOrder = activeOrders[0] ?? null; posts[index].resolve(result); }),
     rejectPost: async (index, error = new Error('Соединение потеряно')) => act(async () => posts[index].reject(error)),
     change: async changes => { Object.assign(props, changes); await act(async () => renderer.update(React.createElement(FoodExperience, props))); },
     hardwareBack: async () => act(async () => { [...backListeners].reverse().some(listener => listener()); }),
@@ -138,10 +150,52 @@ async function checkout(h, { quantity = 1, optionIds = [] } = {}) {
   await h.press('onRestaurant', restaurant);
   await h.press('onDish', mainDish);
   await h.press('onAdd', mainDish, quantity, optionIds);
+  assert.equal(h.screen, 'RestaurantScreen');
+  await h.press('onCart');
   assert.equal(h.screen, 'CartScreen');
   await h.press('onCheckout');
   assert.equal(h.screen, 'CheckoutScreen');
 }
+
+test('rapid catalog presses and cart deltas retain every update across all screens', async t => {
+  const h = await setup(t);
+  await h.press('onFood'); await h.press('onRestaurant', restaurant);
+  const add = h.view.onAdd;
+  await act(async () => { for (let i = 0; i < 12; i++) add(mainDish); });
+  assert.equal(h.view.dishQuantities[mainDish.id], 12);
+  const decrease = h.view.onDecrease;
+  await act(async () => { for (let i = 0; i < 3; i++) decrease(mainDish); add(mainDish); });
+  assert.equal(h.view.dishQuantities[mainDish.id], 10);
+  await h.press('onCart');
+  const change = h.view.onQuantityDelta;
+  await act(async () => { for (let i = 0; i < 5; i++) change('philadelphia:', 1); });
+  assert.equal(h.view.lines[0].quantity, 15);
+  await h.press('onBack');
+  assert.equal(h.view.dishQuantities[mainDish.id], 15);
+  const minus = h.view.onDecrease;
+  await act(async () => { for (let i = 0; i < 15; i++) minus(mainDish); });
+  assert.equal(h.view.cartLines.length, 0);
+  assert.equal(h.view.cartCount, 0);
+});
+
+test('required configuration opens before first add and adding closes the dish to its origin', async t => {
+  const configuredCatalog = clone(catalog);
+  const dish = configuredCatalog.restaurants[0].dishes[0];
+  dish.defaultOptionIds = [];
+  dish.optionGroups = [{ id: 'sauce', name: 'Соус', optionIds: ['soy', 'ginger'], minSelected: 1, maxSelected: 1 }];
+  const h = await setup(t, { request: url => url === '/food/catalog' ? configuredCatalog : undefined });
+  await h.press('onFood'); await h.press('onRestaurant', configuredCatalog.restaurants[0]);
+  await h.press('onAdd', dish);
+  assert.equal(h.screen, 'DishScreen');
+  await h.press('onAdd', dish, 2, []);
+  assert.equal(h.screen, 'DishScreen');
+  await h.press('onAdd', dish, 2, ['ginger']);
+  assert.equal(h.screen, 'RestaurantScreen');
+  assert.equal(h.view.dishQuantities[dish.id], 2);
+  await h.press('onAdd', dish);
+  assert.equal(h.view.dishQuantities[dish.id], 3);
+  assert.deepEqual(clone(h.view.cartLines[0].optionIds), ['ginger']);
+});
 
 test('food experience follows the selected dark theme on its background and status bar', async t => {
   const h = await setup(t, { dark: true });
@@ -149,7 +203,7 @@ test('food experience follows the selected dark theme on its background and stat
   assert.equal(h.renderer.root.findByType('StatusBar').props.style, 'light');
 });
 
-test('home shows at most three configured active banners and removes them after a live content update', async t => {
+test('catalog keeps configured active banners and removes them after a live content update', async t => {
   let banners = [
     { id: 'hidden', active: false, sortOrder: 0 },
     { id: 'third', active: true, sortOrder: 3 },
@@ -158,7 +212,8 @@ test('home shows at most three configured active banners and removes them after 
     { id: 'second', active: true, sortOrder: 2 },
   ];
   const h = await setup(t, { request: url => url === '/content/banners' ? { banners } : undefined });
-  assert.deepEqual(clone(h.view.banners.map(banner => banner.id)), ['first', 'second', 'third']);
+  await h.press('onFood');
+  assert.deepEqual(clone(h.view.banners.map(banner => banner.id)), ['first', 'second', 'third', 'fourth']);
   banners = [];
   await h.change({ contentRevision: 1 });
   assert.deepEqual(clone(h.view.banners), []);
@@ -167,13 +222,46 @@ test('home shows at most three configured active banners and removes them after 
 test('configured banners open their actual restaurant, food catalog, or taxi service', async t => {
   let taxi = 0;
   const h = await setup(t, { props: { onTaxi: () => { taxi++; } } });
+  await h.press('onFood');
   await h.press('onBanner', { actionType: 'TAXI' });
   assert.equal(taxi, 1);
   await h.press('onBanner', { actionType: 'RESTAURANT', restaurantId: 'kfc' });
   assert.equal(h.screen, 'RestaurantScreen'); assert.equal(h.view.restaurant.id, 'kfc');
-  await h.change({ entry: { screen: 'home', key: 2 } });
+  await h.change({ entry: { screen: 'restaurants', key: 2 } });
   await h.press('onBanner', { actionType: 'FOOD' });
   assert.equal(h.screen, 'RestaurantsScreen');
+});
+
+test('catalog favorite actions and configured promotions preserve the existing shared cart and origin', async t => {
+  const promotion = { id: 'merchant-promo', active: true, sortOrder: 1, actionType: 'RESTAURANT', restaurantId: 'kfc', title: 'Живая акция' };
+  const h = await setup(t, { banners: [promotion] });
+  await h.press('onFood');
+  await h.press('onRestaurant', restaurant);
+  await h.press('onAdd', mainDish);
+  await h.press('onBack');
+  assert.equal(h.screen, 'RestaurantsScreen');
+  assert.equal(h.view.cartCount, 1); assert.equal(h.view.cartTotal, 520);
+  assert.deepEqual(clone(h.view.cartLines), [{ dishId: mainDish.id, quantity: 1, optionIds: [] }]);
+  assert.deepEqual(clone(h.view.banners), [promotion]);
+  await h.press('onToggleFavorite', otherRestaurant);
+  assert.deepEqual(clone(h.view.favoriteIds), ['kfc']);
+  assert.equal(h.view.favoriteCount, 1);
+  await h.press('onFavorites');
+  assert.deepEqual(clone(h.view.restaurants.map(value => value.id)), ['kfc']);
+  await h.press('onBack');
+  await h.press('onBanner', promotion);
+  assert.equal(h.screen, 'RestaurantScreen'); assert.equal(h.view.restaurant.id, 'kfc');
+  assert.equal(h.view.favorite, true); assert.equal(h.view.cartCount, 1); assert.equal(h.view.cartRestaurant.id, restaurant.id);
+  await h.press('onBack');
+  assert.equal(h.screen, 'RestaurantsScreen');
+  await h.press('onCart');
+  assert.equal(h.screen, 'CartScreen'); assert.equal(h.view.restaurant.id, restaurant.id);
+  assert.deepEqual(clone(h.view.lines), [{ dishId: mainDish.id, quantity: 1, optionIds: [] }]);
+  await h.press('onBack');
+  assert.equal(h.screen, 'RestaurantsScreen');
+  await h.press('onToggleFavorite', otherRestaurant);
+  assert.deepEqual(clone(h.view.favoriteIds), []); assert.equal(h.view.favoriteCount, 0);
+  assert.equal(h.view.cartCount, 1);
 });
 
 test('delivery terms open from the catalog dock with the checkout address and current cart', async t => {
@@ -194,6 +282,25 @@ test('delivery terms open from the catalog dock with the checkout address and cu
   await act(async () => h.renderer.root.findByType('DeliveryInfoSheet').props.onClose());
   await h.press('onCart');
   assert.equal(h.view.comment, undefined, 'order wishes are edited at checkout, not in the cart');
+});
+
+test('restaurant delivery conditions use the viewed restaurant without counting another restaurant cart', async t => {
+  const h = await setup(t);
+  await h.press('onFood');
+  await h.press('onRestaurant', restaurant);
+  await h.press('onDeliveryInfo');
+  let sheet = h.renderer.root.findByType('DeliveryInfoSheet');
+  assert.equal(sheet.props.restaurant.id, restaurant.id);
+  assert.deepEqual(clone(sheet.props.lines), []);
+  await act(async () => sheet.props.onClose());
+  await h.press('onAdd', mainDish);
+  await h.press('onBack');
+  await h.press('onRestaurant', otherRestaurant);
+  await h.press('onDeliveryInfo');
+  sheet = h.renderer.root.findByType('DeliveryInfoSheet');
+  assert.equal(sheet.props.restaurant.id, otherRestaurant.id);
+  assert.deepEqual(clone(sheet.props.lines), []);
+  assert.equal(h.view.cartCount, 1);
 });
 
 test('food favorites list saved restaurants and dishes and return to the list after opening either', async t => {
@@ -323,6 +430,22 @@ test('checkout sends only street, house, apartment and city for a long saved add
   await h.resolvePost(0, order());
 });
 
+test('checkout sends the selected delivery coordinates and drops an old point after an address-only edit', async t => {
+  const h = await setup(t, { props: { defaultPoint: { latitude: 42.8, longitude: 74.6, address: 'Другой адрес' } } });
+  await checkout(h);
+  await h.press('onSubmit');
+  assert.equal(h.posts[0].body.deliveryPoint, undefined, 'a taxi pickup is never used as the food destination');
+  await h.rejectPost(0);
+  await h.press('onDetails', { ...h.view.details, address: 'улица Киевская, 77', addressPoint: { latitude: 42.874, longitude: 74.609 } });
+  await h.press('onSubmit');
+  assert.deepEqual(h.posts[1].body.deliveryPoint, { latitude: 42.874, longitude: 74.609, address: 'улица Киевская, 77' });
+  await h.rejectPost(1);
+  await h.press('onDetails', { ...h.view.details, address: 'улица Токтогула, 88' });
+  await h.press('onSubmit');
+  assert.equal(h.posts[2].body.deliveryPoint, undefined, 'editing address text invalidates its old map point');
+  await h.resolvePost(2, order());
+});
+
 test('saved cart, address and favorites restore before navigation and survive quantity changes', async t => {
   const saved = { restaurantId: 'sushi-roll', lines: [{ dishId: 'philadelphia', quantity: 3, optionIds: ['ginger'] }], favorites: ['sushi-roll'], favoriteDishes: ['sushi-roll:philadelphia'], address: 'ул. Советская 24' };
   const h = await setup(t, { saved: { 'client-a': saved } });
@@ -431,18 +554,75 @@ test('the shared cart opens from the restaurant catalog and returns to its actua
   assert.equal(h.view.restaurant.id, 'sushi-roll');
 });
 
-test('changing restaurants requires confirmation; cancel retains the old cart and replace keeps only new dishes', async t => {
+test('adding dishes from another restaurant keeps both carts and switches between their quantities and instructions', async t => {
   const h = await setup(t);
   await h.press('onFood'); await h.press('onRestaurant', restaurant); await h.press('onAdd', mainDish);
   await h.press('onBack'); await h.press('onRestaurant', otherRestaurant); await h.press('onAdd', otherDish);
-  assert.equal(h.alerts.length, 1);
-  assert.equal(h.values.get('client-a').restaurantId, 'sushi-roll');
-  await h.alertButton('Оставить');
-  assert.equal(h.values.get('client-a').lines[0].dishId, 'philadelphia');
-  await h.press('onAdd', otherDish); await h.alertButton('Заменить');
+  assert.equal(h.alerts.length, 0);
+  assert.equal(h.view.cartRestaurantCount, 2);
   await h.press('onCart');
   assert.equal(h.view.restaurant.id, 'kfc');
   assert.deepEqual(clone(h.view.lines), [{ dishId: 'burger', quantity: 1, optionIds: [] }]);
+  await h.press('onDetails', { ...h.view.details, restaurantComment: 'Без соуса', cutleryCount: 1 });
+  await h.press('onSelectRestaurant', 'sushi-roll');
+  assert.equal(h.view.lines[0].dishId, 'philadelphia');
+  assert.equal(h.view.details.restaurantComment, undefined);
+  await h.press('onQuantityDelta', 'philadelphia:', 1);
+  await h.press('onDetails', { ...h.view.details, restaurantComment: 'Больше имбиря', cutleryCount: 2 });
+  await h.press('onSelectRestaurant', 'kfc');
+  assert.equal(h.view.details.restaurantComment, 'Без соуса');
+  assert.equal(h.view.details.cutleryCount, 1);
+  assert.equal(h.view.lines[0].quantity, 1);
+  await h.press('onSelectRestaurant', 'sushi-roll');
+  assert.equal(h.view.lines[0].quantity, 2);
+  assert.equal(h.view.details.cutleryCount, 2);
+  assert.equal(h.values.get('client-a').carts.length, 2);
+});
+
+test('one confirmation creates both restaurant orders, preserves retry keys and clears both carts only after success', async t => {
+  const h = await setup(t);
+  await h.press('onFood'); await h.press('onRestaurant', restaurant); await h.press('onAdd', mainDish);
+  await h.press('onBack'); await h.press('onRestaurant', otherRestaurant); await h.press('onAdd', otherDish); await h.press('onCart');
+  await h.press('onDetails', { ...h.view.details, restaurantComment: 'Без лука' });
+  await h.press('onCheckout'); await h.press('onSubmit');
+  assert.equal(h.posts[0].url, '/food/orders/batch');
+  const bodies = clone(h.posts[0].body.orders);
+  assert.equal(bodies.length, 2);
+  assert.deepEqual(bodies.map(item => item.restaurantId), ['kfc', 'sushi-roll']);
+  assert.notEqual(bodies[0].requestId, bodies[1].requestId);
+  assert.match(bodies[0].comment, /Без лука/);
+  assert.equal(bodies[1].comment, '');
+  assert.equal(h.writes.at(-1).state.carts.length, 2);
+  assert.ok(bodies[0].requestId.startsWith(h.writes.at(-1).state.pending.requestId));
+  await h.rejectPost(0);
+  assert.equal(h.values.get('client-a').carts.length, 2);
+  await h.press('onSubmit');
+  assert.deepEqual(clone(h.posts[1].body.orders), bodies);
+  const submitted = [order('kfc-order', { restaurant: otherRestaurant }), order('sushi-order')];
+  await h.resolvePost(1, { orders: submitted, total: 820, currency: 'KGS' });
+  assert.equal(h.screen, 'FoodOrderScreen');
+  assert.equal(h.view.relatedOrders.length, 2);
+  await h.press('onSelectOrder', submitted[1]);
+  assert.equal(h.view.order.id, 'sushi-order');
+  assert.deepEqual(clone(h.values.get('client-a').carts), []);
+  assert.equal(h.values.get('client-a').pending, undefined);
+});
+
+test('multiple carts survive a restart and clearing one restaurant leaves the other basket intact', async t => {
+  const saved = { restaurantId: 'kfc', lines: [{ dishId: 'burger', quantity: 1, optionIds: [] }], carts: [
+    { restaurantId: 'sushi-roll', lines: [{ dishId: 'philadelphia', quantity: 2, optionIds: [] }], cutleryCount: 2 },
+    { restaurantId: 'kfc', lines: [{ dishId: 'burger', quantity: 1, optionIds: [] }], restaurantComment: 'Без соуса' },
+  ], favorites: [], favoriteDishes: [], address: 'ул. Ленина 12' };
+  const h = await setup(t, { saved: { 'client-a': saved } });
+  await h.press('onFood'); await h.press('onCart');
+  assert.equal(h.view.carts.length, 2);
+  assert.equal(h.view.restaurant.id, 'kfc');
+  assert.equal(h.view.details.restaurantComment, 'Без соуса');
+  await h.press('onClear'); await h.alertButton('Очистить');
+  assert.equal(h.view.restaurant.id, 'sushi-roll');
+  assert.equal(h.view.lines[0].quantity, 2);
+  assert.equal(h.view.details.cutleryCount, 2);
+  assert.equal(h.values.get('client-a').carts.length, 1);
 });
 
 test('cart quantity controls remove zero lines, cap quantities and clear only after confirmation', async t => {
@@ -470,6 +650,8 @@ test('cart keeps modified variants separate and quick recommendations add only t
   await h.press('onAdd', mainDish);
   await h.press('onDish', mainDish);
   await h.press('onAdd', mainDish, 1, ['ginger']);
+  assert.equal(h.screen, 'RestaurantScreen');
+  await h.press('onCart');
   assert.equal(h.screen, 'CartScreen');
   assert.deepEqual(clone(h.view.lines.map(line => [line.optionIds.join(','), line.quantity])), [['', 2], ['ginger', 1]]);
   await h.press('onQuantity', 'philadelphia:ginger', 0);
@@ -556,6 +738,22 @@ test('retrying after restart keeps delivery-only fulfillment, comment and reques
   await next.resolvePost(0, order());
 });
 
+test('a pending order saved before the redesign retains its exact request key and payload', async t => {
+  const signature = '{"restaurantId":"sushi-roll","items":[{"dishId":"philadelphia","quantity":1,"optionIds":[]}],"fulfillment":"DELIVERY","address":"ул. Ленина 12","comment":"Позвоните у ворот","paymentMethod":"CASH"}';
+  const h = await setup(t, { saved: { 'client-a': {
+    restaurantId: restaurant.id, lines: [{ dishId: mainDish.id, quantity: 1, optionIds: [] }],
+    favorites: [], favoriteDishes: [], address: 'ул. Ленина 12', resumeCheckout: true,
+    checkout: { fulfillment: 'DELIVERY', comment: 'Позвоните у ворот', paymentMethod: 'CASH' },
+    pending: { signature, requestId: 'request-before-redesign' },
+  } } });
+  assert.equal(h.screen, 'CheckoutScreen');
+  await h.press('onSubmit');
+  assert.equal(h.posts[0].body.requestId, 'request-before-redesign');
+  const { requestId: _, ...body } = h.posts[0].body;
+  assert.equal(JSON.stringify(body), signature);
+  await h.resolvePost(0, order());
+});
+
 test('a delayed refresh for an older history selection cannot replace the currently selected order', async t => {
   const oldOrder = order('old-order', { status: 'COMPLETED' });
   const nextOrder = order('next-order', { status: 'COMPLETED' });
@@ -568,4 +766,45 @@ test('a delayed refresh for an older history selection cannot replace the curren
   assert.equal(h.view.order.id, 'next-order');
   await act(async () => response.resolve({ ...oldOrder, updatedAt: '2026-09-08T09:00:00Z' }));
   assert.equal(h.view.order.id, 'next-order');
+});
+
+test('food address map returns to the same checkout and persists entrance, comments and coordinates', async t => {
+  const h = await setup(t);
+  await checkout(h);
+  await h.press('onChangeAddress');
+  const picker = () => h.renderer.root.findByType('FoodAddressPicker').props;
+  assert.equal(h.screen, 'CheckoutScreen');
+  const details = { ...picker().details, address: 'улица Байтик баатыра, 37', addressPoint: { latitude: 42.853, longitude: 74.605 }, entrance: '2', floor: '4', apartment: '18', intercom: '18К', comment: 'Позвоните у ворот', restaurantComment: 'Без лука', cutleryCount: 2 };
+  await act(async () => picker().onSave(details));
+  assert.equal(h.renderer.root.findAllByType('FoodAddressPicker').length, 0);
+  assert.deepEqual(clone(h.view.details), details);
+  await h.change({ defaultAddress: 'Другой адрес такси' });
+  assert.equal(h.view.details.address, details.address, 'a later taxi pickup does not replace the chosen delivery destination');
+  await h.runTimeouts();
+  const saved = clone(h.values.get('client-a'));
+  assert.deepEqual(saved.checkout.addressPoint, details.addressPoint);
+  await h.press('onChangeAddress');
+  await act(async () => picker().onClose());
+  assert.deepEqual(clone(h.view.details), details, 'cancelling map editing leaves the committed delivery details intact');
+  await h.unmount();
+  const restored = await setup(t, { saved: { 'client-a': saved } });
+  assert.equal(restored.screen, 'CheckoutScreen');
+  assert.deepEqual(clone(restored.view.details), details);
+  await restored.press('onSubmit');
+  const body = restored.posts[0].body;
+  assert.equal(body.fulfillment, 'DELIVERY');
+  assert.match(body.comment, /Позвоните у ворот/);
+  assert.match(body.comment, /Без лука/);
+  assert.match(body.comment, /18К/);
+  assert.equal(body.addressPoint, undefined, 'UI-only fields are never sent as unknown API properties');
+  await restored.resolvePost(0, order());
+});
+
+test('combined delivery instructions over the API limit never submit a partial order', async t => {
+  const h = await setup(t);
+  await checkout(h);
+  await h.press('onDetails', { ...h.view.details, comment: 'а'.repeat(300), restaurantComment: 'б'.repeat(300) });
+  await h.press('onSubmit');
+  assert.equal(h.posts.length, 0);
+  assert.equal(h.view.busy, false);
 });

@@ -2,8 +2,9 @@ import React, { useEffect, useRef, useState } from 'react';
 import { ArrowRight, ArrowUpRight, ChevronDown, Download } from 'lucide-react';
 import { MediaSlot } from './MediaSlot.jsx';
 
-export function ProductMark({ dark = false, small = false }) {
-  return <span className={`product-mark${dark ? ' product-mark-dark' : ''}${small ? ' product-mark-small' : ''}`} aria-hidden="true"><svg viewBox="0 0 32 32" fill="none"><path d="M5.6 24.5 15.95 6.8 26.4 24.5h-6.3l-4.15-7.2-4.13 7.2H5.6Z" fill="currentColor" /></svg></span>;
+export function ProductMark({ variant = 'brand', small = false }) {
+  const sources = { brand: '/images/atlas-brand-original.png', client: '/images/atlas-client-original.png', driver: '/images/atlas-pro-original.png', chevron: '/images/atlas-chevron-supplied.png' };
+  return <span className={`product-mark product-mark-${variant}${small ? ' product-mark-small' : ''}`} aria-hidden="true"><img src={sources[variant]} alt="" /></span>;
 }
 
 const services = [
@@ -41,7 +42,7 @@ function Device({ slot, position }) {
 
 function Services({ active, setActive }) {
   return <section className="l-services l-panel" id="possibilities">
-    <div className="l-section-heading" data-reveal><span className="l-product-label"><ProductMark /> Возможности Atlas</span><h2>Три сервиса.<br /><span>Один Atlas.</span></h2><p>Поездки, доставка и еда. Выбирайте нужное —<br className="l-desktop-break" /> остальное уже есть в Atlas.</p></div>
+    <div className="l-section-heading" data-reveal><span className="l-product-label"><ProductMark variant="chevron" /> Возможности Atlas</span><h2>Три сервиса.<br /><span>Один Atlas.</span></h2><p>Поездки, доставка и еда. Выбирайте нужное —<br className="l-desktop-break" /> остальное уже есть в Atlas.</p></div>
     <div className="l-service-stage">
       <div className="l-service-art"><img src="/images/atlas-services.png" alt="Поездки, посылки и еда — три возможности Atlas" loading="lazy" width="1536" height="1024" /></div>
       <div className="l-service-caption" aria-live="polite" aria-atomic="true"><div className="l-service-copy" key={services[active].id}><span>0{active + 1} / 03</span><h3>{services[active].title}</h3><p>{services[active].copy}</p></div><a href="#download">Попробовать Atlas <ArrowUpRight size={16} /></a></div>
@@ -56,17 +57,17 @@ export default function Landing({ downloads, DownloadCard }) {
   useReveal(root);
   return <div className="landing" ref={root}>
     <section className="l-hero l-panel">
-      <div className="l-hero-copy"><span className="l-product-label l-intro-badge"><ProductMark /> Atlas App</span><h1><HeroWords text="Весь город в одном Atlas." /></h1><p className="l-intro-description">Поездки, доставка и любимая еда — в одном приложении.</p><div className="l-actions l-intro-actions"><a className="l-button l-button-primary" href="#download"><Download size={19} strokeWidth={1.8} /> Скачать Atlas</a><a className="l-button l-button-soft" href="#possibilities">Узнать больше</a></div></div>
-      <div className="l-devices" aria-label="Места для новых скриншотов Atlas"><Device slot="clientRide" position="left" /><Device slot="clientHome" position="center" /><Device slot="clientFood" position="right" /></div>
+      <div className="l-hero-copy"><span className="l-product-label l-intro-badge"><ProductMark variant="chevron" /> Atlas App</span><h1><HeroWords text="Весь город в одном Atlas." /></h1><p className="l-intro-description">Поездки, доставка и любимая еда — в одном приложении.</p><div className="l-actions l-intro-actions"><a className="l-button l-button-primary" href="#download"><Download size={19} strokeWidth={1.8} /> Скачать Atlas</a><a className="l-button l-button-soft" href="#possibilities">Узнать больше</a></div></div>
+      <div className="l-devices" aria-label="Скриншоты приложения Atlas"><Device slot="clientRide" position="left" /><Device slot="clientHome" position="center" /><Device slot="clientFood" position="right" /></div>
     </section>
 
     <section className="l-overview l-panel"><div className="l-container"><h2 data-reveal>Один Atlas. Всё нужное рядом.</h2><div className="l-overview-grid">{services.map((service, index) => <a href="#possibilities" key={service.id} onClick={() => setActiveService(index)}><strong>{service.name}</strong><span>{service.detail}</span></a>)}</div><div className="l-overview-note" data-reveal><p>Для тех, кто едет. И тех, кто везёт.</p><span>Atlas для пассажиров и Atlas pro для водителей.</span><a href="#download" className="l-button l-button-ink">Выбрать приложение <ArrowRight size={16} /></a></div></div></section>
 
     <section className="l-pro l-panel" id="atlas-pro"><div className="l-container">
-      <div className="l-section-heading" data-reveal><span className="l-product-label"><ProductMark dark /> Atlas pro</span><h2>На линии.<br /><span>В своём ритме.</span></h2><p>Приложение для водителей, в котором всё важное<br className="l-desktop-break" /> собрано вокруг вашей работы.</p><div className="l-actions"><a href="/drivers/" className="l-button l-button-white">Начать работу</a><a href="/drivers/#driver-download" className="l-button l-button-dark">Скачать Atlas pro</a></div></div>
+      <div className="l-section-heading" data-reveal><span className="l-product-label"><ProductMark variant="chevron" /> Atlas pro</span><h2>На линии.<br /><span>В своём ритме.</span></h2><p>Приложение для водителей, в котором всё важное<br className="l-desktop-break" /> собрано вокруг вашей работы.</p><div className="l-actions"><a href="/drivers/" className="l-button l-button-white">Начать работу</a><a href="/drivers/#driver-download" className="l-button l-button-dark">Скачать Atlas pro</a></div></div>
       <div className="l-pro-preview"><MediaSlot slot="driverPreview" /></div>
       <div className="l-pro-summary" data-reveal><div><h3>От первого заказа.<br />До новых возможностей.</h3><p>Один понятный путь для каждого заказа —<br />от выхода на линию до завершения поездки.</p></div><a href="/drivers/" className="l-button l-button-dark">Инструкция <ArrowUpRight size={16} /></a></div>
-      <div className="l-pro-features"><article><span>На линии</span><h3>Заказы рядом</h3><p>Предложения поездок и доставок приходят в Atlas pro, пока вы на линии.</p><div className="l-feature-tags"><span><ProductMark small dark /> Atlas pro</span><span>Поездки</span><span>Доставка</span></div></article><article><span>В пути</span><h3>Всё по маршруту</h3><p>Откройте маршрут, отметьте подачу и ведите заказ до завершения поездки.</p><div className="l-feature-tags"><span>Подача</span><span>В пути</span><span>Завершение</span></div></article><article><span>После поездки</span><h3>Работа в деталях</h3><p>Возвращайтесь к завершённым заказам и следите за изменениями баланса.</p><div className="l-feature-tags"><span>История заказов</span><span>Баланс</span></div></article></div>
+      <div className="l-pro-features"><article><span>На линии</span><h3>Заказы рядом</h3><p>Предложения поездок и доставок приходят в Atlas pro, пока вы на линии.</p><div className="l-feature-tags"><span><ProductMark small variant="chevron" /> Atlas pro</span><span>Поездки</span><span>Доставка</span></div></article><article><span>В пути</span><h3>Всё по маршруту</h3><p>Откройте маршрут, отметьте подачу и ведите заказ до завершения поездки.</p><div className="l-feature-tags"><span>Подача</span><span>В пути</span><span>Завершение</span></div></article><article><span>После поездки</span><h3>Работа в деталях</h3><p>Возвращайтесь к завершённым заказам и следите за изменениями баланса.</p><div className="l-feature-tags"><span>История заказов</span><span>Баланс</span></div></article></div>
     </div></section>
 
     <Services active={activeService} setActive={setActiveService} />

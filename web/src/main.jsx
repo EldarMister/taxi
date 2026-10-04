@@ -37,9 +37,9 @@ function useDownloads() {
   return downloads;
 }
 
-function Logo({ light = false }) {
-  return <a className={`logo ${light ? 'logo-light' : ''}`} href="/" aria-label="Atlas — на главную">
-    <img src="/images/atlas-logo.png" alt="Atlas" />
+function Logo({ footer = false }) {
+  return <a className="logo" href="/" aria-label="Atlas — на главную">
+    <img src={footer ? '/images/atlas-chevron-supplied.png' : '/images/atlas-logo.png'} alt="Atlas" />
   </a>;
 }
 
@@ -92,7 +92,7 @@ function SiteHeader() {
         </nav>
       </details>
     </div>
-    {productsOpen && <div id="product-menu" className="product-menu"><div className="product-menu-inner"><a href="/#download" onClick={() => setProductsOpen(false)}><ProductMark /><span><strong>Atlas App</strong><small>Поездки, доставка и еда</small></span><ArrowUpRight size={17} /></a><a href="/drivers/" onClick={() => setProductsOpen(false)}><ProductMark dark /><span><strong>Atlas pro</strong><small>Приложение для водителей</small></span><ArrowUpRight size={17} /></a><a href="/#possibilities" onClick={() => setProductsOpen(false)}><span className="product-menu-art"><img src="/images/atlas-services.png" alt="" /></span><span><strong>Возможности</strong><small>Три сервиса в одном месте</small></span><ArrowUpRight size={17} /></a></div></div>}
+    {productsOpen && <div id="product-menu" className="product-menu"><div className="product-menu-inner"><a href="/#download" onClick={() => setProductsOpen(false)}><ProductMark variant="client" /><span><strong>Atlas App</strong><small>Поездки, доставка и еда</small></span><ArrowUpRight size={17} /></a><a href="/drivers/" onClick={() => setProductsOpen(false)}><ProductMark variant="driver" /><span><strong>Atlas pro</strong><small>Приложение для водителей</small></span><ArrowUpRight size={17} /></a><a href="/#possibilities" onClick={() => setProductsOpen(false)}><span className="product-menu-art"><img src="/images/atlas-services.png" alt="" /></span><span><strong>Возможности</strong><small>Три сервиса в одном месте</small></span><ArrowUpRight size={17} /></a></div></div>}
   </header>;
 }
 
@@ -100,7 +100,7 @@ function SiteFooter() {
   return <footer className="site-footer">
     <div className="container footer-grid">
       <div className="footer-brand">
-        <Logo />
+        <Logo footer />
         <p>Город ближе, когда всё нужное рядом.</p>
       </div>
       <div><strong>Продукт</strong><a href="/#possibilities">Возможности</a><a href="/#download">Скачать Atlas</a><a href="/drivers/">Atlas pro для водителей</a></div>
@@ -128,7 +128,7 @@ function DownloadCard({ variant, downloads, compact = false }) {
   const apkUrl = config.apk || (info.available ? info.path : '');
   return <div className={`download-card ${compact ? 'download-compact' : ''}`}>
     <div className="download-card-top">
-      <span className="app-icon"><ProductMark dark={isDriver} /></span>
+      <span className="app-icon"><ProductMark variant={variant} /></span>
       <span className="download-card-name"><strong>{isDriver ? 'Atlas pro' : 'Atlas'}</strong><small>{isDriver ? 'Для водителей' : 'Для пассажиров'}</small></span>
       {info.version && <span className="version">v{info.version}</span>}
     </div>
@@ -151,14 +151,14 @@ function DownloadCard({ variant, downloads, compact = false }) {
 
 function Drivers({ downloads }) {
   return <>
-    <section className="subhero driver-subhero"><div className="container driver-subhero-grid"><div><a className="back-link" href="/"><ArrowLeft size={17} /> На главную</a><span className="eyebrow"><ProductMark dark small /> Atlas pro · водителям</span><h1>Работайте<br /><span>в своём ритме.</span></h1><p>Получайте предложения поездок и доставок, стройте маршрут и следите за балансом в отдельном приложении Atlas pro.</p><a className="button button-primary" href="#driver-download">Скачать Atlas pro <ArrowDown size={18} /></a></div><div className="driver-subhero-visual"><MediaSlot slot="driverPhone" className="driver-media-slot" /></div></div></section>
+    <section className="subhero driver-subhero"><div className="container driver-subhero-grid"><div><a className="back-link" href="/"><ArrowLeft size={17} /> На главную</a><span className="eyebrow"><ProductMark variant="driver" small /> Atlas pro · водителям</span><h1>Работайте<br /><span>в своём ритме.</span></h1><p>Получайте предложения поездок и доставок, стройте маршрут и следите за балансом в отдельном приложении Atlas pro.</p><a className="button button-primary" href="#driver-download">Скачать Atlas pro <ArrowDown size={18} /></a></div><div className="driver-subhero-visual"><MediaSlot slot="driverPhone" className="driver-media-slot" /></div></div></section>
     <section className="section tutorial-section"><div className="container"><div className="section-heading"><span className="kicker">ИНСТРУКЦИЯ</span><h2>От установки<br />до первого заказа.</h2><p>Короткий путь для нового водителя Atlas pro.</p></div><div className="tutorial-grid">
       <article><span>01</span><img className="tutorial-art" src="/images/product-driver-roles.png" alt="" /><h3>Установите приложение</h3><p>Скачайте Atlas pro на Android. Если устанавливаете APK, откройте файл и разрешите установку для браузера или файлового менеджера.</p></article>
       <article><span>02</span><img className="tutorial-art" src="/images/product-driver-taxi.png" alt="" /><h3>Заполните заявку</h3><p>Войдите по номеру телефона и SMS-коду. Укажите данные о себе и транспорте, добавьте запрошенные фотографии и документы.</p></article>
       <article><span>03</span><img className="tutorial-art" src="/images/product-driver-cargo.png" alt="" /><h3>Дождитесь проверки</h3><p>Команда Atlas проверит заявку и назначит доступный класс автомобиля. До подтверждения выйти на линию нельзя.</p></article>
       <article><span>04</span><img className="tutorial-art" src="/images/product-driver-taxi.png" alt="" /><h3>Выходите на линию</h3><p>После подтверждения проверьте геолокацию, виды заказов и депозит. Переключите статус на «На линии», чтобы получать предложения.</p></article>
       <article><span>05</span><img className="tutorial-art" src="/images/product-driver-courier.png" alt="" /><h3>Выполняйте заказы</h3><p>Посмотрите маршрут и цену, примите заказ, затем отмечайте этапы: «Приехал», «Начать» и «Завершить».</p></article>
-      <article className="tutorial-help"><span>?</span><ProductMark dark /><h3>Если что-то не получается</h3><p>Проверьте связь, доступ к геолокации и статус заявки. В приложении откройте раздел «Поддержка».</p></article>
+      <article className="tutorial-help"><span>?</span><ProductMark variant="driver" /><h3>Если что-то не получается</h3><p>Проверьте связь, доступ к геолокации и статус заявки. В приложении откройте раздел «Поддержка».</p></article>
     </div></div></section>
     <section id="driver-download" className="section driver-download-section"><div className="container driver-download-grid"><div><span className="kicker">НАЧНИТЕ С ATLAS PRO</span><h2>Ваш следующий заказ начинается здесь.</h2><p>Выберите доступный способ установки. Ссылки на магазины появятся после публикации приложения.</p></div><DownloadCard variant="driver" downloads={downloads} compact /></div></section>
   </>;

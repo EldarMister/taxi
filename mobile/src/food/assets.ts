@@ -1,5 +1,6 @@
 import type { ImageSourcePropType } from 'react-native';
 import { api } from '../api';
+import { foodPhotoRegion } from './foodPhotography';
 
 const images: Record<string, ImageSourcePropType> = {
   'homepage-car': require('../../assets/food/homepage-car.png'),
@@ -41,5 +42,5 @@ export function foodImage(key?: string | null, imageUrl?: string | null, fallbac
   const url = imageUrl?.trim();
   if (url?.startsWith('/api/content/media/')) return { uri: `${api.socketUrl}${url}` };
   if (url && /^https?:\/\//i.test(url)) return { uri: url };
-  return images[key ?? ''] ?? images[fallbackKey ?? ''] ?? images['restaurant-sushi'];
+  return foodPhotoRegion(key, fallbackKey)?.source ?? images[key ?? ''] ?? images[fallbackKey ?? ''] ?? foodPhotoRegion('restaurant-sushi')!.source;
 }

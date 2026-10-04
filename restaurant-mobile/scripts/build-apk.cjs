@@ -1,0 +1,17 @@
+const fs = require('node:fs');
+const path = require('node:path');
+const { spawnSync } = require('node:child_process');
+const root = path.resolve(__dirname, '..');
+const android = path.join(root, 'android');
+const env = { ...process.env, APP_ENV: 'production', NODE_ENV: 'production' };
+const studioJava = 'C:/Program Files/Android/Android Studio/jbr';
+if (!env.JAVA_HOME && process.platform === 'win32' && fs.existsSync(studioJava)) env.JAVA_HOME = studioJava;
+const gradle = process.platform === 'win32' ? 'gradlew.bat' : './gradlew';
+const result = spawnSync(gradle, ['assembleRelease', '-PreactNativeArchitectures=arm64-v8a', '--console=plain'], { cwd: android, env, stdio: 'inherit', shell: process.platform === 'win32' });
+if (result.error) throw result.error;
+if (result.status !== 0) process.exit(result.status || 1);
+const { version } = require('../package.json');
+const destination = path.join(root, 'builds', `Atlas-Restaurant-${version}.apk`);
+fs.mkdirSync(path.dirname(destination), { recursive: true });
+fs.copyFileSync(path.join(android, 'app/build/outputs/apk/release/app-release.apk'), destination);
+console.log(`APK: ${destination}`);

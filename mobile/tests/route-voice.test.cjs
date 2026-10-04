@@ -38,6 +38,7 @@ function setup(options = {}) {
     Uint8Array, Math, setTimeout, clearTimeout,
     fetch: async (url, init) => {
       requests.push({ url, body: JSON.parse(init.body) });
+      if (options.synthesisPending) await options.synthesisPending;
       if (options.fail) return { ok: false, status: 503, headers: { get: () => 'application/json' } };
       return { ok: true, status: 200, headers: { get: () => 'audio/wav' }, arrayBuffer: async () => new Uint8Array(100).buffer };
     } });
@@ -54,6 +55,21 @@ test('Silero receives the complete distance in words and bypasses old cached aud
   app.voice.speak('Через четыреста сорок метров поверните налево на улицу Лермонтова.', { language: 'ru' });
   await app.wait(); await app.wait();
   assert.equal(app.requests.length, 1, 'the normalized phrase uses the same valid cache entry');
+  await app.voice.stop();
+});
+
+test('a delayed synthesis result is discarded before any audio when the live maneuver has expired', async () => {
+  let resolveSynthesis, relevant = true, starts = 0, stopped = 0;
+  const app = setup({ synthesisPending: new Promise(resolve => { resolveSynthesis = resolve; }) });
+  app.voice.speak('Через 100 метров поверните направо.', {
+    language: 'ru', shouldStart: () => relevant, onStart: () => starts++, onStopped: () => stopped++,
+  });
+  relevant = false;
+  resolveSynthesis();
+  await app.wait(); await app.wait();
+  assert.equal(app.players.length, 0, 'obsolete audio is not even given to the player');
+  assert.equal(starts, 0);
+  assert.equal(stopped, 1);
   await app.voice.stop();
 });
 

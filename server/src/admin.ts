@@ -8,6 +8,7 @@ import { ACTIVE_FOOD_STATUSES } from './food-domain';
 import { RealtimeEvents } from './events';
 import { OrdersService } from './orders';
 import { PrismaService } from './prisma.service';
+import { isRestaurantDelivery, syncRestaurantFoodStatus } from './restaurant-delivery-state';
 
 const person={id:true,name:true,phone:true} as const;
 const taxiInclude={client:{select:person},driver:{select:{...person,driverProfile:{select:{vehicle:true}}}},quote:{select:{tariff:true}}} as const;
@@ -72,7 +73,9 @@ export class AdminService {
       if(current.status==='CANCELLED')return;
       if(!['SEARCHING','ASSIGNED','ARRIVED'].includes(current.status))throw new ConflictException('Отмена доступна только до начала поездки');
       await tx.order.update({where:{id},data:{status:'CANCELLED',history:{create:{status:'CANCELLED',actorId:actor.id,reason:`ADMIN: ${reason}`}}}});
-      await tx.pushJob.createMany({data:[current.clientId,...(current.driverId?[current.driverId]:[])].map(userId=>({userId,event:'order:updated',orderId:id}))});
+      await syncRestaurantFoodStatus(tx,current,'CANCELLED',actor.id);
+      const recipients=[...(!isRestaurantDelivery(current)?[current.clientId]:[]),...(current.driverId?[current.driverId]:[])];
+      if(recipients.length)await tx.pushJob.createMany({data:recipients.map(userId=>({userId,event:'order:updated',orderId:id}))});
       await this.audit.record(tx,actor,'taxi.cancel','taxi-orders',id,{previousStatus:current.status,reason});
     });
     await this.ordersService.publish(id);return this.order(actor,'taxi',id);

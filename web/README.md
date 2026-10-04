@@ -22,18 +22,24 @@ The build script looks for the newest `Atlas-client-X.Y.Z.apk` and `Atlas-driver
 
 ## Add product screenshots
 
-The landing page has five neutral media slots. Put approved screenshots in `web/public/images/`, then set each `src` in `web/src/media.js` to its public path (for example, `src: '/images/atlas-home-new.png'`). Until then, each slot shows a simple Atlas placeholder without a simulated app interface.
+Product images are configured in `web/src/media.js`. The three hero phones use unchanged copies of `mobile/assets/скриншот1.jpg`, `скриншот2.jpg` and `скриншот3.jpg`, stored in `public/images/` as `atlas-screen-1.jpg`, `atlas-screen-2.jpg` and `atlas-screen-3.jpg`. The Atlas pro section uses a generated explanatory cover with separate desktop and mobile compositions. The driver guide phone still shows a neutral placeholder until an approved screenshot is supplied.
 
 | Slot | Where it appears |
 | --- | --- |
-| `clientHome` | Main phone in the hero |
-| `clientRide` | Ride phone in the hero |
-| `clientFood` | Food phone in the hero |
-| `driverPreview` | Wide Atlas pro preview |
-| `driverPhone` | Atlas pro phone |
+| `clientHome` | Center hero phone — `скриншот2.jpg` |
+| `clientRide` | Left hero phone — `скриншот1.jpg` |
+| `clientFood` | Right hero phone — `скриншот3.jpg` |
+| `driverPreview` | Atlas pro cover — landscape on desktop, portrait at 760px and below |
+| `driverPhone` | Atlas pro phone in the driver guide — placeholder |
+
+To replace an image, put it in `web/public/images/` and update its `src`. For an alternate mobile composition, also set `mobileSrc`. Cover generation prompts and source references are saved in `design/atlas-pro-cover.prompt.md`.
 
 Store buttons intentionally remain unavailable until real listing URLs are supplied.
 
 ## Brand artwork
 
-The services section uses the transparent illustration at `public/images/atlas-services.png`, created with the built-in imagegen tool. The complete final prompt is saved in `design/atlas-services.prompt.md`.
+The services section uses the original illustration at `public/images/atlas-services.png`, restored at the user's request. Its prompt is saved in `design/atlas-services.prompt.md`.
+
+Logos are original image copies. Atlas and Atlas pro app icons have rounded corners in every placement. Download cards and the product menu use `atlas-client-original.png` for Atlas and `atlas-pro-original.png` for Atlas pro. The header retains the original `atlas-logo.png` wordmark. The hero badge, Atlas pro section badge and feature chip, services badge, and footer use the supplied `atlas-chevron-supplied.png` transparent black chevron. On the dark section, a light backing makes the black image visible without recoloring it. Other general brand placements use `atlas-brand-original.png`. All three hero phones remain visible on mobile and desktop.
+
+The current Atlas pro cover assets are `atlas-pro-cover-refined.png` and `atlas-pro-cover-mobile-refined.png`. They preserve the original light screenshot appearance, with restrained graphite surroundings and a neutral A monogram avatar in the profile screen. Generation and edit prompts are recorded in `design/atlas-pro-cover.prompt.md`.

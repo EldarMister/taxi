@@ -222,9 +222,9 @@ function LegalLinks({ language }: { language: Language }) {
   const unavailable = () => Alert.alert(en ? 'Document unavailable' : ky ? 'Документ азырынча жеткиликсиз' : 'Документ пока недоступен');
   return <View style={a.legal}>
     <Text style={a.legalIntro}>{en ? 'By tapping “Continue”, you agree\nwith our' : ky ? '«Улантуу» баскычын басуу менен\nсиз биздин шарттарга макул болосуз' : 'Нажимая «Продолжить», вы соглашаетесь\nс нашими'}</Text>
-    <View style={[a.legalLinks, (en || ky) && a.legalLinksInline]}>
-      <Pressable accessibilityRole="link" style={ky && a.legalLinkCompact} onPress={() => privacyUrl ? void Linking.openURL(privacyUrl) : unavailable()}><Text style={a.privacy} numberOfLines={ky ? 1 : undefined} adjustsFontSizeToFit={ky}>{en ? 'Privacy Policy' : ky ? 'Купуялык саясаты' : 'Политикой конфиденциальности'}</Text></Pressable>
-      <Pressable accessibilityRole="link" style={ky && a.legalLinkCompact} onPress={() => termsUrl ? void Linking.openURL(termsUrl) : unavailable()}><Text style={a.privacy} numberOfLines={ky ? 1 : undefined} adjustsFontSizeToFit={ky}>{en ? 'Terms of Use' : ky ? 'Колдонуу шарттары' : 'Условиями использования'}</Text></Pressable>
+    <View style={[a.legalLinks, a.legalLinksInline, !en && !ky && a.legalLinksRussian]}>
+      <Pressable accessibilityRole="link" style={a.legalLinkCompact} onPress={() => privacyUrl ? void Linking.openURL(privacyUrl) : unavailable()}><Text style={[a.privacy, !en && !ky && a.privacyRussian]} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={.85}>{en ? 'Privacy Policy' : ky ? 'Купуялык саясаты' : 'Политикой конфиденциальности'}</Text></Pressable>
+      <Pressable accessibilityRole="link" style={a.legalLinkCompact} onPress={() => termsUrl ? void Linking.openURL(termsUrl) : unavailable()}><Text style={[a.privacy, !en && !ky && a.privacyRussian]} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={.85}>{en ? 'Terms of Use' : ky ? 'Колдонуу шарттары' : 'Условиями использования'}</Text></Pressable>
     </View>
   </View>;
 }
@@ -254,6 +254,7 @@ const a = StyleSheet.create({
   formSpacer: { flexGrow: 1, minHeight: 24 },
   legal: { alignItems: 'center', gap: 5 }, legalIntro: { color: '#929292', fontSize: 13, textAlign: 'center', lineHeight: 20, marginBottom: 3 },
   legalLinks: { alignItems: 'center', gap: 5 }, legalLinksInline: { alignSelf: 'stretch', flexDirection: 'row', justifyContent: 'center', gap: 16 }, legalLinkCompact: { flexShrink: 1 },
+  legalLinksRussian: { gap: 8 }, privacyRussian: { fontSize: 12, lineHeight: 18 },
   privacy: { color: '#E6E6E6', textDecorationLine: 'underline', fontSize: 14, textAlign: 'center', lineHeight: 21 },
   selectorAnchor: { alignSelf: 'center', width: '68%', maxWidth: 260, marginTop: 14 }, languageSelector: { minHeight: 62, borderWidth: 1, borderColor: '#515151', borderRadius: 32, backgroundColor: '#151515', flexDirection: 'row', alignItems: 'center', paddingLeft: 5, paddingRight: 12, gap: 8 },
   globeCircle: { width: 49, height: 49, borderRadius: 25, backgroundColor: '#292929', alignItems: 'center', justifyContent: 'center' }, selectedLanguage: { flex: 1, color: '#F5F5F5', fontSize: 15, fontWeight: '500' },

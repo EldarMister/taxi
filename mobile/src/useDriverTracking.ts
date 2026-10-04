@@ -6,8 +6,13 @@ import { distanceBetween, DrivingRoute } from './navigation';
 
 export type DriverLocationEvent = { orderId: string; assignmentId?: string | null; driverId: string | null; status: string;
   stateVersion?: number; serverTimeMs?: number; location: DriverLocation | null };
-const measuredAt = (point: DriverLocation) => point.measuredAtMs ?? point.measuredAt ?? point.timestamp;
-const accuracy = (point: DriverLocation) => point.accuracyM ?? point.accuracy;
+const measuredAt = (point: DriverLocation) => point.schemaVersion === 1
+  ? point.measuredAtMs ?? NaN : point.measuredAtMs ?? point.measuredAt ?? point.timestamp;
+const accuracy = (point: DriverLocation) => point.accuracyM !== undefined ? point.accuracyM : point.accuracy;
+const trackingStartedAt = (point: DriverLocation) => point.trackingStartedAtMs ?? point.trackingStartedAt;
+const monotonicNow = () => typeof performance === 'undefined' ? Date.now() : performance.now();
+type ReceivedDriverLocation = DriverLocation & { playbackAgeAtReceiptMs: number; playbackReceivedAtMs: number; playbackPositionValidated: true };
+type ReceivedFix = { position: ReceivedDriverLocation; receivedLocallyAt: number; serverTimeAtReceipt: number };
 export function validTrackingEvent(event: DriverLocationEvent, order: Order | null, now = Date.now()) {
   const p = event.location;
   return !!order && ['ASSIGNED', 'ARRIVED', 'IN_PROGRESS'].includes(order.status) && ['ASSIGNED', 'ARRIVED', 'IN_PROGRESS'].includes(event.status) && event.orderId === order.id && event.driverId === order.driver?.id
@@ -18,9 +23,23 @@ export function validTrackingEvent(event: DriverLocationEvent, order: Order | nu
     && measuredAt(p) >= 0 && measuredAt(p) <= (event.serverTimeMs ?? now) + 5000
     && (!p.tripId || p.tripId === order.id) && (!p.orderId || p.orderId === order.id)
     && (!order.assignmentId || p.assignmentId === order.assignmentId)
-    && (p.sequence == null || (Number.isInteger(p.sequence) && p.sequence > 0));
+    && (p.schemaVersion === undefined || p.schemaVersion === 1)
+    && (p.sequence == null || (Number.isInteger(p.sequence) && p.sequence > 0))
+    && (p.trackingSessionId === undefined || typeof p.trackingSessionId === 'string'
+      && p.trackingSessionId.length > 0 && p.trackingSessionId.length <= 128)
+    && (p.trackingStartedAtMs === undefined || Number.isFinite(p.trackingStartedAtMs)
+      && p.trackingStartedAtMs >= 0 && p.trackingStartedAtMs <= measuredAt(p) + 5000)
+    && (p.trackingStartedAt === undefined || Number.isFinite(p.trackingStartedAt)
+      && p.trackingStartedAt >= 0 && p.trackingStartedAt <= measuredAt(p) + 5000)
+    && (p.speedMps == null || Number.isFinite(p.speedMps) && p.speedMps >= 0 && p.speedMps <= 100)
+    && (p.courseDeg == null || Number.isFinite(p.courseDeg) && p.courseDeg >= 0 && p.courseDeg < 360)
+    && (p.courseAccuracyDeg == null || Number.isFinite(p.courseAccuracyDeg) && p.courseAccuracyDeg >= 0 && p.courseAccuracyDeg <= 180)
+    && (p.courseSource == null || p.courseSource === 'gps' || p.courseSource === 'displacement')
+    && (p.stateVersion == null || Number.isInteger(p.stateVersion) && p.stateVersion >= 0)
+    && (event.stateVersion == null || Number.isInteger(event.stateVersion) && event.stateVersion >= 0)
+    && (event.serverTimeMs == null || Number.isFinite(event.serverTimeMs));
 }
-export function newerTrackingLocation(previous: DriverLocation | null, next: DriverLocation): boolean {
+export function newerTrackingLocation(previous: DriverLocation | null, next: DriverLocation, checkDistance = true): boolean {
   if (!previous || previous.driverId !== next.driverId) return true;
   if (previous.assignmentId && next.assignmentId && previous.assignmentId !== next.assignmentId) return true;
   if (next.stateVersion != null && previous.stateVersion != null && next.stateVersion <= previous.stateVersion) return false;
@@ -29,12 +48,12 @@ export function newerTrackingLocation(previous: DriverLocation | null, next: Dri
   if (next.trackingSessionId && next.trackingSessionId === previous.trackingSessionId
     && next.sequence != null && previous.sequence != null && next.sequence <= previous.sequence) return false;
   if (next.trackingSessionId && previous.trackingSessionId && next.trackingSessionId !== previous.trackingSessionId
-    && next.trackingStartedAtMs != null && previous.trackingStartedAtMs != null
-    && next.trackingStartedAtMs <= previous.trackingStartedAtMs) return false;
+    && trackingStartedAt(next) != null && trackingStartedAt(previous) != null
+    && trackingStartedAt(next)! <= trackingStartedAt(previous)!) return false;
   const elapsed = (nextAt - oldAt) / 1000;
-  if (elapsed < .8 && next.latitude === previous.latitude && next.longitude === previous.longitude
-    && (next.speedMps ?? next.speed ?? 0) < 1) return false;
-  if (elapsed <= 30) {
+  // Stationary packets are real fresh measurements too. Accepting them keeps
+  // the age indicator current even when the filtered coordinate is unchanged.
+  if (checkDistance && elapsed <= 30) {
     const north = (next.latitude - previous.latitude) * 111195;
     const east = (next.longitude - previous.longitude) * 111195 * Math.cos(next.latitude * Math.PI / 180);
     const allowed = 35 + Math.max(0, elapsed) * 55 + Math.min(60, (accuracy(previous) ?? 0) + (accuracy(next) ?? 0));
@@ -54,8 +73,12 @@ export function trackingAgeStatus(position: DriverLocation | null, now = Date.no
   return { ageSeconds, delayed: false, unavailable: false, message: '' };
 }
 export function useClientDriverTracking(order: Order | null, enabled: boolean) {
-  const [currentFix, setCurrentFix] = useState<{ position: DriverLocation; receivedLocallyAt: number; serverTimeAtReceipt?: number } | null>(null);
-  const [now, setNow] = useState(Date.now());
+  const [currentFix, setCurrentFix] = useState<ReceivedFix | null>(null);
+  const [now, setNow] = useState(monotonicNow);
+  const acceptedFix = useRef<ReceivedFix | null>(null);
+  const pendingOutlier = useRef<DriverLocation | null>(null);
+  const retiredSessions = useRef(new Set<string>());
+  const eventVersion = useRef(0);
   const revoked = useRef('');
   const positionScope = useRef('');
   const latest = useRef({ order, enabled }); latest.current = { order, enabled };
@@ -63,18 +86,46 @@ export function useClientDriverTracking(order: Order | null, enabled: boolean) {
   const receive = useCallback((event: DriverLocationEvent) => {
     const current = latest.current.order;
     const key = current ? `${current.id}:${current.driver?.id}:${current.assignmentId ?? ''}` : '';
+    if (positionScope.current !== key) { acceptedFix.current = null; pendingOutlier.current = null; retiredSessions.current.clear(); eventVersion.current = 0; }
     if (event.orderId === current?.id && event.driverId === current?.driver?.id
       && (!current.assignmentId || current.assignmentId === event.assignmentId)
-      && !['ASSIGNED', 'ARRIVED', 'IN_PROGRESS'].includes(event.status)) { revoked.current = key; setCurrentFix(null); return; }
+      && ['SEARCHING', 'COMPLETED', 'CANCELLED', 'NO_DRIVER'].includes(event.status)
+      && (event.stateVersion == null || Number.isInteger(event.stateVersion) && event.stateVersion >= eventVersion.current)) {
+      revoked.current = key; acceptedFix.current = null; setCurrentFix(null); return;
+    }
     if (revoked.current === key) return;
     if (!latest.current.enabled || !validTrackingEvent(event, latest.current.order)) return;
+    const next = { ...event.location!, stateVersion: event.location!.stateVersion ?? event.stateVersion };
+    const old = acceptedFix.current?.position;
+    if (next.trackingSessionId && retiredSessions.current.has(next.trackingSessionId)
+      || !newerTrackingLocation(old ?? null, next, false)) return;
+    if (!newerTrackingLocation(old ?? null, next)) {
+      const candidate = pendingOutlier.current;
+      const confirms = candidate && next.trackingSessionId === candidate.trackingSessionId
+        && measuredAt(next) - measuredAt(candidate) <= 5000
+        && accuracy(next) != null && accuracy(next)! <= 25 && accuracy(candidate) != null && accuracy(candidate)! <= 25
+        && newerTrackingLocation(candidate, next);
+      if (!confirms) {
+        if (!candidate || measuredAt(next) > measuredAt(candidate)) pendingOutlier.current = next;
+        return;
+      }
+    }
+    pendingOutlier.current = null;
+    if (old?.trackingSessionId && next.trackingSessionId && old.trackingSessionId !== next.trackingSessionId) {
+      retiredSessions.current.add(old.trackingSessionId);
+    }
     positionScope.current = key;
-    const receivedLocallyAt = Date.now();
-    setCurrentFix(old => newerTrackingLocation(old?.position ?? null, event.location!)
-      ? { position: event.location!, receivedLocallyAt, serverTimeAtReceipt: event.serverTimeMs } : old);
+    eventVersion.current = Math.max(eventVersion.current, event.stateVersion ?? next.stateVersion ?? 0);
+    const receivedLocallyAt = monotonicNow(), serverTimeAtReceipt = event.serverTimeMs ?? Date.now();
+    const value: ReceivedFix = { position: { ...next,
+      playbackAgeAtReceiptMs: Math.max(0, serverTimeAtReceipt - measuredAt(next)), playbackReceivedAtMs: receivedLocallyAt,
+      playbackPositionValidated: true },
+      receivedLocallyAt, serverTimeAtReceipt };
+    acceptedFix.current = value; setCurrentFix(value); setNow(receivedLocallyAt);
   }, []);
   useEffect(() => {
-    setCurrentFix(null); revoked.current = ''; positionScope.current = '';
+    setCurrentFix(null); acceptedFix.current = null; pendingOutlier.current = null; retiredSessions.current.clear(); eventVersion.current = 0;
+    revoked.current = ''; positionScope.current = '';
     if (!scope || !order) return;
     // A v1 order contains a cached fix but no snapshot serverTimeMs. Wait for
     // the immediate authenticated GET so a skewed phone clock cannot present
@@ -83,7 +134,7 @@ export function useClientDriverTracking(order: Order | null, enabled: boolean) {
     let live = true, pending = false;
     const controller = new AbortController();
     const poll = async () => {
-      setNow(Date.now());
+      setNow(monotonicNow());
       if (!live || pending || AppState.currentState !== 'active') return;
       pending = true;
       try { const result = await api.request<DriverLocationEvent>(`/orders/${order.id}/driver-location`, { signal: controller.signal }); if (live) receive(result); }
@@ -91,7 +142,7 @@ export function useClientDriverTracking(order: Order | null, enabled: boolean) {
       finally { pending = false; }
     };
     void poll(); const timer = setInterval(() => void poll(), 5000);
-    const clock = setInterval(() => setNow(Date.now()), 1000);
+    const clock = setInterval(() => setNow(monotonicNow()), 1000);
     const subscription = AppState.addEventListener('change', state => { if (state === 'active') void poll(); });
     return () => { live = false; controller.abort(); clearInterval(timer); clearInterval(clock); subscription.remove(); };
   }, [scope, receive]);

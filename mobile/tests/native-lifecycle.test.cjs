@@ -127,14 +127,8 @@ test('foreground GPS uses a fast cached fix, precise fallback and keeps coordina
   assert.match(map, /showUserPosition && passengerView && <UserLocation visible=\{false\} onUpdate=/);
   assert.match(map, /client-user-position/);
   assert.doesNotMatch(map, /<UserLocation renderMode="native"/, 'the native puck must not paint a blue accuracy radius');
-  assert.match(map, /snapCarToRoad\(driverPosition!?, activeRoad, previousAlong, forwardWindow\)/);
-  assert.match(map, /const animatedPassenger = useAnimatedCarPosition\(passengerView \? point : null, session, road\)/);
-  assert.match(map, /<AnimatedDriverMarker point=\{markerPoint\}/, 'the animated marker owns its own renders');
-  assert.match(map, /trustedCarRoutePath\(previousRaw, point, from, roadRef\.current, fixInterval\)/);
-  assert.match(map, /trustedCarDirectPath\(previousRaw, point, from, fixInterval\)/);
-  assert.doesNotMatch(map, /roadPosition\(/, 'the passenger car cannot snap onto another route segment');
-  assert.match(map, /<ShapeSource id="client-driver-position" shape=\{shape\}/, 'the client car stays in MapLibre geography during camera gestures');
-  assert.match(map, /\{debugAccuracyShape && <ShapeSource id="driver-accuracy"/, 'the accuracy circle is gated by development diagnostics');
+  // Motion, geographic rotation and lifecycle are exercised against the actual
+  // marker/camera in map-selection.test.cjs, not pinned to a source-code pattern.
 });
 
 test('permission onboarding gates automatic push registration and persists each account flow', () => {

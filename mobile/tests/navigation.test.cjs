@@ -191,26 +191,82 @@ test('Russian voice prompts cover turns, fork, roundabout, ramps, uturn and arri
 });
 test('route, leg, maneuver and stage produce stable deduplication keys', () => {
   const progress = { stepIndex: 1, instruction: 'Поверните направо', arrived: false };
-  assert.equal(guidanceCue({ ...progress, maneuverDistance: 800 }), null);
-  assert.equal(guidanceCue({ ...progress, maneuverDistance: 620 }).text, '600 метров прямо.');
+  assert.equal(guidanceCue({ ...progress, maneuverDistance: 800 }).text, 'Продолжайте движение прямо.');
+  assert.equal(guidanceCue({ ...progress, maneuverDistance: 620 }).text, 'Продолжайте движение прямо.');
   assert.equal(guidanceCue({ ...progress, maneuverDistance: 501 }, 'ru', 7, 1).key, '7:1:1:600');
-  assert.equal(guidanceCue({ ...progress, maneuverDistance: 150 }).text, 'Через 150 метров поверните направо.');
-  assert.equal(guidanceCue({ ...progress, maneuverDistance: 95 }, 'ru', 7, 1).key, '7:1:1:200');
+  assert.equal(guidanceCue({ ...progress, maneuverDistance: 150 }).text, 'Продолжайте движение прямо.');
+  assert.equal(guidanceCue({ ...progress, maneuverDistance: 95 }, 'ru', 7, 1).key, '7:1:1:100');
   assert.equal(guidanceCue({ ...progress, maneuverDistance: 25 }, 'ru', 7, 1).key, '7:1:1:0');
-  assert.deepEqual(Array.from(guidanceCue({ ...progress, maneuverDistance: 25 }, 'ru', 7, 1).supersedes), ['7:1:1:600', '7:1:1:200']);
+  assert.deepEqual(Array.from(guidanceCue({ ...progress, maneuverDistance: 25 }, 'ru', 7, 1).supersedes), ['7:1:1:600', '7:1:1:100']);
   assert.notEqual(guidanceCue({ ...progress, maneuverDistance: 95 }, 'ru', 8, 1).key, guidanceCue({ ...progress, maneuverDistance: 95 }, 'ru', 7, 1).key);
+});
+
+test('turn speech and visible instruction both switch at 100 metres at every driving speed', () => {
+  const progress = { stepIndex: 1, instruction: 'Поверните направо', arrived: false };
+  for (const speedMps of [0, 5, 15, 30]) {
+    const far = { ...progress, speedMps, maneuverDistance: 101 };
+    assert.equal(exportsObject.distantManeuverInstruction(far), 'Двигайтесь прямо');
+    assert.equal(guidanceCue(far).text, 'Продолжайте движение прямо.');
+    const near = { ...far, maneuverDistance: 100 };
+    assert.equal(exportsObject.distantManeuverInstruction(near), progress.instruction);
+    assert.equal(guidanceCue(near).text, 'Через 100 метров поверните направо.');
+    assert.equal(guidanceCue({ ...near, maneuverDistance: 4000 }).key, guidanceCue(far).key,
+      'the straight cue deduplicates for the entire approach');
+  }
+});
+
+test('reversed provider bearings and explicit U-turn modifiers produce a U-turn, not a side turn', () => {
+  for (const type of ['turn', 'end of road', 'continue']) for (const modifier of ['left', 'right', 'sharp right', undefined]) {
+    const turn = { ...step(type, b, [b, a], modifier), maneuver: { type, modifier, location: b, bearingBefore: 355, bearingAfter: 175 } };
+    assert.equal(normalizeManeuver(turn).kind, 'uturn');
+    assert.match(maneuverText(turn), /^Развернитесь/);
+  }
+  assert.equal(normalizeManeuver(step('fork', b, [b, a], 'uturn')).kind, 'uturn');
+  assert.equal(normalizeManeuver({ ...step('turn', b, [b, c], 'sharp right'), maneuver: { type: 'turn', modifier: 'sharp right', bearingBefore: 0, bearingAfter: 145 } }).kind, 'turn');
+  assert.equal(normalizeManeuver({ ...step('roundabout', b, [b, a]), maneuver: { type: 'roundabout', bearingBefore: 0, bearingAfter: 180, exit: 3 } }).kind, 'roundabout');
+});
+
+test('a short divided-road reversal combines its two turns, but nearby streets and block turns stay separate', () => {
+  function dividedRoad(width, returningName = 'Ленина', outgoingBearing = 180) {
+    const across = point(b.latitude, b.longitude - width / (111195 * Math.cos(b.latitude * Math.PI / 180)));
+    const end = point(a.latitude, across.longitude);
+    const first = step('turn', b, [b, across], 'left');
+    first.name = ''; first.maneuver.bearingAfter = 270;
+    const second = step('turn', across, [across, end], 'left');
+    second.name = returningName; second.maneuver.bearingBefore = 270; second.maneuver.bearingAfter = outgoingBearing;
+    const depart = step('depart', a, [a, b]); depart.name = 'Ленина';
+    return { ...route, geometry: [a, b, across, end], steps: [depart, first, second, step('arrive', end, [end])] };
+  }
+  const source = dividedRoad(14), prepared = prepareRoute(source);
+  assert.equal(prepared.route.steps.length, 3);
+  assert.equal(normalizeManeuver(prepared.route.steps[1]).kind, 'uturn');
+  assert.equal(source.steps.length, 4, 'provider data is not mutated');
+  assert.equal(prepared.offsets[2], prepared.total, 'merged geometry preserves the arrival offset');
+  assert.match(routeProgress(prepared, fix(point(b.latitude - .0005, b.longitude)), { along: prepared.offsets[1] - 70, timestamp: Date.now() - 1000 }).instruction, /^Развернитесь/);
+  assert.equal(prepareRoute(dividedRoad(60)).route.steps.length, 4, 'ordinary turns around a block stay separate');
+  assert.equal(prepareRoute(dividedRoad(14, 'Другая улица')).route.steps.length, 4, 'a turn onto a different road is not called a U-turn');
+});
+
+test('reroute needs three measured fixes over two seconds and real travel, with accuracy-aware noise rejection', () => {
+  assert.equal(exportsObject.shouldReroute(1, 1000, 4000, 30, 5), false);
+  assert.equal(exportsObject.shouldReroute(3, 1000, 2999, 30, 5), false);
+  assert.equal(exportsObject.shouldReroute(3, 1000, 3000, 12, 5), true);
+  assert.equal(exportsObject.shouldReroute(20, 1000, 21000, 5, 5), false);
+  assert.equal(exportsObject.shouldReroute(3, 1000, 3000, 12, 30), false);
+  assert.equal(exportsObject.offRouteThreshold(5), 25);
+  assert.equal(exportsObject.offRouteThreshold(30), 60);
 });
 test('distant turn stays straight on screen and brief GPS jitter cannot trigger rerouting', () => {
   assert.equal(exportsObject.distantManeuverInstruction({ instruction: 'Поверните направо', maneuverDistance: 620, arrived: false }), 'Двигайтесь прямо');
   assert.equal(exportsObject.distantManeuverInstruction({ instruction: 'Поверните направо', maneuverDistance: 100, arrived: false }), 'Поверните направо');
-  assert.equal(exportsObject.shouldReroute(5, 1000, 4000, 30), false);
+  assert.equal(exportsObject.shouldReroute(2, 1000, 2000, 30), false);
   assert.equal(exportsObject.shouldReroute(5, 1000, 8000, 5), false);
   assert.equal(exportsObject.shouldReroute(5, 1000, 8000, 30), true);
 });
 
 test('a turn announces distance and the destination street without losing its name', () => {
   const instruction = maneuverText({ ...step('turn', b, [b,c], 'right'), name: 'улица Ленина' });
-  assert.equal(guidanceCue({ stepIndex: 1, instruction, arrived: false, maneuverDistance: 105 }).text, 'Через 100 метров поверните направо на улицу Ленина.');
+  assert.equal(guidanceCue({ stepIndex: 1, instruction, arrived: false, maneuverDistance: 100 }).text, 'Через 100 метров поверните направо на улицу Ленина.');
 });
 test('road names are spoken in the selected language and no stale Kyrgyz default leaks into Russian speech', () => {
   assert.equal(maneuverText({ ...step('turn', b, [b,c], 'right'), name: 'Ленин көч' }, 'ru'), 'Поверните направо');
@@ -225,6 +281,6 @@ test('Kyrgyz navigation chooses a Kyrgyz voice and speaks turns and distances in
   assert.equal(bestVoiceForLanguage(voices, 'ru'), 'ru');
   const instruction = maneuverText({ ...step('turn', b, [b, c], 'right'), name: 'Чүй проспекти' }, 'ky');
   assert.equal(instruction, 'Оңго бурулуңуз: Чүй проспекти');
-  assert.equal(guidanceCue({ stepIndex: 1, instruction, arrived: false, maneuverDistance: 105 }, 'ky').text, '100 метрден кийин оңго бурулуңуз: Чүй проспекти.');
+  assert.equal(guidanceCue({ stepIndex: 1, instruction, arrived: false, maneuverDistance: 100 }, 'ky').text, '100 метрден кийин оңго бурулуңуз: Чүй проспекти.');
   assert.equal(guidanceCue({ stepIndex: 2, instruction, arrived: true, maneuverDistance: 0 }, 'ky').text, 'Бара турган жериңизге жеттиңиз.');
 });

@@ -90,6 +90,21 @@ test('concurrent banner activation admits only three, permits partial edits and 
   await api.patch(`/api/admin/banners/${draft.body.id}`).set(headers(adminToken)).send({active:true}).expect(200);
   assert.equal(await db.banner.count({where:{active:true}}),3);
 });
+test('banner display endpoint publishes one wide or three square creatives as a single change',async()=>{
+  const selected=[];
+  for(let index=0;index<3;index++) {
+    const draft=(await api.post('/api/admin/banners').set(headers(adminToken)).send({title:`Новый набор ${index}`,imageUrl,actionType:'RESTAURANT',restaurantId,active:false}).expect(201)).body;
+    selected.push(draft.id);
+  }
+  await api.patch('/api/admin/banners/display').set(headers(clientToken)).send({ids:selected}).expect(403);
+  const previous=(await db.banner.findMany({where:{active:true}})).map(banner=>banner.id).sort();
+  await api.patch('/api/admin/banners/display').set(headers(adminToken)).send({ids:selected.slice(0,2)}).expect(400);
+  assert.deepEqual((await db.banner.findMany({where:{active:true}})).map(banner=>banner.id).sort(),previous);
+  await api.patch('/api/admin/banners/display').set(headers(adminToken)).send({ids:selected}).expect(200);
+  assert.deepEqual((await api.get('/api/content/banners').expect(200)).body.banners.map((banner:any)=>banner.id),selected);
+  await api.patch('/api/admin/banners/display').set(headers(adminToken)).send({ids:[selected[1]]}).expect(200);
+  assert.deepEqual((await api.get('/api/content/banners').expect(200)).body.banners.map((banner:any)=>banner.id),[selected[1]]);
+});
 test('food orders snapshot menu prices/photos and survive menu replacement and restaurant archive',async()=>{
   const customer=await socket(clientToken),admin=await socket(adminToken),placedEvent=once(customer,'food:order:updated'),adminEvent=once(admin,'admin:changed');
   const body={requestId:randomUUID(),restaurantId,items:[{dishId:'philadelphia',quantity:2,optionIds:['soy']}],fulfillment:'DELIVERY',address:'ул. Тестовая, 15',paymentMethod:'CASH'};

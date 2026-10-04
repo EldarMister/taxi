@@ -51,6 +51,7 @@ test('home reference controls change address, split delivery cards, and show unr
       if (id === '../design/typography') return { fonts: { medium: 'medium', bold: 'bold', semibold: 'semibold', extraBold: 'extraBold' } };
       if (id === '../ui') return { Icon: 'Icon', tr: () => value => value };
       if (id === './assets') return { foodImage: (key, url) => ({ uri: url || key }) };
+      if (id === './FoodPhoto') return { FoodPhoto: props => React.createElement('Image', props) };
       throw Error(id);
     },
   });
@@ -66,15 +67,15 @@ test('home reference controls change address, split delivery cards, and show unr
   const headerLabels = renderer.root.findByProps({ testID: 'service-home-content' }).findAllByType('Pressable')
     .slice(0, 2).map(node => node.props.accessibilityLabel);
   assert.deepEqual(headerLabels, ['Меню', 'Уведомления']);
-  assert.equal(renderer.root.findAllByType('ScrollView').length, 0);
-  assert.equal(renderer.root.findAllByType('LinearGradient').length, 1, 'the original nearby promo appears without a campaign');
-  assert.equal(renderer.root.findAllByType('SpringPressable').filter(node => node.props.accessibilityLabel === 'Быстрые заказы рядом').length, 1);
+  assert.equal(renderer.root.findAllByType('ScrollView').length, 1);
+  assert.equal(renderer.root.findAllByType('LinearGradient').length, 0, 'the nearby promo is replaced by restaurants');
+  assert.ok(renderer.root.findByProps({ testID: 'service-home-header' }));
   for (const service of ['Такси', 'Доставка', 'Грузовой', 'Еда']) assert.equal(
     renderer.root.findAllByType('SpringPressable').filter(node => node.props.accessibilityLabel === service).length, 1);
   const searchIcons = renderer.root.findByProps({ accessibilityLabel: 'Куда едем?' }).findAllByType('Icon');
   assert.equal(searchIcons.at(-1).props.name, 'chevron-forward');
   assert.equal(searchIcons.at(-1).props.color, '#4D5663');
-  assert.equal(button('Такси').props.containerStyle.height, 128, 'service cards stay compact with the promo');
+  assert.ok(button('Такси').props.containerStyle.height <= 116, 'service cards leave space for the restaurant row');
   assert.equal(renderer.root.findAllByProps({ testID: 'notification-dot' }).length, 0);
   const prompt = 'Куда едем?';
   const animatedText = () => renderer.root.findByType('AnimatedText').children.join('');
@@ -100,8 +101,6 @@ test('home reference controls change address, split delivery cards, and show unr
   await act(async () => button('Доставка').props.onPress());
   await act(async () => button('Грузовой').props.onPress());
   assert.deepEqual(actions, ['address', 'delivery', 'truck']);
-  await act(async () => button('Быстрые заказы рядом').props.onPress());
-  assert.equal(actions.at(-1), 'taxi');
   await act(async () => renderer.update(React.createElement(exports.ServiceHomeScreen, { ...props, currentAddress: 'GPS: 42.87460, 74.56980' })));
   assert.match(JSON.stringify(renderer.toJSON()), /Определяем адрес/);
   await act(async () => renderer.unmount());
@@ -116,22 +115,12 @@ test('home reference controls change address, split delivery cards, and show unr
   assert.equal(renderer.root.findAllByType('BottomPanel').length, 1);
   await act(async () => renderer.unmount());
 
-  await act(async () => { renderer = create(React.createElement(exports.ServiceHomeScreen, {
-    ...props, banners: [{ id: 'nearby', title: 'Быстрые заказы рядом!', subtitle: 'Рядом', imageKey: 'nearby-promo', actionType: 'TAXI' }],
-  })); });
-  assert.equal(renderer.root.findAllByType('LinearGradient').length, 1, 'the configured nearby promo remains visible');
-  assert.equal(renderer.root.findAllByType('SpringPressable').filter(node => node.props.accessibilityLabel === 'Быстрые заказы рядом!').length, 1);
-  await act(async () => button('Быстрые заказы рядом!').props.onPress());
-  assert.equal(actions.at(-1), 'banner:nearby');
-  await act(async () => renderer.unmount());
-
-  const promo = { id: 'promo', title: 'Новая акция', subtitle: 'Сегодня', imageKey: 'nearby-promo',
-    actionType: 'FOOD', sortOrder: 0, active: true };
-  await act(async () => { renderer = create(React.createElement(exports.ServiceHomeScreen, { ...props, banners: [promo] })); });
-  assert.equal(renderer.root.findAllByType('SpringPressable').filter(node => node.props.accessibilityLabel === promo.title).length, 1);
-  assert.equal(renderer.root.findAllByType('LinearGradient').length, 1);
-  assert.equal(renderer.root.findAllByType('ScrollView').length, 0);
-  await act(async () => button(promo.title).props.onPress());
-  assert.equal(actions.at(-1), 'banner:promo');
+  const restaurants = ['first', 'second', 'third'].map(id => ({ id, name: id, cuisine: 'Бургеры', categories: [], rating: 4.7, etaMin: 20, etaMax: 30, imageKey: 'burger' }));
+  await act(async () => { renderer = create(React.createElement(exports.ServiceHomeScreen, { ...props, restaurants, onRestaurant: restaurant => actions.push(`restaurant:${restaurant.id}`) })); });
+  assert.equal(renderer.root.findAllByType('LinearGradient').length, 0);
+  assert.equal(renderer.root.findAllByType('ScrollView').length, 1);
+  assert.equal(renderer.root.findAllByType('SpringPressable').filter(node => node.props.testID?.startsWith('home-restaurant-')).length, 3);
+  await act(async () => renderer.root.findByProps({ testID: 'home-restaurant-first' }).props.onPress());
+  assert.equal(actions.at(-1), 'restaurant:first');
   await act(async () => renderer.unmount());
 });

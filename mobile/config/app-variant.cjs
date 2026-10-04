@@ -31,7 +31,7 @@ const APP_VARIANTS = Object.freeze({
 function resolveAppVariant(value) {
   const variant = String(value || 'client').trim().toLowerCase();
   if (!Object.hasOwn(APP_VARIANTS, variant)) {
-    throw new Error(`APP_VARIANT must be "client" or "driver", received ${JSON.stringify(value)}.`);
+    throw new Error(`APP_VARIANT must be "client" or "driver", received ${JSON.stringify(value)}. Atlas Restaurant is a standalone project in restaurant-mobile.`);
   }
   return variant;
 }

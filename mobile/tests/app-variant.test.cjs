@@ -60,7 +60,7 @@ test('the driver build has an independent install identity and credentials', () 
 });
 
 test('invalid variants and incomplete production driver credentials fail before building', () => {
-  assert.throws(() => resolveAppVariant('restaurant'), /client.*driver/);
+  assert.throws(() => resolveAppVariant('unknown'), /client.*driver/);
   assert.throws(
     () => resolveAppVariantConfig({ APP_VARIANT: 'driver', APP_ENV: 'production' }),
     /DRIVER_GOOGLE_SERVICES_FILE/,
@@ -193,8 +193,8 @@ test('Expo, EAS and the checked-in Android project use the same build variant', 
   const eas = JSON.parse(read('eas.json'));
   assert.match(expoConfig, /resolveAppVariantConfig\(process\.env, existsSync\)/);
   assert.match(expoConfig, /appVariant: variant/);
-  assert.match(expoConfig, /icon: variant === 'client' \? '\.\/assets\/logo\.png' : '\.\/assets\/edu-drive-icon\.png'/);
-  assert.match(expoConfig, /adaptiveIcon: \{ foregroundImage: variant === 'client' \? '\.\/assets\/logo\.png' : '\.\/assets\/edu-drive-icon\.png'/);
+  assert.match(expoConfig, /icon: variant === 'driver' \? '\.\/assets\/edu-drive-icon\.png' : '\.\/assets\/logo\.png'/);
+  assert.match(expoConfig, /adaptiveIcon: \{ foregroundImage: variant === 'driver' \? '\.\/assets\/edu-drive-icon\.png' : '\.\/assets\/logo\.png'/);
   assert.match(runtime, /Constants\.expoConfig\?\.extra\?\.appVariant/);
   assert.match(runner, /APP_ENV: process\.env\.APP_ENV \|\| 'development'/);
   assert.match(gradle, /System\.getenv\("APP_VARIANT"\)/);

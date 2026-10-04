@@ -98,3 +98,33 @@ test('a moving car turning onto another street is not pinned to the old route', 
   const turned = matching.snapCarToRoad({ latitude: 42.0005, longitude: 73.99982, accuracy: 20, heading: 270, speed: 5 }, road, first.along);
   assert.equal(turned, null, 'a perpendicular moving course must not hold the car beside the old road');
 });
+
+test('display matching only corrects a small confident offset and leaves uncertainty or departure visible', () => {
+  const fix = { latitude: 42.0005, longitude: 74.00003, accuracyM: 2, courseDeg: 0, speedMps: 6 };
+  assert.equal(matching.navigationDisplayMatch(fix, road).longitude, 74);
+  assert.equal(matching.navigationDisplayMatch({ ...fix, courseDeg: 90 }, road), null);
+  assert.equal(matching.navigationDisplayMatch({ ...fix, courseDeg: 180 }, road), null);
+  assert.equal(matching.navigationDisplayMatch({ ...fix, courseDeg: null }, road), null);
+  assert.equal(matching.navigationDisplayMatch({ ...fix, courseAccuracyDeg: 50 }, road), null);
+  assert.equal(matching.navigationDisplayMatch({ ...fix, accuracyM: 30 }, road), null);
+  assert.equal(matching.navigationDisplayMatch({ ...fix, longitude: 74.00025 }, road), null);
+  assert.equal(matching.navigationDisplayMatch({ ...fix, matched: false }, road), null);
+  const parallel = [
+    { latitude: 42, longitude: 74 }, { latitude: 42.001, longitude: 74 },
+    { latitude: 42, longitude: 74.0001 }, { latitude: 42.001, longitude: 74.0001 },
+  ];
+  assert.equal(matching.navigationDisplayMatch({ ...fix, longitude: 74.00005 }, parallel), null, 'two similarly plausible carriageways disable visual correction');
+});
+
+test('small GPS changes at a display matching boundary cannot become full-width snap jumps', () => {
+  const scale = 111320 * Math.cos(42.0005 * Math.PI / 180);
+  const shownOffset = (metres, accuracyM = 2, courseDeg = 0) => {
+    const fix = { latitude: 42.0005, longitude: 74 + metres / scale, accuracyM, courseDeg, speedMps: 6 };
+    const shown = matching.navigationDisplayMatch(fix, road) || fix;
+    return (shown.longitude - 74) * scale;
+  };
+  assert.ok(Math.abs(shownOffset(6.2) - shownOffset(5.8)) < 1.1, '0.4m GPS noise must not create a 6m toggle');
+  assert.ok(Math.abs(shownOffset(8.01) - shownOffset(7.99)) < .1, 'leaving the distance bound is continuous');
+  assert.ok(Math.abs(shownOffset(3, 15.01) - shownOffset(3, 14.99)) < .1, 'accuracy confidence fades out');
+  assert.ok(Math.abs(shownOffset(3, 2, 40.01) - shownOffset(3, 2, 39.99)) < .1, 'a departing course fades out');
+});

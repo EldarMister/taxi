@@ -1,6 +1,8 @@
 import type { Coordinate, Language, Order, Point } from './types';
 
-export type NavigationFix = Coordinate & { timestamp: number; accuracy: number; heading?: number; speed?: number;
+export type NavigationFix = Coordinate & { timestamp: number; accuracy: number;
+  /** True-north course of travel (legacy field name); never a phone compass heading. */
+  heading?: number; speed?: number; courseAccuracyDeg?: number | null; courseSource?: 'gps' | 'displacement' | null;
   snappedLatitude?: number; snappedLongitude?: number; routeAlong?: number; routeIndex?: number;
   routeProgress?: number; distanceToRoute?: number; matched?: boolean; matchedPath?: Coordinate[] };
 export type RouteStep = {
@@ -16,13 +18,14 @@ export type NavigationProgress = {
   maneuverPassed: boolean; speedMps?: number; pendingStepIndex?: number; pendingStepCount?: number;
 };
 export const navigationConfig = {
-  offRouteMeters: 35,
-  rerouteFixes: 5,
+  offRouteMeters: 25,
+  rerouteFixes: 3,
+  maneuverWarningMeters: 100,
   turnConfirmationMeters: 35,
   turnConfirmationFixes: 2,
 } as const;
 export function offRouteThreshold(accuracy: number): number {
-  return Math.max(35, Math.min(85, Number.isFinite(accuracy) ? accuracy * 2 : 35));
+  return Math.max(navigationConfig.offRouteMeters, Math.min(85, Number.isFinite(accuracy) ? accuracy * 2 : 35));
 }
 export type NormalizedManeuver = {
   kind: 'depart' | 'arrive' | 'roundabout' | 'exit-roundabout' | 'merge' | 'fork' | 'off-ramp' | 'uturn' | 'turn' | 'continue';
@@ -47,13 +50,14 @@ export function unsupportedRouteOptions(error: unknown): boolean {
 /** OSRM's maneuver is the sole source for the arrow, visible text and speech. */
 export function normalizeManeuver(step: RouteStep): NormalizedManeuver {
   const { type, modifier, bearingBefore, bearingAfter, exit } = step.maneuver;
+  const delta = bearingDelta(bearingBefore, bearingAfter);
+  const reverses = ['turn', 'end of road', 'continue'].includes(type) && Math.abs(delta) >= 160;
   const kind: NormalizedManeuver['kind'] = type === 'arrive' || type === 'depart' ? type
     : ['roundabout', 'rotary', 'roundabout turn'].includes(type) ? 'roundabout'
     : ['exit roundabout', 'exit rotary'].includes(type) ? 'exit-roundabout'
+    : modifier === 'uturn' || type === 'uturn' || reverses ? 'uturn'
     : type === 'merge' ? 'merge' : type === 'fork' ? 'fork' : type === 'off ramp' ? 'off-ramp'
-    : modifier === 'uturn' || type === 'uturn' ? 'uturn'
     : ['turn', 'end of road', 'on ramp'].includes(type) ? 'turn' : 'continue';
-  const delta = bearingDelta(bearingBefore, bearingAfter);
   const side: NormalizedManeuver['side'] = kind === 'uturn' ? 'uturn'
     : modifier?.includes('left') ? 'left' : modifier?.includes('right') ? 'right'
     : kind === 'turn' && Math.abs(delta) > .01 ? delta < 0 ? 'left' : 'right' : 'straight';
@@ -177,7 +181,40 @@ function routeTurnContradiction(step: RouteStep, along: number, line: Coordinate
   // never silently swap a spoken left/right command based on a rendered line.
   return Math.sign(lineDelta) === Math.sign(turnDelta) && Math.sign(lineDelta) !== claimed;
 }
-export function prepareRoute(route: DrivingRoute): PreparedRoute {
+// Divided roads can encode a U-turn as two turns across a short connector.
+// Collapse only a narrow reversal onto the same road; ordinary block turns,
+// ramps and roundabout exits keep their own instructions.
+function combineUTurns(route: DrivingRoute): DrivingRoute {
+  const steps: RouteStep[] = [];
+  for (let index = 0; index < route.steps.length; index++) {
+    const incoming = steps[steps.length - 1], step = route.steps[index], next = route.steps[index + 1];
+    if (incoming && next && [step, next].every(value => ['turn', 'end of road'].includes(value.maneuver.type))) {
+      const firstDelta = bearingDelta(step.maneuver.bearingBefore, step.maneuver.bearingAfter);
+      const secondDelta = bearingDelta(next.maneuver.bearingBefore, next.maneuver.bearingAfter);
+      const reverseDelta = Math.abs(bearingDelta(step.maneuver.bearingBefore, next.maneuver.bearingAfter));
+      const connectorLength = step.geometry.slice(1).reduce((sum, point, i) => sum + distanceBetween(step.geometry[i], point), 0);
+      const beforeName = incoming.name?.trim().toLocaleLowerCase(), afterName = next.name?.trim().toLocaleLowerCase();
+      const sameRoad = !beforeName || !afterName || beforeName === afterName;
+      if (sameRoad && step.geometry.length >= 2 && connectorLength > 0 && connectorLength <= 25
+        && distanceBetween(step.maneuver.location, next.maneuver.location) <= 25
+        && Math.abs(firstDelta) >= 40 && Math.abs(firstDelta) <= 140
+        && Math.abs(secondDelta) >= 40 && Math.abs(secondDelta) <= 140
+        && Math.sign(firstDelta) === Math.sign(secondDelta) && reverseDelta >= 160
+        && Math.abs(bearingDelta(step.maneuver.bearingAfter, next.maneuver.bearingBefore)) <= 25) {
+        steps.push({ ...step, name: next.name, distanceMeters: step.distanceMeters + next.distanceMeters,
+          durationSeconds: step.durationSeconds + next.durationSeconds,
+          geometry: [...step.geometry, ...next.geometry.slice(1)],
+          maneuver: { ...step.maneuver, type: 'turn', modifier: 'uturn', bearingAfter: next.maneuver.bearingAfter } });
+        index++;
+        continue;
+      }
+    }
+    steps.push(step);
+  }
+  return steps.length === route.steps.length ? route : { ...route, steps };
+}
+export function prepareRoute(sourceRoute: DrivingRoute): PreparedRoute {
+  const route = combineUTurns(sourceRoute);
   if (route.provider !== 'osrm' || route.geometry.length < 2 || !route.steps.length) throw new Error('Маршрут не содержит данных навигации.');
   const cumulative = [0];
   for (let i = 1; i < route.geometry.length; i++) cumulative.push(cumulative[i - 1] + distanceBetween(route.geometry[i - 1], route.geometry[i]));
@@ -295,30 +332,27 @@ export function displayDistance(meters: number, language: Language = 'ru') {
   return meters >= 1000 ? `${(meters / 1000).toFixed(1)} ${language === 'en' ? 'km' : 'км'}` : `${Math.max(0, Math.round(meters / 10) * 10)} ${language === 'en' ? 'm' : 'м'}`;
 }
 export function distantManeuverInstruction(progress: NavigationProgress, language: Language = 'ru'): string {
-  return !progress.arrived && progress.maneuverDistance > 200
+  return !progress.arrived && progress.maneuverDistance > navigationConfig.maneuverWarningMeters
     ? language === 'ky' ? 'Түз жүрүңүз' : language === 'en' ? 'Continue straight' : 'Двигайтесь прямо'
     : progress.instruction;
 }
-export function shouldReroute(fixes: number, since: number, now: number, travelled: number): boolean {
-  return fixes >= navigationConfig.rerouteFixes && now - since >= 6000 && travelled >= 20;
+export function shouldReroute(fixes: number, since: number, now: number, travelled: number, accuracy = 0): boolean {
+  return fixes >= navigationConfig.rerouteFixes && now - since >= 2000
+    && travelled >= Math.max(12, Math.min(30, accuracy));
 }
 export type GuidanceCue = { key: string; text: string; priority: number; stage: number; supersedes: string[] };
 export function guidanceCue(progress: NavigationProgress, language: Language = 'ru', routeVersion = 0, legIndex = 0): GuidanceCue | null {
   const prefix = `${routeVersion}:${legIndex}:${progress.stepIndex}`;
-  if (progress.arrived) return { key: `${prefix}:arrived`, text: language === 'ky' ? 'Бара турган жериңизге жеттиңиз.' : language === 'en' ? 'You have arrived at your destination.' : 'Вы прибыли в пункт назначения.', priority: 4, stage: 0, supersedes: [`${prefix}:600`, `${prefix}:200`, `${prefix}:0`] };
+  if (progress.arrived) return { key: `${prefix}:arrived`, text: language === 'ky' ? 'Бара турган жериңизге жеттиңиз.' : language === 'en' ? 'You have arrived at your destination.' : 'Вы прибыли в пункт назначения.', priority: 4, stage: 0, supersedes: [`${prefix}:600`, `${prefix}:100`, `${prefix}:0`] };
   if (progress.maneuverPassed || progress.offRouteMeters > navigationConfig.offRouteMeters) return null;
   const meters = progress.maneuverDistance;
-  if (meters > 750) return null;
-  const speed = Math.max(0, progress.speedMps ?? 0);
-  const nearThreshold = Math.max(50, Math.min(75, speed * 3));
-  const approachThreshold = Math.max(150, Math.min(200, speed * 9));
-  const stage = meters <= nearThreshold ? 0 : meters <= approachThreshold ? 200 : 600;
-  const distance = meters >= 100 ? Math.round(meters / 50) * 50 : Math.max(50, Math.round(meters / 10) * 10);
-  const supersedes = stage === 0 ? [`${prefix}:600`, `${prefix}:200`] : stage === 200 ? [`${prefix}:600`] : [];
-  const text = stage === 600 ? language === 'ky' ? `${distance} метр түз жүрүңүз.` : language === 'en' ? `Continue straight for ${distance} meters.` : `${distance} метров прямо.`
+  const stage = meters <= 25 ? 0 : meters <= navigationConfig.maneuverWarningMeters ? 100 : 600;
+  const distance = Math.max(10, Math.round(meters / 10) * 10);
+  const supersedes = stage === 0 ? [`${prefix}:600`, `${prefix}:100`] : stage === 100 ? [`${prefix}:600`] : [];
+  const text = stage === 600 ? language === 'ky' ? 'Түз жүрүүнү улантыңыз.' : language === 'en' ? 'Continue straight.' : 'Продолжайте движение прямо.'
     : stage === 0 ? `${progress.instruction}.`
       : language === 'ky' ? `${distance} метрден кийин ${progress.instruction[0].toLowerCase() + progress.instruction.slice(1)}.`
         : language === 'en' ? `In ${distance} meters, ${progress.instruction[0].toLowerCase() + progress.instruction.slice(1)}.`
           : `Через ${distance} метров ${progress.instruction[0].toLocaleLowerCase('ru') + progress.instruction.slice(1)}.`;
-  return { key: `${prefix}:${stage}`, text, priority: stage === 0 ? 3 : stage === 200 ? 2 : 1, stage, supersedes };
+  return { key: `${prefix}:${stage}`, text, priority: stage === 0 ? 3 : stage === 100 ? 2 : 1, stage, supersedes };
 }

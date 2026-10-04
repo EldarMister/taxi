@@ -1,3 +1,4 @@
+import { useSharedValue } from 'react-native-reanimated';
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
@@ -39,6 +40,7 @@ import { useRideQuotes } from "./src/useRideQuotes";
 import { statusText } from "./src/TripPanel";
 import { DriverOfferSkip, DriverPanel } from "./src/DriverPanel";
 import { DriverNavigation } from "./src/DriverNavigation";
+import { DriverTrackingDiagnostics, trackingDiagnosticsEnabled } from "./src/DriverTrackingDiagnostics";
 import { useDriverNavigation } from "./src/useDriverNavigation";
 import { useClientDriverTracking, useApproachRoute } from "./src/useDriverTracking";
 import { tripMapRoutes } from "./src/tripMapRoutes";
@@ -130,6 +132,7 @@ export default function App() {
     Inter_700Bold,
     Inter_800ExtraBold,
     Inter_900Black,
+    FoodDisplayBold: require('./assets/fonts/Oswald-Bold.ttf'),
   });
   return (
     <GestureHandlerRootView style={{ flex: 1 }}><SafeAreaProvider>
@@ -212,6 +215,7 @@ function TaxiApp() {
   const [rideDetails, setRideDetails] = useState(emptyRideDetails);
   const [bookingHeight, setBookingHeight] = useState(166);
   const [driverPanelHeight, setDriverPanelHeight] = useState(0);
+  const animatedDriverPanelInset = useSharedValue(0);
   const [driverCompletionHeight, setDriverCompletionHeight] = useState(520);
   const [coming, setComing] = useState(false);
   const [clock, setClock] = useState(Date.now());
@@ -220,6 +224,10 @@ function TaxiApp() {
   const socketRef = useRef<Socket | null>(null);
   const orderKey = useRef<{ quoteId: string; key: string } | null>(null);
   const syncRef = useRef(false);
+  const syncAgain = useRef(false);
+  const offersSyncing = useRef(false);
+  const offersAgain = useRef(false);
+  const offersRevision = useRef(0);
   const t = tr(user?.language || "ru");
   const driver = user?.role === "DRIVER";
   const showingServices = !driver && page === 'home' && service === 'hub' && !order;
@@ -347,19 +355,46 @@ function TaxiApp() {
     return true;
   }
 
+  async function refreshOffers() {
+    const account = userRef.current;
+    if (account?.role !== 'DRIVER' || !account.driverProfile?.online || isActive(orderRef.current)) return;
+    if (offersSyncing.current) { offersAgain.current = true; return; }
+    offersSyncing.current = true;
+    const revision = offersRevision.current;
+    try {
+      const next = await api.request<Order[]>('/driver/offers');
+      if (userRef.current?.id === account.id && userRef.current.driverProfile?.online
+        && !isActive(orderRef.current) && revision === offersRevision.current) setOffers(next);
+    } catch { /* The socket and the next short poll recover transient failures. */ }
+    finally {
+      offersSyncing.current = false;
+      if (offersAgain.current) { offersAgain.current = false; void refreshOffers(); }
+    }
+  }
+
   async function sync() {
-    if (!userRef.current || syncRef.current) return;
+    if (!userRef.current) return;
+    // Offers must not queue behind profile/history requests after a push arrives.
+    void refreshOffers();
+    if (syncRef.current) { syncAgain.current = true; return; }
     syncRef.current = true;
+    const accountId = userRef.current.id;
     try {
       const [active, profile] = await Promise.all([
-        api.request<Order | null>("/orders/active"),
+        api.request<Order | null>("/orders/active").then(active => {
+          if (userRef.current?.id === accountId) {
+            const currentActive = isDismissedOrderUpdate(active, dismissedOrderIds.current) ? null : active;
+            if (currentActive) applyOrder(currentActive);
+          }
+          return active;
+        }),
         api.request<User>("/users/me"),
       ]);
+      if (userRef.current?.id !== accountId) return;
       if (await rejectMismatchedRole(profile)) return;
       updateUser(profile);
       const currentActive = isDismissedOrderUpdate(active, dismissedOrderIds.current) ? null : active;
-      if (currentActive) applyOrder(currentActive);
-      else if (orderRef.current && isActive(orderRef.current)) {
+      if (!currentActive && orderRef.current && isActive(orderRef.current)) {
         try {
           applyOrder(
             await api.request<Order>(`/orders/${orderRef.current.id}`),
@@ -371,13 +406,13 @@ function TaxiApp() {
           } else throw e;
         }
       }
-      if (profile.role === "DRIVER" && profile.driverProfile?.online && !currentActive)
-        setOffers(await api.request<Order[]>("/driver/offers"));
-      else setOffers([]);
+      if (profile.role !== "DRIVER" || !profile.driverProfile?.online || currentActive) setOffers([]);
     } catch (e) {
       if (!(e instanceof ApiError) || e.status !== 0) setError(messageOf(e));
     } finally {
       syncRef.current = false;
+      // A notification received during an HTTP refresh must not be discarded.
+      if (syncAgain.current) { syncAgain.current = false; void sync(); }
     }
   }
   async function bootstrap() {
@@ -546,6 +581,8 @@ function TaxiApp() {
         void sync();
     });
     socket.on("order:offer", (next: Order) => {
+      offersRevision.current++;
+      if (offersSyncing.current) offersAgain.current = true;
       if (userRef.current?.driverProfile?.online && !isActive(orderRef.current))
         setOffers((current) =>
           current.some((item) => item.id === next.id)
@@ -554,6 +591,8 @@ function TaxiApp() {
         );
     });
     socket.on("order:withdrawn", ({ orderId }: { orderId: string }) => {
+      offersRevision.current++;
+      if (offersSyncing.current) offersAgain.current = true;
       driverSounds.stopOffer(orderId);
       setOffers((current) => current.filter((item) => item.id !== orderId));
     });
@@ -564,7 +603,14 @@ function TaxiApp() {
     socket.on("rider:coming", ({ orderId }: { orderId: string }) => {
       if (orderRef.current?.id === orderId) setComing(true);
     });
-    const interval = setInterval(() => void sync(), 12000);
+    let lastFullSync = Date.now();
+    const interval = setInterval(() => {
+      if (AppState.currentState !== 'active') return;
+      void refreshOffers();
+      if (!socket.connected || Date.now() - lastFullSync >= 12000) {
+        lastFullSync = Date.now(); void sync();
+      }
+    }, 3000);
     const tariffRetry = setInterval(() => { if (tariffsRetryNeeded) refreshTariffs(); }, 30000);
     return () => {
       subscribed = false;
@@ -588,6 +634,7 @@ function TaxiApp() {
   useEffect(() => onNotificationReceived(data => {
     if (AppState.currentState !== "active" || !userRef.current) return;
     void sync();
+    if (data.event === 'rider:coming' && data.orderId === orderRef.current?.id) setComing(true);
     if (typeof data.event === 'string' && data.event.startsWith('registration:')) {
       setRegistrationRevision(value => value + 1);
       const profile = userRef.current;
@@ -1006,7 +1053,9 @@ function TaxiApp() {
       setComing(false);
       setRideDetails(emptyRideDetails);
       setDeliveryDetails(emptyDeliveryDetails);
-      await sync();
+      // The old order is dismissed locally. Profile synchronization can finish
+      // in the background while fresh quotes make the next booking available.
+      void sync();
     });
   };
   const rate = async (score: number, comment?: string): Promise<boolean> => {
@@ -1330,6 +1379,7 @@ function TaxiApp() {
               onEditPoint={!driver && !order && !savedPlaceEditing ? setMapField : undefined}
               selecting={busy}
               contentTopInset={insets.top + (driver && order?.status === 'COMPLETED' ? 8 : navigation.active ? navigationHeight + 72 : driver && offer ? 130 : 64)}
+              animatedBottomInset={driver && order?.status !== 'COMPLETED' ? animatedDriverPanelInset : undefined}
               contentBottomInset={driver
                 ? order?.status !== "COMPLETED" ? Math.max(0, driverPanelHeight) : 0
                 : !mapSelection && !addressField ? Math.max(0, bookingHeight) : 0}
@@ -1338,6 +1388,7 @@ function TaxiApp() {
               recenterKey={recenter}
             />
             {navigation.active && <DriverNavigation language={user.language} navigation={navigation} top={insets.top + 62} onHeight={setNavigationHeight} onLocation={() => void openLocationSettings().catch(() => undefined)}/>}
+            {driver && trackingDiagnosticsEnabled && <DriverTrackingDiagnostics navigation={navigation} top={insets.top + (navigation.active ? navigationHeight + 76 : offer ? 140 : 70)}/>}
             {driver && offer && <View style={{ position: 'absolute', top: insets.top + 65, left: 0, right: 0, alignItems: 'center' }}><DriverOfferSkip offer={offer} busy={busy} language={user.language} onSkip={skip}/></View>}
             {!driver && !mapSelection && !order && !dropoff && (
               <Pressable accessibilityRole="button" accessibilityLabel={t("Место подачи")} onPress={() => openAddress("pickup")} style={{ position: "absolute", top: insets.top + 10, left: 76, right: 76, paddingHorizontal: 12, paddingVertical: 8, alignItems: "center" }}>
@@ -1350,7 +1401,7 @@ function TaxiApp() {
           </View>
           {driver && order?.status !== 'COMPLETED' && <View pointerEvents="none" style={{ flex: 1 }}/> }
           {driver && order?.status === 'COMPLETED' && <View style={{ height: Math.max(0, driverCompletionHeight - 30) }}/>}
-          {driver && <DriverPanel key={offer?.id || order?.id || 'idle'} user={user} order={visibleDriverOrder} offer={offer} busy={busy} coming={coming} approach={approach} navigation={navigation} backgroundReady={navigation.backgroundReady} onBackground={navigation.enableBackground} onAccept={accept} onRateClient={rateClient} onCompletionHeight={setDriverCompletionHeight} onHeight={setDriverPanelHeight} onOnline={() => online(true)} onAction={action} onChat={() => setChat(true)} onDone={done}/>}
+          {driver && <DriverPanel key={offer?.id || order?.id || 'idle'} user={user} order={visibleDriverOrder} offer={offer} busy={busy} coming={coming} approach={approach} navigation={navigation} backgroundReady={navigation.backgroundReady} onBackground={navigation.enableBackground} onAccept={accept} onRateClient={rateClient} onCompletionHeight={setDriverCompletionHeight} onHeight={setDriverPanelHeight} animatedInset={animatedDriverPanelInset} onOnline={() => online(true)} onAction={action} onChat={() => setChat(true)} onDone={done}/>}
           {!driver && <View pointerEvents="none" style={{ flex: 1 }}/>}
           {!driver && !order && service === 'taxi' && <>
             <BookingPanel pickup={pickup} dropoff={dropoff} locatingPickup={locatingSavedPlacePickup} tariffs={tariffs} tariffId={tariffId}
@@ -1440,7 +1491,7 @@ function TaxiApp() {
         <View style={{ height: insets.bottom, backgroundColor: palette.surface }} />
       )}
       {!driver && <View pointerEvents={showingServices ? 'auto' : 'none'} style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, zIndex: 20, display: showingServices ? 'flex' : 'none' }}>
-        <FoodExperience key={user.id} userId={user.id} language={user.language} contentRevision={contentRevision} orderRevision={foodOrderRevision} active={showingServices} entry={foodEntry} defaultAddress={pickup?.address || ''} savedPlaces={savedPlaces} onSavedPlace={openSavedPlace} onEditSavedPlace={editSavedPlace} onTaxi={() => { setService('taxi'); setError(''); }} onDelivery={() => { setDeliveryKind('DELIVERY_CAR'); setService('delivery'); setError(''); }} onTruck={() => { setDeliveryKind('DELIVERY_TRUCK'); setService('delivery'); setError(''); }} onTaxiSearch={() => { setService('taxi'); setAddressField('dropoff'); setError(''); }} onChangeAddress={() => { setSavedPlaceEditing(null); setAddressField('pickup'); setError(''); }} onMenu={() => setDrawer(true)} />
+        <FoodExperience key={user.id} userId={user.id} userPhone={user.phone} language={user.language} contentRevision={contentRevision} orderRevision={foodOrderRevision} active={showingServices} entry={foodEntry} defaultAddress={pickup?.address || ''} defaultPoint={pickup} savedPlaces={savedPlaces} onSavedPlace={openSavedPlace} onEditSavedPlace={editSavedPlace} onTaxi={() => { setService('taxi'); setError(''); }} onDelivery={() => { setDeliveryKind('DELIVERY_CAR'); setService('delivery'); setError(''); }} onTruck={() => { setDeliveryKind('DELIVERY_TRUCK'); setService('delivery'); setError(''); }} onTaxiSearch={() => { setService('taxi'); setAddressField('dropoff'); setError(''); }} onChangeAddress={() => { setSavedPlaceEditing(null); setAddressField('pickup'); setError(''); }} onMenu={() => setDrawer(true)} />
       </View>}
       </View>
       <Modal
