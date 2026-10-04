@@ -2,8 +2,8 @@ import React, { memo } from 'react';
 import { Image, type ImageSourcePropType } from 'react-native';
 import { FoodPhoto } from './FoodPhoto';
 
-// Individual images retain their own pixels when Android decodes them. Rendering
-// and clipping a whole screenshot per tile caused unnecessary downsampling.
+// Original generated cutouts share a transparent 512 × 440 canvas. Keep every
+// category as its own image so Android can render crisp edges at any screen density.
 const artwork: Record<string, ImageSourcePropType> = {
   'Бургеры': require('../../assets/food/categories/burger.png'),
   'Суши': require('../../assets/food/categories/sushi.png'),
