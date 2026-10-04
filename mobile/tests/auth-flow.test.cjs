@@ -33,7 +33,7 @@ vm.runInNewContext(ts.transpileModule(fs.readFileSync(path.join(__dirname, '../s
 const flattenStyle = style => Array.isArray(style) ? Object.assign({}, ...style.filter(Boolean).map(flattenStyle)) : style;
 
 async function setup(t, options = {}) {
-  const calls = [], logins = [], intervals = new Map(), timeouts = new Map(), backHandlers = new Set(), keyboardHandlers = new Map(), motionHandlers = new Set(), animations = [];
+  const calls = [], logins = [], intervals = new Map(), timeouts = new Map(), backHandlers = new Set(), keyboardHandlers = new Map(), motionHandlers = new Set(), animations = [], scrolls = [];
   let clock = 1000000, timerId = 0, renderer;
   class TestDate extends Date { static now() { return clock; } }
   const native = {
@@ -89,6 +89,8 @@ async function setup(t, options = {}) {
         return motionExports;
       }
       if (id === './design/theme') return theme;
+      if (id === './design/typography') return { fonts: { regular: 'Inter_400Regular', medium: 'Inter_500Medium', semibold: 'Inter_600SemiBold', bold: 'Inter_700Bold' } };
+      if (id === './auth/design') return { useAuthDesign: () => { const current = theme.useTheme(); return { ...current, palette: current.isDark ? current.palette : { ...current.palette, background: '#FBFBFD', surface: '#FBFBFD', elevated: '#F4F5F8', ink: '#1E2028', muted: '#737B8C', line: '#E2E4EC', accent: '#3478F6', accentText: '#FFFFFF' } }; } };
       if (id === './ui') return ui;
       if (id.endsWith('.png')) return id;
       if (id === './api') return {
@@ -105,11 +107,11 @@ async function setup(t, options = {}) {
     renderer = create(React.createElement(exports.AuthScreen, { onLogin: async (session, language) => {
       logins.push({ session, language });
       if (options.onLogin) await options.onLogin(session, language);
-    } }), { createNodeMock: () => ({ focus() {}, blur() {}, scrollTo() {}, measureInWindow(callback) { callback(24, 700, 342, 62); } }) });
+    } }), { createNodeMock: element => ({ focus() {}, blur() {}, scrollTo(value) { scrolls.push(value); }, measure(callback) { const host = element.props.testID === 'auth-keyboard-host'; callback(0, 0, 342, host ? (options.hostHeight ?? 720) : 62, 24, host ? 24 : 700); }, measureInWindow(callback) { callback(24, 700, 342, 62); } }) });
   });
   t.after(async () => { await act(async () => renderer.unmount()); assert.equal(intervals.size, 0); assert.equal(timeouts.size, 0); assert.equal(backHandlers.size, 0); assert.equal(keyboardHandlers.size, 0); assert.equal(motionHandlers.size, 0); });
   const h = {
-    calls, logins, animations, renderer,
+    calls, logins, animations, scrolls, renderer,
     hasInput: id => renderer.root.findAllByProps({ testID: id }).length > 0,
     input: id => renderer.root.findByProps({ testID: id }),
     button: () => renderer.root.findByProps({ testID: 'auth-continue' }),
@@ -134,7 +136,7 @@ async function setup(t, options = {}) {
     },
     advance: async seconds => act(async () => { clock += seconds * 1000; for (const callback of intervals.values()) callback(); for (const [id, timer] of timeouts) { if (timer.deadline <= clock) { timeouts.delete(id); timer.callback(); } } }),
     unmount: async () => act(async () => renderer.unmount()),
-    keyboard: async visible => act(async () => keyboardHandlers.get(visible ? 'keyboardDidShow' : 'keyboardDidHide')?.()),
+    keyboard: async visible => act(async () => keyboardHandlers.get(visible ? 'keyboardDidShow' : 'keyboardDidHide')?.({ endCoordinates: { screenY: 500 } })),
     reduceMotion: async value => act(async () => { for (const callback of motionHandlers) callback(value); }),
     changeTheme: async dark => act(async () => {
       options.dark = dark;
@@ -175,7 +177,7 @@ test('dark login keeps phone and SMS code fields legible', async t => {
 
 test('login follows the resolved theme on phone, language menu and SMS screens without losing input', async t => {
   const h = await setup(t);
-  const light = themeExports.themePalettes.light;
+  const light = { ...themeExports.themePalettes.light, background: '#FBFBFD', surface: '#FBFBFD', elevated: '#F4F5F8', ink: '#1E2028', accent: '#3478F6' };
   const dark = themeExports.themePalettes.dark;
   assert.equal(h.renderer.root.findByType('SafeAreaView').props.style.backgroundColor, light.background);
   assert.equal(h.renderer.root.findByType('StatusBar').props.style, 'dark');
@@ -284,6 +286,26 @@ test('language menu closes on an outside tap and legal links remain visible with
   assert.equal(h.renderer.root.findAllByType('Modal').length, 1);
   await act(async () => h.renderer.root.findByProps({ accessibilityLabel: 'Закрыть выбор языка' }).props.onPress());
   assert.equal(h.renderer.root.findAllByType('Modal').length, 0);
+});
+
+test('SMS cells distinguish entered digits and the next focus, and omit legal consent only on the code screen', async t => {
+  const h = await setup(t);
+  assert.match(h.text(), /Политикой конфиденциальности/);
+  await h.change('auth-phone', '700123456'); await h.submit();
+  assert.doesNotMatch(h.text(), /Политикой конфиденциальности|Условиями использования|соглашаетесь/);
+  await act(async () => h.input('auth-code').props.onFocus());
+  await h.change('auth-code', '123');
+  const filled = h.renderer.root.findByProps({ testID: 'auth-digit-0' });
+  assert.equal(flattenStyle(filled.props.style).borderColor, '#3478F6');
+  assert.ok(filled.findAllByType('AnimatedView').some(node => flattenStyle(node.props.style).backgroundColor === '#3478F6'));
+  assert.equal(flattenStyle(filled.findByType('AnimatedText').props.style).color, '#FFFFFF');
+  assert.equal(flattenStyle(h.renderer.root.findByProps({ testID: 'auth-digit-3' }).props.style).borderColor, '#3478F6');
+  assert.equal(flattenStyle(h.renderer.root.findByProps({ testID: 'auth-digit-4' }).props.style).borderColor, '#E2E4EC');
+  await h.change('auth-code', '12');
+  assert.equal(flattenStyle(h.renderer.root.findByProps({ testID: 'auth-digit-2' }).props.style).borderColor, '#3478F6');
+  assert.equal(h.calls.length, 1, 'partial entry and deletion must not verify');
+  await h.press('Изменить номер телефона');
+  assert.match(h.text(), /Политикой конфиденциальности/);
 });
 
 test('invalid verification stays on the code screen and editing clears the error before retry', async t => {
@@ -430,4 +452,36 @@ test('Reduce Motion changes apply without remounting and do not delay a successf
   await h.reduceMotion(true);
   await h.change('auth-code', '123456');
   assert.equal(h.logins.length, 1, 'Reduced motion must skip the decorative handoff delay');
+});
+
+
+test('opening a keyboard that covers Continue scrolls the phone form and removes the listener on the code step', async t => {
+  const h = await setup(t);
+  await h.keyboard(true);
+  assert.equal(h.scrolls.filter(value => value.y > 0).length, 1, 'the button must move above the keyboard');
+  assert.ok(flattenStyle(h.keyboardAvoider().props.style).paddingBottom > 0);
+  await h.keyboard(false);
+  assert.equal(flattenStyle(h.keyboardAvoider().props.style).paddingBottom, 0, 'hiding the keyboard restores the full screen');
+  await h.change('auth-phone', '700123456'); await h.submit();
+  await h.keyboard(true);
+  assert.equal(h.scrolls.filter(value => value.y > 0).length, 1, 'the phone button handler must not move the code screen');
+  assert.equal(h.scrolls.at(-1).y, 0, 'entering the code screen resets the phone scroll');
+});
+
+
+test('Android avoids only the measured overlap when the native window already resizes', async t => {
+  const h = await setup(t, { hostHeight: 400 });
+  await h.keyboard(true);
+  assert.equal(flattenStyle(h.keyboardAvoider().props.style).paddingBottom, 0);
+});
+
+test('pasting a full formatted code replaces partial entry and verifies that code exactly once', async t => {
+  const h = await setup(t);
+  await h.change('auth-phone', '700123456'); await h.submit();
+  await h.change('auth-code', '12');
+  await h.change('auth-code', '12 654 321');
+  assert.equal(h.input('auth-code').props.value, '654321');
+  assert.deepEqual(h.calls[1].body, { phone: '+996700123456', code: '654321' });
+  assert.equal(h.calls.length, 2);
+  assert.equal(h.logins.length, 1);
 });

@@ -1,5 +1,9 @@
 // Local English UI strings. Backend language remains Russian or Kyrgyz.
 export const en: Record<string, string> = {
+  'Месяц': 'Month',
+  'Картой': 'Card',
+  'Наличными': 'Cash',
+  'Бонусы': 'Bonuses',
   'Отзывы': 'Reviews',
   'Отзывы о ресторане': 'Restaurant reviews',
   'Закрыть отзывы ресторана': 'Close restaurant reviews',
@@ -36,6 +40,7 @@ export const en: Record<string, string> = {
   "Грузовой": "Freight",
   "Доставка больших грузов": "Delivery of large loads",
   "Доставка еды": "Food delivery",
+  "Из ресторанов": "From restaurants",
   "Любимые рестораны рядом": "Favorite restaurants nearby",
   "Куда поедем?": "Where will we go?",
   "Еда": "Food",

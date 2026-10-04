@@ -75,9 +75,23 @@ export class OrdersService {
     const order = await this.db.order.findFirst({where:{...(actor.role==='DRIVER'?{driverId:actor.id}:{clientId:actor.id,...ordinaryClientOrders}),status:{in:ACTIVE_STATUSES}},orderBy:{createdAt:'desc'}});
     return order?this.serialize(order.id,false,actor.id):null;
   }
-  async history(actor:Actor,period:string) {
-    const orders = await this.db.order.findMany({where:{...(actor.role==='DRIVER'?{driverId:actor.id}:{clientId:actor.id,...ordinaryClientOrders}),createdAt:{gte:historySince(period)}},orderBy:{createdAt:'desc'},take:100});
-    return Promise.all(orders.map(order=>this.serialize(order.id,false,actor.id)));
+  async history(actor:Actor,period:string,from?:string,to?:string) {
+    const since = from ? new Date(from) : historySince(period);
+    const until = to ? new Date(to) : undefined;
+    if (since && !Number.isFinite(since.getTime()) || until && !Number.isFinite(until.getTime()) || since && until && since >= until) {
+      throw new BadRequestException('Укажите корректный период истории');
+    }
+    const driver = actor.role === 'DRIVER';
+    const orders = await this.db.order.findMany({where:{...(driver?{driverId:actor.id}:{clientId:actor.id,...ordinaryClientOrders}),createdAt:{gte:since,...(until?{lt:until}:{})}},orderBy:{createdAt:'desc'},...(!(driver&&since&&until)?{take:100}:{})});
+    // The receipt is charged separately from the cash fare. Read its original
+    // signed amount rather than estimating a fee from today's tariff.
+    const completedIds = driver ? orders.filter(order=>order.status==='COMPLETED').map(order=>order.id) : [];
+    const entries = completedIds.length ? await this.db.ledgerEntry.findMany({where:{driverId:actor.id,orderId:{in:completedIds},kind:'COMMISSION'},select:{orderId:true,amount:true}}) : [];
+    const commissions = new Map(entries.map(entry=>[entry.orderId,entry.amount]));
+    return Promise.all(orders.map(async order=>{
+      const snapshot = await this.serialize(order.id,false,actor.id);
+      return driver ? {...snapshot,commissionAmount:order.status==='COMPLETED'?commissions.get(order.id)??0:0} : snapshot;
+    }));
   }
   async get(actor:Actor,id:string) {return this.serialize(id,false,actor.id);}
   async authorize(actor:Actor,id:string) {
@@ -135,7 +149,7 @@ export class OrdersService {
       const withdrawn=existing.filter(offer=>!offer.skipped&&offer.expiresAt.getTime()<=now).map(offer=>offer.driverId);
       if(withdrawn.length)await tx.orderOffer.updateMany({where:{orderId:id,driverId:{in:withdrawn}},data:{skipped:true}});
       const requiredClass=(await tx.quote.findUniqueOrThrow({where:{id:order.quoteId},select:{tariff:{select:{requiredClass:true}}}})).tariff.requiredClass;
-      const drivers=(await tx.driverProfile.findMany({where:{verified:true,online:true,deposit:{gte:Math.max(this.config.minimumDeposit,order.commission)},vehicle:{isNot:null},locationMeasuredAt:{gte:new Date(now-IDLE_POSITION_MAX_AGE_MS)}}})).filter(d=>driverCanTake(d,order.kind,requiredClass));
+      const drivers=(await tx.driverProfile.findMany({where:{verified:true,online:true,deposit:{gte:Math.max(this.config.minimumDeposit,order.commission)},vehicle:{isNot:null},locationMeasuredAt:{gte:new Date(now-IDLE_POSITION_MAX_AGE_MS)}}})).filter(d=>driverCanTake(d,order.kind,requiredClass,isRestaurantDelivery(order)));
       const busy=new Set((await tx.order.findMany({where:{driverId:{in:drivers.map(d=>d.userId)},status:{in:ACTIVE_STATUSES}},select:{driverId:true}})).map(o=>o.driverId));
       const offered=new Set(existing.map(o=>o.driverId));
       const eligible=drivers.filter(d=>!busy.has(d.userId)&&!offered.has(d.userId));
@@ -179,7 +193,7 @@ export class OrdersService {
     if(!driver?.verified || !driver.online) return [];
     if(await this.db.order.findFirst({where:{driverId:actor.id,status:{in:ACTIVE_STATUSES}}})) return [];
     const offers = await this.db.orderOffer.findMany({where:{driverId:actor.id,skipped:false,expiresAt:{gt:new Date()},order:{status:'SEARCHING',commission:{lte:driver.deposit}}},include:{order:{include:{quote:{include:{tariff:true}}}}},orderBy:{createdAt:'desc'},take:50});
-    const valid = offers.filter(offer=>driver.deposit>=this.config.minimumDeposit&&driverCanTake(driver,offer.order.kind,offer.order.quote.tariff.requiredClass));
+    const valid = offers.filter(offer=>driver.deposit>=this.config.minimumDeposit&&driverCanTake(driver,offer.order.kind,offer.order.quote.tariff.requiredClass,isRestaurantDelivery(offer.order)));
     return Promise.all(valid.map(async offer=>({...await this.serialize(offer.orderId,true),searchExpiresAt:offer.expiresAt})));
   }
   async accept(actor:Actor,id:string) {
@@ -192,7 +206,7 @@ export class OrdersService {
       const driver = await tx.driverProfile.findUnique({where:{userId:actor.id},include:{vehicle:true}});
       if(!driver?.verified||!driver.online||!driver.vehicle) throw new ForbiddenException('Водитель не подтверждён или не на линии');
       const requiredClass=(await tx.quote.findUniqueOrThrow({where:{id:order.quoteId},select:{tariff:{select:{requiredClass:true}}}})).tariff.requiredClass;
-      if(!driverCanTake(driver,order.kind,requiredClass))throw new ForbiddenException('Этот вид заказа не разрешён водителю');
+      if(!driverCanTake(driver,order.kind,requiredClass,isRestaurantDelivery(order)))throw new ForbiddenException('Этот вид заказа не разрешён водителю');
       if(driver.deposit<Math.max(order.commission,this.config.minimumDeposit)) throw new BadRequestException('Недостаточно средств на депозите');
       const offer = await tx.orderOffer.findUnique({where:{orderId_driverId:{orderId:id,driverId:actor.id}}});
       if(!offer||offer.skipped||offer.expiresAt.getTime()<=Date.now()) throw new ForbiddenException('Предложение истекло или заказ не был предложен вам');

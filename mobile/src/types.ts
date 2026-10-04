@@ -18,6 +18,7 @@ export type DriverProfile = {
   acceptsEconomy: boolean;
   acceptsComfort: boolean;
   acceptsDeliveryCar: boolean;
+  acceptsDeliveryFood?: boolean;
   acceptsDeliveryTruck: boolean;
   carPhotoUrl?: string | null;
 };
@@ -113,6 +114,9 @@ export type Order = {
   dropoff: Point;
   price: number;
   basePrice?: number;
+  paymentMethod?: 'CASH' | 'CARD';
+  /** Signed commission actually posted to the driver's ledger; separate from price. */
+  commissionAmount?: number;
   waiting?: {
     phase: "BEFORE_FREE" | "FREE" | "PAID" | "FINISHED";
     arrivedAt: string;

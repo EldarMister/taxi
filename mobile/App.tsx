@@ -1154,7 +1154,7 @@ function TaxiApp() {
     : undefined;
   const visibleDriverOrder = driver && offer ? null : order;
   const displayed = visibleDriverOrder || offer;
-  const showDriverTabs = shouldShowDriverTabs(order, offer);
+  const showDriverTabs = shouldShowDriverTabs(order, offer) && !['history', 'profile', 'settings', 'balance'].includes(page);
   const approachScope = driver && offer ? `offer:${offer.id}` : '';
   const approach = useApproachRoute(driver ? navigation.position : null, driver ? offer?.pickup : null, approachScope);
   const mapRoutes = tripMapRoutes({ driver, order: visibleDriverOrder, offer, quote: savedPlaceEditing ? null : service === 'delivery' ? deliveryQuote : quote, navigationRoute: navigation.route, approachRoute: approach.route });
@@ -1237,7 +1237,7 @@ function TaxiApp() {
   return (
     <View style={{ flex: 1, backgroundColor: palette.background }}>
       <View accessibilityElementsHidden={!!addressField} importantForAccessibility={addressField ? 'no-hide-descendants' : 'auto'} style={{ flex: 1 }}>
-      <View key={page === "home" ? "map-header" : "account-header"} collapsable={false} pointerEvents="box-none" style={[{ paddingTop: insets.top, backgroundColor: palette.surface }, page === "home" && { position: "absolute", top: 0, left: 0, right: 0, zIndex: 10, backgroundColor: "transparent" }, (!!mapSelection || showingServices || driver && order?.status === 'COMPLETED') && { display: "none" }]} >
+      <View key={page === "home" ? "map-header" : "account-header"} collapsable={false} pointerEvents="box-none" style={[{ paddingTop: insets.top, backgroundColor: palette.surface }, page === "home" && { position: "absolute", top: 0, left: 0, right: 0, zIndex: 10, backgroundColor: "transparent" }, (!!mapSelection || showingServices || driver && (order?.status === 'COMPLETED' || ['history', 'profile', 'settings', 'balance'].includes(page))) && { display: "none" }]} >
         <View pointerEvents="box-none" style={[s.spread, { paddingHorizontal: 17, paddingVertical: 10 }, !driver && page === "home" && { paddingTop: 0 }]}>
           <IconButton
             name={page === "home" || driver ? "menu" : "arrow-back"}
@@ -1435,6 +1435,7 @@ function TaxiApp() {
           onError={setError}
           onOnline={online}
           onNavigate={navigate}
+          onMenu={() => setDrawer(true)}
           historyDetailId={historyDetailId}
           onHistoryDetailId={setHistoryDetailId}
           busy={busy}
@@ -1487,7 +1488,7 @@ function TaxiApp() {
             </Pressable>
           ))}
         </View>
-      ) : page === 'home' && !showingServices ? null : (
+      ) : (page === 'home' && !showingServices || driver && ['history', 'profile', 'settings', 'balance'].includes(page)) ? null : (
         <View style={{ height: insets.bottom, backgroundColor: palette.surface }} />
       )}
       {!driver && <View pointerEvents={showingServices ? 'auto' : 'none'} style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, zIndex: 20, display: showingServices ? 'flex' : 'none' }}>

@@ -260,7 +260,7 @@ export class RegistrationAdminService {
             const remaining=await tx.performerApplicationRole.findMany({where:{applicationId:current.id,selected:true,status:'APPROVED',projectedAt:{not:null}},select:{role:true}});
             const roles=remaining.map(item=>item.role as PerformerRoleValue),courierModes=roles.includes('COURIER')?profile.courierModes:[];
             const ceiling=registrationCapabilityCeiling(roles,courierModes,profile.transportClass);
-            await tx.driverProfile.update({where:{userId:current.userId},data:{...ceiling,courierModes}});
+            await tx.driverProfile.update({where:{userId:current.userId},data:{...ceiling,acceptsDeliveryFood:!!profile.acceptsDeliveryFood&&ceiling.acceptsDeliveryCar,courierModes}});
           }
           await this.enqueuePush(tx,current.userId,'registration:document_expired',current.id,{slotKey:target.slotKey,status:'EXPIRED',applicationStatus:state.status,reasonCode:'DOCUMENT_EXPIRED'});
           return {changed:true,reconcile:roleChanged,userId:current.userId};
@@ -436,14 +436,15 @@ export class RegistrationAdminService {
     if(unmanagedProfile)return {changed:projectionChanged||identityChanged,operationalRoles:[...operational]};
 
     const primaryRole=primary?.role??'COURIER',transportClass=primary?.vehicle.transportClass??profile?.transportClass??'ECONOMY';
-    const finalCapabilities=this.capabilities(primaryRole,transportClass,modes,operational,data),courierModes=operational.has('COURIER')?modes:[];
+    const capabilities=this.capabilities(primaryRole,transportClass,modes,operational,data);
+    const finalCapabilities={...capabilities,acceptsDeliveryFood:!!profile?.acceptsDeliveryFood&&capabilities.acceptsDeliveryCar},courierModes=operational.has('COURIER')?modes:[];
     const sameModes=Boolean(profile)&&[...profile!.courierModes].sort().join('|')===[...courierModes].sort().join('|');
     const vehiclePhoto=primary?application.uploads.find(item=>item.slotKey===primary!.vehicle.photoSlot&&approvedDocumentStatuses.has(item.status)&&item.mimeType.startsWith('image/')):undefined;
     const samePhoto=!vehiclePhoto||Boolean(profile?.vehicle?.photoData&&profile.vehicle.photoMime===vehiclePhoto.mimeType&&Buffer.from(profile.vehicle.photoData).equals(Buffer.from(vehiclePhoto.data)));
     const sameVehicle=!primary||Boolean(profile?.vehicle&&profile.vehicle.plate.trim().toUpperCase()===primary.vehicle.plate&&profile.transportClass===transportClass&&profile.vehicle.make===primary.vehicle.make&&profile.vehicle.color===primary.vehicle.color&&samePhoto);
     const profileReady=Boolean(profile?.verified&&profile.registrationManaged&&profile.transportClass===transportClass&&sameModes&&sameVehicle
       &&profile.acceptsEconomy===finalCapabilities.acceptsEconomy&&profile.acceptsComfort===finalCapabilities.acceptsComfort
-      &&profile.acceptsDeliveryCar===finalCapabilities.acceptsDeliveryCar&&profile.acceptsDeliveryTruck===finalCapabilities.acceptsDeliveryTruck);
+      &&profile.acceptsDeliveryCar===finalCapabilities.acceptsDeliveryCar&&!!profile.acceptsDeliveryFood===finalCapabilities.acceptsDeliveryFood&&profile.acceptsDeliveryTruck===finalCapabilities.acceptsDeliveryTruck);
     if(profileReady)return {changed:projectionChanged||identityChanged,operationalRoles:[...operational]};
     if(user.role==='DRIVER')await this.assertNoActiveDriverWork(tx,user.id);
     if(primary) {
@@ -459,14 +460,14 @@ export class RegistrationAdminService {
 
   private async revokeLegacy(tx:Tx,userId:string) {
     await this.assertNoActiveDriverWork(tx,userId);
-    const result=await tx.driverProfile.updateMany({where:{userId,registrationManaged:true},data:{verified:false,online:false,acceptsEconomy:false,acceptsComfort:false,acceptsDeliveryCar:false,acceptsDeliveryTruck:false,courierModes:[],locationLatitude:null,locationLongitude:null,locationAccuracyM:null,locationMeasuredAt:null}});
+    const result=await tx.driverProfile.updateMany({where:{userId,registrationManaged:true},data:{verified:false,online:false,acceptsEconomy:false,acceptsComfort:false,acceptsDeliveryCar:false,acceptsDeliveryFood:false,acceptsDeliveryTruck:false,courierModes:[],locationLatitude:null,locationLongitude:null,locationAccuracyM:null,locationMeasuredAt:null}});
     return result.count>0;
   }
 
-  private profileSupportsRole(profile:{acceptsEconomy:boolean;acceptsComfort:boolean;acceptsDeliveryCar:boolean;acceptsDeliveryTruck:boolean},role:PerformerRoleValue,transportClass:TransportClass) {
+  private profileSupportsRole(profile:{acceptsEconomy:boolean;acceptsComfort:boolean;acceptsDeliveryCar:boolean;acceptsDeliveryFood?:boolean;acceptsDeliveryTruck:boolean},role:PerformerRoleValue,transportClass:TransportClass) {
     if(role==='TAXI_DRIVER')return transportClass==='COMFORT'?profile.acceptsComfort:transportClass!=='TRUCK'&&profile.acceptsEconomy;
     if(role==='CARGO_DRIVER')return transportClass==='TRUCK'&&profile.acceptsDeliveryTruck;
-    return transportClass==='TRUCK'?profile.acceptsDeliveryTruck:profile.acceptsDeliveryCar;
+    return transportClass==='TRUCK'?profile.acceptsDeliveryTruck:profile.acceptsDeliveryCar||!!profile.acceptsDeliveryFood;
   }
 
   private async assertNoActiveDriverWork(tx:Tx,userId:string) {

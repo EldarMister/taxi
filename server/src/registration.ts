@@ -197,7 +197,7 @@ export class RegistrationService {
       const roleChanged=user.role!=='DRIVER';
       if(roleChanged&&(await tx.order.findFirst({where:{clientId:actor.id,status:{in:ACTIVE_STATUSES}},select:{id:true}})||await tx.foodOrder.findFirst({where:{clientId:actor.id,status:{in:ACTIVE_FOOD_STATUSES}},select:{id:true}})))throw new ConflictException('Сначала завершите активный заказ');
       if(!user.driverProfile?.verified)throw new ConflictException('Профиль исполнителя ещё не подготовлен. Обновите статус анкеты.');
-      const hasWorkCapability=[user.driverProfile.acceptsEconomy,user.driverProfile.acceptsComfort,user.driverProfile.acceptsDeliveryCar,user.driverProfile.acceptsDeliveryTruck].some(Boolean)||user.driverProfile.courierModes.some(mode=>LIGHT_COURIER_METHODS.has(mode));
+      const hasWorkCapability=[user.driverProfile.acceptsEconomy,user.driverProfile.acceptsComfort,user.driverProfile.acceptsDeliveryCar,user.driverProfile.acceptsDeliveryFood,user.driverProfile.acceptsDeliveryTruck].some(Boolean)||user.driverProfile.courierModes.some(mode=>LIGHT_COURIER_METHODS.has(mode));
       if(!hasWorkCapability)throw new ConflictException('Одобренное направление ещё не подготовлено. Обратитесь в поддержку.');
       if(roleChanged)await tx.user.update({where:{id:actor.id},data:{role:'DRIVER'}});
       if(!application.activatedAt) {

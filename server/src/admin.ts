@@ -139,7 +139,7 @@ export class AdminService {
       if(!vehicle.make||!vehicle.color||!vehicle.plate)throw new BadRequestException('Заполните данные автомобиля');
       await tx.user.update({where:{id},data:{...(dto.phone?{phone:dto.phone}:{}),...(dto.name===undefined?{}:{name:validateText(dto.name,'Имя')})}});
       const transportClass=dto.transportClass??user.driverProfile.transportClass;
-      const classDefaults=dto.transportClass===undefined?{}:{transportClass,acceptsEconomy:transportClass!=='TRUCK',acceptsComfort:transportClass==='COMFORT',acceptsDeliveryCar:false,acceptsDeliveryTruck:transportClass==='TRUCK'};
+      const classDefaults=dto.transportClass===undefined?{}:{transportClass,acceptsEconomy:transportClass!=='TRUCK',acceptsComfort:transportClass==='COMFORT',acceptsDeliveryCar:false,...(transportClass==='TRUCK'?{acceptsDeliveryFood:false}:{}),acceptsDeliveryTruck:transportClass==='TRUCK'};
       await tx.driverProfile.update({where:{userId:id},data:{...(dto.verified===undefined?{}:{verified:dto.verified}),...classDefaults,online:false,locationLatitude:null,locationLongitude:null,locationAccuracyM:null,locationMeasuredAt:null}});
       await tx.vehicle.upsert({where:{driverId:id},create:{driverId:id,make:vehicle.make,color:vehicle.color,plate:vehicle.plate},update:{make:vehicle.make,color:vehicle.color,plate:vehicle.plate}});
       if(dto.phone&&dto.phone!==user.phone) {

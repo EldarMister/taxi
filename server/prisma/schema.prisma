@@ -102,6 +102,7 @@ model DriverProfile {
   acceptsEconomy Boolean @default(true)
   acceptsComfort Boolean @default(false)
   acceptsDeliveryCar Boolean @default(false)
+  acceptsDeliveryFood Boolean @default(false)
   acceptsDeliveryTruck Boolean @default(false)
   courierModes String[] @default([])
   registrationManaged Boolean @default(false)

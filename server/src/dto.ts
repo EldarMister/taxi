@@ -80,6 +80,7 @@ export class DriverPreferencesDto {
   @ApiPropertyOptional() @IsOptional() @IsBoolean() acceptsEconomy?:boolean;
   @ApiPropertyOptional() @IsOptional() @IsBoolean() acceptsComfort?:boolean;
   @ApiPropertyOptional() @IsOptional() @IsBoolean() acceptsDeliveryCar?:boolean;
+  @ApiPropertyOptional() @IsOptional() @IsBoolean() acceptsDeliveryFood?:boolean;
   @ApiPropertyOptional() @IsOptional() @IsBoolean() acceptsDeliveryTruck?:boolean;
 }
 export class DriverRegisterDto {
@@ -103,6 +104,11 @@ export class RatingDto {
   @ApiPropertyOptional({maxLength:500}) @IsOptional() @IsString() @MaxLength(500) comment?:string;
 }
 export class HistoryDto { @ApiPropertyOptional({enum:['today','week','all']}) @IsOptional() @IsIn(['today','week','all']) period:'today'|'week'|'all' = 'all'; }
+export class OrdersHistoryDto {
+  @ApiPropertyOptional({enum:['today','week','month','all']}) @IsOptional() @IsIn(['today','week','month','all']) period:'today'|'week'|'month'|'all' = 'all';
+  @ApiPropertyOptional({format:'date-time',description:'Inclusive creation date boundary.'}) @IsOptional() @IsISO8601({strict:true}) from?:string;
+  @ApiPropertyOptional({format:'date-time',description:'Exclusive creation date boundary.'}) @IsOptional() @IsISO8601({strict:true}) to?:string;
+}
 export class PushTokenDto {
   @ApiProperty() @IsString() @MinLength(20) @MaxLength(4096) token!:string;
   @ApiProperty({enum:['android','ios']}) @IsIn(['android','ios']) platform!:string;

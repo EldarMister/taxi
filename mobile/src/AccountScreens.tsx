@@ -10,6 +10,9 @@ import type { AppConfig, Balance, Language, Order, User } from './types';
 import { Avatar, Button, Car, colors, Empty, Icon, km, localize, mins, money, Route, s as lightUi, shortAddress, ToggleSwitch, tr } from './ui';
 import { ClientHistoryRow, ClientTripHistoryDetail } from './ClientTripHistory';
 import { writeSelectedLanguage } from './auth/languageStore';
+import { DriverTripHistory } from './DriverTripHistory';
+import { DriverProfileScreen, DriverSettingsScreen, type DriverPreferencesPatch } from './DriverAccountScreens';
+import { DriverBalanceScreen } from './DriverBalanceScreen';
 
 export type Page = 'home' | 'profile' | 'history' | 'balance' | 'settings' | 'support' | 'payment' | 'registration';
 const completedOrders = (orders: Order[]) => orders.filter(order => order.status === 'COMPLETED');
@@ -41,7 +44,7 @@ function HistoryRow({ order, user, expanded, onPress }: { order: Order; user: Us
   </View>;
 }
 
-export function AccountScreen({ page, user, config, onUser, onError, onOnline, onNavigate, busy, themePreference, onThemePreferenceChange, historyDetailId, onHistoryDetailId, voiceEnabled, onVoiceEnabledChange }: { page: Page; user: User; config: AppConfig | null; onUser: (user: User) => void; onError: (error: string) => void; onOnline: (online: boolean) => void; onNavigate: (page: Page) => void; busy: boolean; themePreference: ThemePreference; onThemePreferenceChange: (preference: ThemePreference) => void; historyDetailId: string | null; onHistoryDetailId: (id: string | null) => void; voiceEnabled?: boolean; onVoiceEnabledChange?: (enabled: boolean) => void }) {
+export function AccountScreen({ page, user, config, onUser, onError, onOnline, onNavigate, onMenu, busy, themePreference, onThemePreferenceChange, historyDetailId, onHistoryDetailId, voiceEnabled, onVoiceEnabledChange }: { page: Page; user: User; config: AppConfig | null; onUser: (user: User) => void; onError: (error: string) => void; onOnline: (online: boolean) => void; onNavigate: (page: Page) => void; onMenu?: () => void; busy: boolean; themePreference: ThemePreference; onThemePreferenceChange: (preference: ThemePreference) => void; historyDetailId: string | null; onHistoryDetailId: (id: string | null) => void; voiceEnabled?: boolean; onVoiceEnabledChange?: (enabled: boolean) => void }) {
   const styles = useAccountStyles();
   const s = useAccountUi();
   const t = tr(user.language);
@@ -54,8 +57,7 @@ export function AccountScreen({ page, user, config, onUser, onError, onOnline, o
   const [period, setPeriod] = useState('today');
   const [history, setHistory] = useState<Order[]>([]);
   const [balance, setBalance] = useState<Balance | null>(null);
-  const [earnings, setEarnings] = useState<{ today: Order[]; week: Order[] } | null>(null);
-  const [loading, setLoading] = useState(['history', 'balance'].includes(page) || (page === 'profile' && user.role === 'DRIVER'));
+  const [loading, setLoading] = useState(['history', 'balance'].includes(page));
   const [expandedOrder, setExpandedOrder] = useState<string | null>(null);
   const [historyMapInteracting, setHistoryMapInteracting] = useState(false);
   const [notificationPermission, setNotificationPermission] = useState<boolean | null>(null);
@@ -63,7 +65,8 @@ export function AccountScreen({ page, user, config, onUser, onError, onOnline, o
   useEffect(() => setHistoryMapInteracting(false), [page, historyDetailId]);
 
   async function refresh() {
-    if (!['history', 'balance'].includes(page) && !(page === 'profile' && user.role === 'DRIVER')) return;
+    if (page === 'history' && user.role === 'DRIVER') return;
+    if (!['history', 'balance'].includes(page)) return;
     const version = ++requestVersion.current;
     setLoading(true);
     try {
@@ -73,9 +76,6 @@ export function AccountScreen({ page, user, config, onUser, onError, onOnline, o
       } else if (page === 'balance') {
         const result = await api.request<Balance>('/driver/balance');
         if (version === requestVersion.current) setBalance(result);
-      } else {
-        const [deposit, today, week] = await Promise.all([api.request<Balance>('/driver/balance'), api.request<Order[]>('/orders/history?period=today'), api.request<Order[]>('/orders/history?period=week')]);
-        if (version === requestVersion.current) { setBalance(deposit); setEarnings({ today, week }); }
       }
     } catch (error) { if (version === requestVersion.current) onError(messageOf(error)); }
     finally { if (version === requestVersion.current) setLoading(false); }
@@ -109,11 +109,12 @@ export function AccountScreen({ page, user, config, onUser, onError, onOnline, o
       } else onUser(await api.patch<User>('/users/me', patch));
       if (patch.notifications === true) void registerPushNotifications();
       if (patch.name !== undefined) setEditing(false);
+      return true;
     }
-    catch (error) { onError(messageOf(error)); }
+    catch (error) { onError(messageOf(error)); return false; }
     finally { setSaving(false); }
   }
-  async function updatePreferences(patch: Partial<Pick<NonNullable<User['driverProfile']>, 'acceptsEconomy' | 'acceptsComfort' | 'acceptsDeliveryCar' | 'acceptsDeliveryTruck'>>) {
+  async function updatePreferences(patch: DriverPreferencesPatch) {
     if (!user.driverProfile) return;
     setSaving(true);
     try { onUser(await api.patch<User>('/driver/preferences', patch)); }
@@ -157,7 +158,17 @@ export function AccountScreen({ page, user, config, onUser, onError, onOnline, o
   }, []);
   const driverProfile = user.driverProfile;
 
-  return <ScrollView key={page === 'history' && user.role === 'CLIENT' ? historyDetailId || 'history-list' : page} scrollEnabled={!historyMapInteracting} showsVerticalScrollIndicator={false} style={{ backgroundColor: isDark ? palette.background : page === 'profile' ? '#F3F8FC' : '#FFFFFF' }} contentContainerStyle={styles.page} refreshControl={['history', 'balance'].includes(page) || (page === 'profile' && user.role === 'DRIVER') ? <RefreshControl refreshing={loading} onRefresh={refresh} tintColor={palette.accent}/> : undefined} keyboardShouldPersistTaps="handled">
+  if (page === 'history' && user.role === 'DRIVER') return <DriverTripHistory user={user} onBack={() => onNavigate('home')} onError={onError}/>;
+  if (page === 'balance' && user.role === 'DRIVER') return <DriverBalanceScreen balance={balance} loading={loading} language={user.language} onRefresh={() => void refresh()} onMenu={onMenu ?? (() => onNavigate('home'))}/>;
+  if (page === 'settings' && user.role === 'DRIVER') return <DriverSettingsScreen user={user} saving={saving} voiceEnabled={voiceEnabled ?? true} onVoiceEnabledChange={onVoiceEnabledChange} notificationGranted={notificationPermission} onNotifications={notifications => void update({ notifications })} onOpenNotificationSettings={() => void openNotificationSettings().catch(error => onError(messageOf(error)))} themePreference={themePreference} onThemePreferenceChange={onThemePreferenceChange} onLanguage={language => update({ language })} onPreferences={patch => void updatePreferences(patch)} onMenu={onMenu ?? (() => onNavigate('home'))}/>;
+  if (page === 'profile' && user.role === 'DRIVER') return <DriverProfileScreen user={user} busy={busy} editing={editing} onEdit={() => { setName(user.name || ''); setEditing(!editing); }} onOnline={onOnline} onNavigate={onNavigate} onMenu={onMenu ?? (() => onNavigate('home'))} editor={<View style={{ gap: 11 }}>
+    <Text style={s.h3}>{local('Личные данные', 'Жеке маалыматтар')}</Text>
+    <Button secondary label={t(user.photoUrl ? 'Изменить фото' : 'Выбрать фото')} busy={avatarSaving} disabled={saving} onPress={() => void chooseAvatar()}/>
+    <Text style={s.caption}>{t('Имя')}</Text><TextInput style={s.input} value={name} onChangeText={setName} maxLength={80} accessibilityLabel={t('Имя')}/>
+    <Button label={t('Сохранить')} busy={saving} disabled={avatarSaving || !name.trim()} onPress={() => void update({ name: name.trim() })}/>
+  </View>}/>;
+
+  return <ScrollView key={page === 'history' && user.role === 'CLIENT' ? historyDetailId || 'history-list' : page} scrollEnabled={!historyMapInteracting} showsVerticalScrollIndicator={false} style={{ backgroundColor: isDark ? palette.background : page === 'profile' ? '#F3F8FC' : '#FFFFFF' }} contentContainerStyle={styles.page} refreshControl={['history', 'balance'].includes(page) ? <RefreshControl refreshing={loading} onRefresh={refresh} tintColor={palette.accent}/> : undefined} keyboardShouldPersistTaps="handled">
     {page === 'profile' && <>
       <View style={styles.profileCard}>
         <Pressable accessibilityRole="button" accessibilityLabel={local('Редактировать профиль', 'Профилди түзөтүү')} accessibilityState={{ expanded: editing }} onPress={() => { setName(user.name || ''); setEditing(!editing); }} style={styles.profilePerson}>
@@ -181,16 +192,6 @@ export function AccountScreen({ page, user, config, onUser, onError, onOnline, o
         <Text style={s.caption}>{t('Имя')}</Text>
         <TextInput style={s.input} value={name} onChangeText={setName} maxLength={80} accessibilityLabel={t('Имя')}/>
         <Button label={t('Сохранить')} busy={saving} disabled={avatarSaving || !name.trim()} onPress={() => update({ name: name.trim() })}/>
-      </View>}
-      {user.role === 'DRIVER' && <View style={styles.profileCard}>
-        <Pressable accessibilityRole="button" accessibilityLabel={t('Баланс')} onPress={() => onNavigate('balance')} style={s.row}><View style={styles.walletIcon}><Icon name="wallet-outline" color={palette.accent} size={32}/></View><View style={{ flex: 1, gap: 4 }}><Text style={s.muted}>{t('Баланс')}</Text><Text style={styles.balanceValue}>{balance ? money(balance.deposit) : '—'}</Text></View><Icon name="chevron-forward" color={palette.muted} size={19}/></Pressable>
-        <View style={styles.divider}/>
-        <View style={styles.earningsRow}>
-          <View style={styles.earning}><Icon name="bar-chart" color={palette.accent} size={24}/><View style={{ flex: 1, gap: 4 }}><Text style={s.caption}>{t('Сегодня')}</Text><Text style={styles.earningValue}>{earnings ? money(income(earnings.today)) : '—'}</Text><Text style={s.caption}>{earnings ? user.language === 'en' ? `${completedOrders(earnings.today).length} trips` : local(`${completedOrders(earnings.today).length} поездок`, `${completedOrders(earnings.today).length} сапар`) : '—'}</Text></View></View>
-          <View style={styles.statDivider}/>
-          <View style={styles.earning}><Icon name="calendar" color={palette.accent} size={24}/><View style={{ flex: 1, gap: 4 }}><Text style={s.caption}>{t('Неделя')}</Text><Text style={styles.earningValue}>{earnings ? money(income(earnings.week)) : '—'}</Text><Text style={s.caption}>{earnings ? user.language === 'en' ? `${completedOrders(earnings.week).length} trips` : local(`${completedOrders(earnings.week).length} поездок`, `${completedOrders(earnings.week).length} сапар`) : '—'}</Text></View></View>
-        </View>
-        <Button label={t('История операций')} onPress={() => onNavigate('balance')}/>
       </View>}
       <View style={[styles.profileCard, { paddingVertical: 2 }]}>{user.role === 'DRIVER' ? <><MenuRow icon="shield-checkmark-outline" label={t('Допуски и документы')} onPress={() => onNavigate('registration')}/><View style={styles.menuDivider}/></> : null}<MenuRow icon="settings-outline" label={t('Настройки')} onPress={() => onNavigate('settings')}/><View style={styles.menuDivider}/><MenuRow icon="help-circle-outline" label={t('Поддержка')} onPress={() => onNavigate('support')}/><View style={styles.menuDivider}/><MenuRow icon="receipt-outline" label={user.role === 'DRIVER' ? t('История заказов') : t('Способы оплаты')} onPress={() => onNavigate(user.role === 'DRIVER' ? 'history' : 'payment')}/></View>
     </>}

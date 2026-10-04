@@ -87,3 +87,10 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
 export function useTheme(): ThemeContextValue {
   return useContext(ThemeContext) || lightFallback;
 }
+
+/** A screen can retain its own light presentation without changing user settings. */
+export function LightThemeSurface({ children }: { children: React.ReactNode }) {
+  const current = useTheme();
+  const context = useMemo<ThemeContextValue>(() => ({ ...current, resolved: 'light', isDark: false, palette: themePalettes.light }), [current]);
+  return <ThemeContext.Provider value={context}>{children}</ThemeContext.Provider>;
+}

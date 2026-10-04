@@ -7,7 +7,7 @@ import sharp from 'sharp';
 import { Actor, AuthGuard, AuthService, RateLimits } from './auth';
 import { AppConfig } from './config';
 import { DriverService } from './driver';
-import { CreateOrderDto, DriverPositionDto, DriverPreferencesDto, HistoryDto, MessageDto, PhotoMessageDto, OnlineDto, PhoneDto, ProfileDto, PushTokenDto, QuoteDto, RatingDto, ReadNotificationsDto, RefreshDto, RemovePushTokenDto, TopupDto, VerifyDriverDto, VerifyDto } from './dto';
+import { CreateOrderDto, DriverPositionDto, DriverPreferencesDto, OrdersHistoryDto, MessageDto, PhotoMessageDto, OnlineDto, PhoneDto, ProfileDto, PushTokenDto, QuoteDto, RatingDto, ReadNotificationsDto, RefreshDto, RemovePushTokenDto, TopupDto, VerifyDriverDto, VerifyDto } from './dto';
 import { OrdersService } from './orders';
 import { PrismaService } from './prisma.service';
 import { AdminGuard } from './admin.security';
@@ -138,7 +138,7 @@ export class OrdersController {
   @Post('quote') quote(@Req() req:AuthedRequest,@Body() dto:QuoteDto) {return this.orders.quote(req.actor,dto);}
   @Post() create(@Req() req:AuthedRequest,@Body() dto:CreateOrderDto) {return this.orders.create(req.actor,dto);}
   @Get('active') async active(@Req() req:AuthedRequest,@Res() response:Response) {return response.json(await this.orders.active(req.actor));}
-  @Get('history') history(@Req() req:AuthedRequest,@Query() query:HistoryDto) {return this.orders.history(req.actor,query.period);}
+  @Get('history') history(@Req() req:AuthedRequest,@Query() query:OrdersHistoryDto) {return this.orders.history(req.actor,query.period,query.from,query.to);}
   @Get(':id') get(@Req() req:AuthedRequest,@Param('id',ParseUUIDPipe) id:string) {return this.orders.get(req.actor,id);}
   @Post(':id/accept') accept(@Req() req:AuthedRequest,@Param('id',ParseUUIDPipe) id:string) {return this.orders.accept(req.actor,id);}
   @Post(':id/skip') skip(@Req() req:AuthedRequest,@Param('id',ParseUUIDPipe) id:string) {return this.orders.skip(req.actor,id);}

@@ -16,6 +16,12 @@ export const colors = { blue: '#087FFF', blueDark: '#0067D9', ink: '#101D38', mu
 export const tr = (language: Language) => (text: string) => language === 'ky' ? (ky[text] || text) : language === 'en' ? (en[text] || text) : text;
 export const localize = (language: Language, russian: string, kyrgyz: string) => language === 'ky' ? kyrgyz : tr(language)(russian);
 const ky: Record<string, string> = {
+  'Месяц': 'Ай',
+  'Картой': 'Карта менен',
+  'Наличными': 'Накталай',
+  'Бонусы': 'Бонустар',
+  'Выберите дату': 'Күндү тандаңыз',
+  'Отмена': 'Жокко чыгаруу',
   'Отзывы': 'Пикирлер',
   'Отзывы о ресторане': 'Ресторан тууралуу пикирлер',
   'Закрыть отзывы ресторана': 'Ресторандын пикирлерин жабуу',
@@ -52,6 +58,12 @@ const ky: Record<string, string> = {
   'Грузовой': 'Жүк ташуу',
   'Доставка больших грузов': 'Ири жүктөрдү жеткирүү',
   'Доставка еды': 'Тамак жеткирүү',
+  'Из ресторанов': 'Ресторандардан',
+  'Обычные поездки': 'Кадимки сапарлар',
+  'Доставка на машине': 'Унаа менен жеткирүү',
+  'Небольшие чистые грузы': 'Чакан таза жүктөр',
+  'Грузовая доставка': 'Жүк жеткирүү',
+  'Крупные грузы': 'Чоң жүктөр',
   'Любимые рестораны рядом': 'Сүйүктүү ресторандар жаныңызда',
   'Куда поедем?': 'Кайда барабыз?',
   'Еда': 'Тамак',
@@ -410,14 +422,15 @@ export function Icon({ name, size = 22, color }: { name: React.ComponentProps<ty
     : color;
   return <Ionicons name={name} size={size} color={themedColor} />;
 }
-export function ToggleSwitch({ value, onValueChange, disabled = false, label }: { value: boolean; onValueChange: (value: boolean) => void; disabled?: boolean; label: string }) {
+export function ToggleSwitch({ value, onValueChange, disabled = false, label, accentColor, inactiveColor }: { value: boolean; onValueChange: (value: boolean) => void; disabled?: boolean; label: string; accentColor?: string; inactiveColor?: string }) {
   const { isDark, palette } = useTheme();
   const progress = useRef(new Animated.Value(value ? 1 : 0)).current;
   useEffect(() => {
     Animated.spring(progress, { toValue: value ? 1 : 0, useNativeDriver: true, damping: 18, stiffness: 260, mass: .8 }).start();
   }, [progress, value]);
-  return <Pressable accessibilityRole="switch" accessibilityLabel={label} accessibilityState={{ checked: value, disabled }} disabled={disabled} hitSlop={8} onPress={() => onValueChange(!value)} style={({ pressed }) => [s.toggleTrack, value && s.toggleTrackOn, isDark && { backgroundColor: value ? palette.accent : palette.elevated, borderColor: value ? palette.accent : palette.line }, disabled && { opacity: .48 }, pressed && !disabled && { transform: [{ scale: .96 }] }]}>
-    <Animated.View style={[s.toggleThumb, isDark && { backgroundColor: value ? palette.background : palette.ink }, { transform: [{ translateX: progress.interpolate({ inputRange: [0, 1], outputRange: [2, 22] }) }] }]} />
+  const trackColor = value ? accentColor : inactiveColor;
+  return <Pressable accessibilityRole="switch" accessibilityLabel={label} accessibilityState={{ checked: value, disabled }} disabled={disabled} hitSlop={8} onPress={() => onValueChange(!value)} style={({ pressed }) => [s.toggleTrack, value && s.toggleTrackOn, isDark && { backgroundColor: value ? palette.accent : palette.elevated, borderColor: value ? palette.accent : palette.line }, trackColor && { backgroundColor: trackColor, borderColor: trackColor }, disabled && { opacity: accentColor ? .8 : .48 }, pressed && !disabled && { transform: [{ scale: .96 }] }]}>
+    <Animated.View style={[s.toggleThumb, isDark && { backgroundColor: value ? palette.background : palette.ink }, accentColor && { backgroundColor: '#FFFFFF', elevation: 0, shadowOpacity: 0 }, { transform: [{ translateX: progress.interpolate({ inputRange: [0, 1], outputRange: [2, 22] }) }] }]} />
   </Pressable>;
 }
 export function PickupIcon({ size = 24, color }: { size?: number; color?: string }) {
@@ -456,15 +469,16 @@ export function IconButton({ name, onPress, label }: { name: React.ComponentProp
   const { isDark, palette } = useTheme();
   return <Pressable accessibilityRole="button" accessibilityLabel={label} onPress={onPress} style={({ pressed }) => [s.iconButton, isDark && { backgroundColor: palette.surface, borderColor: palette.line }, pressed && { opacity: .6 }]}><Icon name={name}/></Pressable>;
 }
-export function Avatar({ user, size = 60 }: { user?: Partial<User> | null; size?: number }) {
+export function Avatar({ user, size = 60, fallbackBackground, fallbackColor }: { user?: Partial<User> | null; size?: number; fallbackBackground?: string; fallbackColor?: string }) {
   const { isDark, palette } = useTheme();
   const photoUrl = user?.photoUrl;
   const uri = photoUrl ? (/^https?:\/\//i.test(photoUrl) ? photoUrl : `${api.baseUrl}/${photoUrl.replace(/^\/+/, '')}`) : null;
-  return uri ? <Image source={{ uri }} style={{ width: size, height: size, borderRadius: size / 2, backgroundColor: palette.elevated }}/> : <View style={[s.avatar, isDark && { backgroundColor: palette.elevated }, { width: size, height: size, borderRadius: size / 2 }]}><Text style={{ fontSize: size * .35, color: palette.accent, fontWeight: '700' }}>{(user?.name || user?.phone || '?').replace('+', '').slice(0, 2).toUpperCase()}</Text></View>;
+  return uri ? <Image source={{ uri }} style={{ width: size, height: size, borderRadius: size / 2, backgroundColor: palette.elevated }}/> : <View style={[s.avatar, isDark && { backgroundColor: palette.elevated }, fallbackBackground && { backgroundColor: fallbackBackground }, { width: size, height: size, borderRadius: size / 2 }]}><Text style={{ fontSize: size * .35, color: fallbackColor ?? palette.accent, fontWeight: '700' }}>{(user?.name || user?.phone || '?').replace('+', '').slice(0, 2).toUpperCase()}</Text></View>;
 }
-export function Route({ order, pickup, dropoff, t = (text: string) => text }: { order?: Pick<Order, 'pickup' | 'dropoff'>; pickup?: string; dropoff?: string; t?: (text: string) => string }) {
+export function Route({ order, pickup, dropoff, fullAddresses = false, t = (text: string) => text }: { order?: Pick<Order, 'pickup' | 'dropoff'>; pickup?: string; dropoff?: string; fullAddresses?: boolean; t?: (text: string) => string }) {
   const { isDark, palette } = useTheme();
-  return <View style={s.route}><View style={s.routePins}><Icon name="radio-button-on" color={palette.accent} size={20}/><View style={[s.routeLine, isDark && { backgroundColor: palette.line }]}/><Icon name="location" size={21}/></View><View style={{ flex: 1, gap: 17 }}><View><Text style={[s.caption, isDark && { color: palette.muted }]}>{t('Откуда')}</Text><Text style={[s.routeAddress, isDark && { color: palette.ink }]} numberOfLines={2}>{shortAddress(order?.pickup.address || pickup) || '—'}</Text></View><View><Text style={[s.caption, isDark && { color: palette.muted }]}>{t('Куда')}</Text><Text style={[s.routeAddress, isDark && { color: palette.ink }]} numberOfLines={2}>{shortAddress(order?.dropoff.address || dropoff) || '—'}</Text></View></View></View>;
+  const address = (value?: string) => (fullAddresses ? value : shortAddress(value)) || '—';
+  return <View style={s.route}><View style={s.routePins}><Icon name="radio-button-on" color={palette.accent} size={20}/><View style={[s.routeLine, isDark && { backgroundColor: palette.line }]}/><Icon name="location" size={21}/></View><View style={{ flex: 1, gap: 17 }}><View><Text style={[s.caption, isDark && { color: palette.muted }]}>{t('Откуда')}</Text><Text style={[s.routeAddress, isDark && { color: palette.ink }]} numberOfLines={fullAddresses ? undefined : 2}>{address(order?.pickup.address || pickup)}</Text></View><View><Text style={[s.caption, isDark && { color: palette.muted }]}>{t('Куда')}</Text><Text style={[s.routeAddress, isDark && { color: palette.ink }]} numberOfLines={fullAddresses ? undefined : 2}>{address(order?.dropoff.address || dropoff)}</Text></View></View></View>;
 }
 export function Empty({ icon = 'car-outline', title, subtitle }: { icon?: React.ComponentProps<typeof Ionicons>['name']; title: string; subtitle?: string }) {
   const { isDark, palette } = useTheme();

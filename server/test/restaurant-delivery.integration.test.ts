@@ -44,7 +44,7 @@ before(async () => {
   const password = `delivery-fixture-${randomUUID()}`;
   await db.restaurantAccount.create({ data: { id: ids.owner, phone: ownerPhone, name: 'Delivery fixture owner', passwordHash: await hashAdminPassword(password), memberships: { create: { restaurantId: ids.restaurant, role: 'OWNER', permissions: [] } } } });
   await db.user.create({ data: { id: ids.client, phone: `+998${digits}`, name: 'Delivery fixture client', role: 'CLIENT' } });
-  await db.user.create({ data: { id: ids.driver, phone: `+999${digits}`, name: 'Delivery fixture driver', role: 'DRIVER', driverProfile: { create: { verified: true, online: false, deposit: 1_000_000, transportClass: 'COMFORT', acceptsEconomy: false, acceptsComfort: false, acceptsDeliveryCar: true, acceptsDeliveryTruck: false,
+  await db.user.create({ data: { id: ids.driver, phone: `+999${digits}`, name: 'Delivery fixture driver', role: 'DRIVER', driverProfile: { create: { verified: true, online: false, deposit: 1_000_000, transportClass: 'COMFORT', acceptsEconomy: false, acceptsComfort: false, acceptsDeliveryCar: true, acceptsDeliveryFood: true, acceptsDeliveryTruck: false,
     vehicle: { create: { make: 'Toyota fixture', color: 'Белый', plate: `TEST-${runId}` } } } } } });
   const tariff = { name: 'Isolated delivery integration', description: 'Only a test fixture', kind: 'DELIVERY_CAR' as const, requiredClass: 'ECONOMY' as const, basePrice: 50, pricePerKm: 10, pricePerMinute: 2, minimumPrice: 50, commissionBps: 1000, waitingGraceMinutes: 10, freeWaitingMinutes: 5, waitingPricePerMinute: 0 };
   await db.tariff.create({ data: { id: ids.tariff, ...tariff } });
@@ -139,6 +139,23 @@ test('Atlas restaurant delivery uses one real car order, synchronizes driver sta
     assert.equal((await api.get('/api/orders/active').set(auth(clientToken)).expect(200)).body, null);
     const foodActive = (await api.get('/api/food/orders/active-all').set(auth(clientToken)).expect(200)).body;
     assert.ok(foodActive.some((order: any) => order.id === foodOrderId));
+  });
+  await t.test('food preference persists independently and turning it off rejects an already offered restaurant trip', async () => {
+    const disabled = await api.patch('/api/driver/preferences').set(auth(driverToken)).send({ acceptsDeliveryFood: false }).expect(200);
+    assert.equal(disabled.body.driverProfile.acceptsDeliveryCar, true);
+    assert.equal(disabled.body.driverProfile.acceptsDeliveryFood, false);
+    const restored = await api.get('/api/users/me').set(auth(driverToken)).expect(200);
+    assert.equal(restored.body.driverProfile.acceptsDeliveryFood, false);
+    assert.equal((await db.driverProfile.findUniqueOrThrow({ where: { userId: ids.driver } })).acceptsDeliveryFood, false);
+    assert.ok(!(await api.get('/api/driver/offers').set(auth(driverToken)).expect(200)).body.some((order: any) => order.id === deliveryId));
+    await api.post(`/api/orders/${deliveryId}/accept`).set(auth(driverToken)).expect(403);
+    await api.patch('/api/driver/preferences').set(auth(driverToken)).send({ acceptsDeliveryFood: true }).expect(200);
+    const foodOnly = await api.patch('/api/driver/preferences').set(auth(driverToken)).send({ acceptsDeliveryCar: false }).expect(200);
+    assert.equal(foodOnly.body.driverProfile.acceptsDeliveryCar, false);
+    assert.equal(foodOnly.body.driverProfile.acceptsDeliveryFood, true);
+    const saved = await db.driverProfile.findUniqueOrThrow({ where: { userId: ids.driver } });
+    assert.equal(saved.acceptsDeliveryCar, false);
+    assert.equal(saved.acceptsDeliveryFood, true);
   });
   await t.test('driver acceptance and arrival keep food ready; beginning delivery moves it to DELIVERING', async () => {
     const offer = (await api.get('/api/driver/offers').set(auth(driverToken)).expect(200)).body.find((order: any) => order.id === deliveryId);

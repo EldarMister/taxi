@@ -37,5 +37,6 @@ export function historySince(period:string, now = new Date()) {
   // Business timezone is Bishkek (UTC+6), independent of server/container timezone.
   const local = new Date(now.getTime()+6*3600000);
   const midnight = Date.UTC(local.getUTCFullYear(),local.getUTCMonth(),local.getUTCDate())-6*3600000;
+  if (period === 'month') return new Date(Date.UTC(local.getUTCFullYear(),local.getUTCMonth(),1)-6*3600000);
   return new Date(midnight - (period === 'week' ? 6*86400000 : 0));
 }

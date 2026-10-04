@@ -29,5 +29,7 @@ test('driver lifecycle rejects skipping arrival and client role changes',()=>{
 test('history boundaries follow Bishkek even before UTC midnight',()=>{
   assert.equal(historySince('today',new Date('2026-09-05T20:00:00Z'))?.toISOString(),'2026-09-05T18:00:00.000Z');
   assert.equal(historySince('week',new Date('2026-09-05T20:00:00Z'))?.toISOString(),'2026-08-30T18:00:00.000Z');
+  assert.equal(historySince('month',new Date('2026-09-30T20:00:00Z'))?.toISOString(),'2026-09-30T18:00:00.000Z');
+  assert.equal(historySince('month',new Date('2026-01-31T20:00:00Z'))?.toISOString(),'2026-01-31T18:00:00.000Z');
   assert.equal(historySince('all'),undefined);
 });
