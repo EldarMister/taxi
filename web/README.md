@@ -43,3 +43,7 @@ The services section uses the original illustration at `public/images/atlas-serv
 Logos are original image copies. Atlas and Atlas pro app icons have rounded corners in every placement. Download cards and the product menu use `atlas-client-original.png` for Atlas and `atlas-pro-original.png` for Atlas pro. The header retains the original `atlas-logo.png` wordmark. The hero badge, Atlas pro section badge and feature chip, services badge, and footer use the supplied `atlas-chevron-supplied.png` transparent black chevron. On the dark section, a light backing makes the black image visible without recoloring it. Other general brand placements use `atlas-brand-original.png`. All three hero phones remain visible on mobile and desktop.
 
 The current Atlas pro cover assets are `atlas-pro-cover-refined.png` and `atlas-pro-cover-mobile-refined.png`. They preserve the original light screenshot appearance, with restrained graphite surroundings and a neutral A monogram avatar in the profile screen. Generation and edit prompts are recorded in `design/atlas-pro-cover.prompt.md`.
+
+## Railway source
+
+The independent website service is connected to `EldarMister/taxi`, branch `codex/driver-road-signs`, with Root Directory `/web`. GitHub pushes trigger deployment. The live site is https://atlas-app.up.railway.app/ and its admin panel is `/admin/`. The application API retains its existing separate service and hostname.
