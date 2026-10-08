@@ -20,6 +20,7 @@ ARG ATLAS_RELEASE_VERSION
 RUN node scripts/fetch-release-downloads.mjs && npm run build
 
 FROM nginx:stable-alpine
+LABEL org.opencontainers.image.title="Atlas website"
 ENV PORT=8080 API_UPSTREAM=server:3000
 # Only substitute runtime configuration values; preserve nginx's $uri/$host.
 ENV NGINX_ENVSUBST_FILTER="^(PORT|API_UPSTREAM|DNS_RESOLVER)$"
