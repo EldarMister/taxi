@@ -21,7 +21,7 @@ RUN node scripts/fetch-release-downloads.mjs && npm run build
 
 FROM nginx:stable-alpine
 ENV PORT=8080 API_UPSTREAM=server:3000
-# Only substitute our two configuration values; preserve nginx's $uri/$host.
+# Only substitute runtime configuration values; preserve nginx's $uri/$host.
 ENV NGINX_ENVSUBST_FILTER="^(PORT|API_UPSTREAM|DNS_RESOLVER)$"
 COPY deploy/10-atlas-resolver.envsh /docker-entrypoint.d/10-atlas-resolver.envsh
 RUN chmod +x /docker-entrypoint.d/10-atlas-resolver.envsh
