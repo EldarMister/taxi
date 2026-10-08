@@ -12,7 +12,15 @@ export async function hydrateReleaseDownloads({ base, destination, version, fetc
   const origin = new URL(base);
   if (origin.protocol !== 'https:' || origin.username || origin.password) throw new Error('Release source must be HTTPS');
   await mkdir(destination, { recursive: true });
-  const expected = JSON.parse(await readFile(resolve(destination, 'manifest.json'), 'utf8'));
+  let expected = {};
+  try {
+    expected = JSON.parse(await readFile(resolve(destination, 'manifest.json'), 'utf8'));
+  } catch (error) {
+    if (error.code !== 'ENOENT') throw error;
+    // Generated APK metadata is deliberately excluded from Git. A fresh
+    // checkout must pin the release version before trusting the live manifest.
+    if (!version) throw new Error('Pin the release version for a fresh checkout');
+  }
   const response = await fetcher(new URL('/downloads/manifest.json', origin), { signal: AbortSignal.timeout(30000) });
   if (!response.ok) throw new Error('Release manifest unavailable');
   const remote = await response.json();

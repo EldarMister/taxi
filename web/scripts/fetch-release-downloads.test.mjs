@@ -34,3 +34,12 @@ test('a corrupt second APK leaves previous files intact and removes temporary fi
   for (const variant of ['client', 'driver']) assert.equal(await readFile(join(context.destination, `atlas-${variant}.apk`), 'utf8'), 'previous');
   assert.equal((await readdir(context.destination)).some(name => name.endsWith('.download')), false);
 });
+
+test('a clean GitHub checkout hydrates a pinned release without local APK metadata', async t => {
+  const context = await fixture(t);
+  for (const name of ['manifest.json', 'atlas-client.apk', 'atlas-driver.apk']) await rm(join(context.destination, name));
+  await assert.rejects(hydrateReleaseDownloads({ ...context, base: 'https://atlas.example' }), /Pin the release version/);
+  const result = await hydrateReleaseDownloads({ ...context, base: 'https://atlas.example', version: '1.2.08' });
+  assert.deepEqual(result, context.manifest);
+  for (const variant of ['client', 'driver']) assert.deepEqual(await readFile(join(context.destination, `atlas-${variant}.apk`)), context.data[variant]);
+});
