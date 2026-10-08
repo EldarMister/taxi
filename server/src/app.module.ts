@@ -4,6 +4,7 @@ import { Module } from '@nestjs/common';
 import { JwtModule } from '@nestjs/jwt';
 import { ScheduleModule } from '@nestjs/schedule';
 import { AuthGuard, AuthService, RateLimits } from './auth';
+import { OtpDelivery } from './otp-delivery';
 import { AppConfig } from './config';
 import { DriverService } from './driver';
 import { RealtimeEvents } from './events';
@@ -33,5 +34,5 @@ import { RestaurantAuthGuard, RestaurantAuthService } from './restaurant-auth';
 import { RestaurantService } from './restaurant';
 import { RestaurantDeliveryService } from './restaurant-delivery';
 import { AdminRestaurantAccountsController, RestaurantAuthController, RestaurantController } from './restaurant.http';
-@Module({imports:[JwtModule.register({}),ScheduleModule.forRoot()],controllers:[AccountDeletionController,DriverDetailsController,AdminCitiesController,TrackingController,AuthController,UsersController,OrdersController,DriverController,RegistrationController,RegistrationAdminController,AdminController,PublicController,PlacesController,RoutesController,FoodCatalogController,FoodOrdersController,AdminFoodController,AdminAuthController,AdminOperationsController,ContentController,AdminCatalogController,RestaurantAuthController,RestaurantController,AdminRestaurantAccountsController],providers:[ProfileSelfService,CitiesService,TrackingService,PrismaService,AppConfig,AuthService,AuthGuard,RateLimits,RoutingService,RoadFeaturesService,PushService,RealtimeEvents,OrdersService,DriverService,RegistrationService,RegistrationUploadGate,RegistrationAdminService,TaxiGateway,BackgroundJobs,PlacesService,FoodService,AdminAuditService,AdminGuard,AdminAuthService,AdminService,ContentService,RestaurantAuthGuard,RestaurantAuthService,RestaurantService,RestaurantDeliveryService]})
+@Module({imports:[JwtModule.register({}),ScheduleModule.forRoot()],controllers:[AccountDeletionController,DriverDetailsController,AdminCitiesController,TrackingController,AuthController,UsersController,OrdersController,DriverController,RegistrationController,RegistrationAdminController,AdminController,PublicController,PlacesController,RoutesController,FoodCatalogController,FoodOrdersController,AdminFoodController,AdminAuthController,AdminOperationsController,ContentController,AdminCatalogController,RestaurantAuthController,RestaurantController,AdminRestaurantAccountsController],providers:[ProfileSelfService,CitiesService,TrackingService,PrismaService,AppConfig,OtpDelivery,AuthService,AuthGuard,RateLimits,RoutingService,RoadFeaturesService,PushService,RealtimeEvents,OrdersService,DriverService,RegistrationService,RegistrationUploadGate,RegistrationAdminService,TaxiGateway,BackgroundJobs,PlacesService,FoodService,AdminAuditService,AdminGuard,AdminAuthService,AdminService,ContentService,RestaurantAuthGuard,RestaurantAuthService,RestaurantService,RestaurantDeliveryService]})
 export class AppModule {}

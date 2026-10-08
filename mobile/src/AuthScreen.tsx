@@ -10,7 +10,7 @@ import { readSelectedLanguage, writeSelectedLanguage } from './auth/languageStor
 import { useAuthDesign } from './auth/design';
 import { fonts } from './design/typography';
 
-type CodeResponse = { retryAfterSeconds?: number; development?: boolean; developmentCode?: string };
+type CodeResponse = { retryAfterSeconds?: number; channel?: 'whatsapp' | 'sms' | 'development'; development?: boolean; developmentCode?: string };
 
 export function AuthScreen({ onLogin }: { onLogin: (session: Session, language: Language) => Promise<void> }) {
   const { isDark, palette } = useAuthDesign();
@@ -31,6 +31,7 @@ export function AuthScreen({ onLogin }: { onLogin: (session: Session, language: 
   const [verified, setVerified] = useState(false);
   const [error, setError] = useState('');
   const [developmentCode, setDevelopmentCode] = useState('');
+  const [deliveryChannel, setDeliveryChannel] = useState<CodeResponse['channel']>('sms');
   const [retryAt, setRetryAt] = useState(0);
   const [secondsLeft, setSecondsLeft] = useState(0);
   const [codeFocused, setCodeFocused] = useState(false);
@@ -146,6 +147,7 @@ export function AuthScreen({ onLogin }: { onLogin: (session: Session, language: 
       if (!mounted.current) return;
       Keyboard.dismiss(); setSentPhone(normalizedPhone); setCode('');
       setDevelopmentCode(result.development ? result.developmentCode || '' : '');
+      setDeliveryChannel(result.channel ?? 'sms');
       setRetryAt(Date.now() + (result.retryAfterSeconds ?? 60) * 1000);
       setStep('code');
     } catch (e) { if (mounted.current) setError(messageOf(e)); }
@@ -228,13 +230,13 @@ export function AuthScreen({ onLogin }: { onLogin: (session: Session, language: 
             <View style={a.codeScreen}>
               <Pressable accessibilityRole="button" accessibilityLabel={t('Назад')} onPress={back} style={a.back}><Icon name="arrow-back" size={26 * scale} color={palette.ink} /></Pressable>
               <Text style={[a.title, a.codeTitle]}>{text('Введите код', 'Кодду киргизиңиз', 'Enter the code')}</Text>
-              <Text style={a.subtitle}>{developmentCode ? text('Тестовый вход для номера', 'Номер үчүн сыноо кирүүсү', 'Test sign in for') : text('Отправили SMS на номер', 'Бул номерге SMS жөнөтүлдү', 'We sent an SMS to')}</Text>
+              <Text style={a.subtitle}>{developmentCode ? text('Тестовый вход для номера', 'Номер үчүн сыноо кирүүсү', 'Test sign in for') : deliveryChannel === 'whatsapp' ? text('Код отправлен в WhatsApp на номер', 'Бул номерге WhatsApp аркылуу код жөнөтүлдү', 'Code sent via WhatsApp to') : text('Отправили SMS на номер', 'Бул номерге SMS жөнөтүлдү', 'We sent an SMS to')}</Text>
               <Pressable accessibilityRole="button" disabled={busy} onPress={back} style={a.editPhone}>
                 <Text style={a.sentPhone}>{`+996 ${displayPhone(sentPhone.slice(4))}`}</Text>
               </Pressable>
               <Pressable onPress={() => input.current?.focus()} style={a.codeEntry}>
                 <CodeCells code={code} focused={codeFocused} error={error} verified={verified} reducedMotion={reducedMotion} />
-                <TextInput ref={input} testID="auth-code" accessibilityLabel={t('Код из SMS')} accessibilityHint={text('Шесть цифр. Код проверится автоматически.', 'Алты сан. Код автоматтык түрдө текшерилет.', 'Six digits. The code will be checked automatically.')} value={code} editable={!busy} onChangeText={changeCode} onFocus={() => setCodeFocused(true)} onBlur={() => setCodeFocused(false)} keyboardType="number-pad" keyboardAppearance={isDark ? 'dark' : 'light'} textContentType="oneTimeCode" autoComplete="sms-otp" maxLength={32} caretHidden autoFocus underlineColorAndroid="transparent" selectionColor="transparent" selection={error ? { start: 0, end: code.length } : { start: code.length, end: code.length }} style={a.hiddenInput} onSubmitEditing={() => void login()} />
+                <TextInput ref={input} testID="auth-code" accessibilityLabel={text('Код подтверждения', 'Ырастоо коду', 'Verification code')} accessibilityHint={text('Шесть цифр. Код проверится автоматически.', 'Алты сан. Код автоматтык түрдө текшерилет.', 'Six digits. The code will be checked automatically.')} value={code} editable={!busy} onChangeText={changeCode} onFocus={() => setCodeFocused(true)} onBlur={() => setCodeFocused(false)} keyboardType="number-pad" keyboardAppearance={isDark ? 'dark' : 'light'} textContentType="oneTimeCode" autoComplete="sms-otp" maxLength={32} caretHidden autoFocus underlineColorAndroid="transparent" selectionColor="transparent" selection={error ? { start: 0, end: code.length } : { start: code.length, end: code.length }} style={a.hiddenInput} onSubmitEditing={() => void login()} />
               </Pressable>
               {error ? <Text accessibilityRole="alert" style={a.error}>{t(error)}</Text> : null}
               {developmentCode ? <Text style={a.demoCode}>{text('Тестовый код', 'Сыноо коду', 'Test code')}: {developmentCode}</Text> : null}

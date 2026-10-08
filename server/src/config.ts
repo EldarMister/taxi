@@ -12,9 +12,13 @@ export class AppConfig {
   readonly accessSeconds = this.integer('ACCESS_TOKEN_SECONDS', 900, 60, 3600);
   readonly refreshDays = this.integer('REFRESH_TOKEN_DAYS', 30, 1, 90);
   readonly minimumDeposit = this.integer('MIN_DRIVER_DEPOSIT', 50, 0, 100000);
-  readonly devAuth = this.development && process.env.DEV_AUTH_ENABLED === 'true';
-  readonly devCode = process.env.DEV_OTP_CODE ?? '123456';
   readonly smsProvider = process.env.SMS_PROVIDER ?? 'development';
+  readonly devAuth = this.development && this.smsProvider === 'development' && process.env.DEV_AUTH_ENABLED === 'true';
+  readonly devCode = process.env.DEV_OTP_CODE ?? '123456';
+  readonly messaggioLogin = process.env.MESSAGGIO_LOGIN?.trim() || '';
+  readonly messaggioWhatsappSender = process.env.MESSAGGIO_WHATSAPP_SENDER?.trim() || '';
+  readonly messaggioWhatsappTemplate = process.env.MESSAGGIO_WHATSAPP_TEMPLATE?.trim() || '';
+  readonly messaggioWhatsappLanguage = process.env.MESSAGGIO_WHATSAPP_LANGUAGE?.trim() || 'ru';
   readonly routingProvider = process.env.ROUTING_PROVIDER ?? 'osrm';
   readonly osrmBaseUrl = this.endpoint('OSRM_BASE_URL', 'https://router.project-osrm.org');
   readonly nominatimBaseUrl = process.env.NOMINATIM_BASE_URL?.trim() ? this.endpoint('NOMINATIM_BASE_URL', '') : '';
@@ -31,7 +35,7 @@ export class AppConfig {
     }
     if (!process.env.DATABASE_URL) throw new Error('DATABASE_URL is required');
     if (this.jwtSecret === this.otpSecret) throw new Error('Use different JWT_SECRET and OTP_SECRET');
-    if (!['development','http'].includes(this.smsProvider)) throw new Error('Unknown SMS_PROVIDER');
+    if (!['development','http','messaggio'].includes(this.smsProvider)) throw new Error('Unknown SMS_PROVIDER');
     if (this.routingProvider !== 'osrm') throw new Error('ROUTING_PROVIDER must be osrm');
     if (!['development','firebase','expo'].includes(this.pushProvider)) throw new Error('Unknown PUSH_PROVIDER');
     if (!this.development && [this.smsProvider, this.pushProvider].includes('development')) {
@@ -42,6 +46,16 @@ export class AppConfig {
     if (this.smsProvider === 'http') {
       this.require('SMS_GATEWAY_TOKEN');
       if (!this.require('SMS_GATEWAY_URL').startsWith('https://')) throw new Error('SMS_GATEWAY_URL must use HTTPS');
+    }
+    if (this.smsProvider === 'messaggio') {
+      for (const [key, value] of [
+        ['MESSAGGIO_LOGIN', this.messaggioLogin],
+        ['MESSAGGIO_WHATSAPP_SENDER', this.messaggioWhatsappSender],
+        ['MESSAGGIO_WHATSAPP_TEMPLATE', this.messaggioWhatsappTemplate],
+      ]) {
+        if (!value || value.length > 512 || /[\r\n]/.test(value)) throw new Error(`Invalid or missing ${key}`);
+      }
+      if (!/^[a-z]{2,3}(?:_[A-Z]{2})?$/.test(this.messaggioWhatsappLanguage)) throw new Error('Invalid MESSAGGIO_WHATSAPP_LANGUAGE');
     }
     if (!this.development) {
       if (!process.env.OSRM_BASE_URL || new URL(this.osrmBaseUrl).hostname === 'router.project-osrm.org') throw new Error('Configure a dedicated OSRM_BASE_URL outside development');

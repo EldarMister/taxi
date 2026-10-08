@@ -223,6 +223,27 @@ test('successful SMS request replaces the phone form with a separate code form',
   assert.match(h.text(), /через 45 с/);
 });
 
+test('WhatsApp response names the actual channel and keeps resend/confirmation on the same phone', async t => {
+  const h = await setup(t, { post: async endpoint => endpoint.endsWith('request-code')
+    ? { sent: true, channel: 'whatsapp', retryAfterSeconds: 60 }
+    : { accessToken: 'access-token', refreshToken: 'refresh-token', user: { id: 'client', role: 'CLIENT' } } });
+  await h.change('auth-phone', '700123456');
+  await h.submit();
+  assert.match(h.text(), /Код отправлен в WhatsApp на номер/);
+  assert.doesNotMatch(h.text(), /Отправили SMS/);
+  assert.equal(h.input('auth-code').props.accessibilityLabel, 'Код подтверждения');
+  await h.change('auth-code', '654321');
+  assert.deepEqual(h.calls[1], { endpoint: '/auth/verify-code', body: { phone: '+996700123456', code: '654321' } });
+});
+
+test('WhatsApp channel description follows the selected interface language', async t => {
+  const h = await setup(t, { savedLanguage: 'en', post: async () => ({ channel: 'whatsapp', retryAfterSeconds: 60 }) });
+  await h.change('auth-phone', '700123456');
+  await h.submit();
+  assert.match(h.text(), /Code sent via WhatsApp to/);
+  assert.equal(h.input('auth-code').props.accessibilityLabel, 'Verification code');
+});
+
 test('failed SMS request keeps the phone screen, displays the error and allows retry', async t => {
   let attempts = 0;
   const h = await setup(t, { post: async () => {

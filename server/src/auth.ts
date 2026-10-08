@@ -5,6 +5,7 @@ import { Prisma, Role } from '@prisma/client';
 import { PrismaService } from './prisma.service';
 import { AppConfig } from './config';
 import { RealtimeEvents } from './events';
+import { OtpDelivery } from './otp-delivery';
 export interface Actor { id:string; role:Role; sessionId:string; familyId:string; expiresAt:number }
 const hash = (value:string) => createHash('sha256').update(value).digest('hex');
 @Injectable()
@@ -23,7 +24,7 @@ export class RateLimits {
 }
 @Injectable()
 export class AuthService {
-  constructor(private readonly db:PrismaService,private readonly jwt:JwtService,private readonly config:AppConfig,private readonly limits:RateLimits,private readonly events:RealtimeEvents) {}
+  constructor(private readonly db:PrismaService,private readonly jwt:JwtService,private readonly config:AppConfig,private readonly limits:RateLimits,private readonly events:RealtimeEvents,private readonly delivery:OtpDelivery) {}
   private otpHash(phone:string, code:string) {return createHmac('sha256',this.config.otpSecret).update(`${phone}:${code}`).digest('hex');}
   async requestCode(phone:string, ip:string) {
     await this.limits.take(`sms:ip:${ip}`,20,3600);
@@ -31,19 +32,15 @@ export class AuthService {
     await this.limits.take(`sms:phone-minute:${phone}`,1,60);
     if((await this.db.user.findUnique({where:{phone},select:{role:true}}))?.role==='ADMIN')throw new UnauthorizedException('Используйте вход в панель управления');
     const code = this.config.devAuth ? this.config.devCode : randomInt(100000,1000000).toString();
-    if (this.config.smsProvider === 'development' && !this.config.devAuth) throw new ServiceUnavailableException('Включите DEV_AUTH_ENABLED в development или настройте SMS');
+    if (this.config.smsProvider === 'development' && !this.config.devAuth) throw new ServiceUnavailableException('Отправка кодов входа не настроена.');
     const codeHash = this.otpHash(phone,code);
-    await this.db.smsChallenge.upsert({where:{phone},create:{phone,codeHash,expiresAt:new Date(Date.now()+300000)},update:{codeHash,attempts:0,consumedAt:null,requestedAt:new Date(),expiresAt:new Date(Date.now()+300000)}});
-    if (this.config.smsProvider === 'http') {
-      try {
-        const response = await fetch(this.config.require('SMS_GATEWAY_URL'),{method:'POST',headers:{Authorization:`Bearer ${this.config.require('SMS_GATEWAY_TOKEN')}`,'Content-Type':'application/json'},body:JSON.stringify({phone,message:`Код для входа в Такси: ${code}. Никому не сообщайте код.`}),signal:AbortSignal.timeout(10000)});
-        if (!response.ok) throw new Error('SMS rejected');
-      } catch {
-        await this.db.smsChallenge.updateMany({where:{phone,codeHash},data:{consumedAt:new Date()}});
-        throw new ServiceUnavailableException('Не удалось отправить SMS. Попробуйте позже.');
-      }
-    }
-    return {sent:true,retryAfterSeconds:60,...(this.config.devAuth?{development:true,developmentCode:this.config.devCode}:{})};
+    // Keep the replacement unusable until the provider accepts the request.
+    const pendingAt=new Date();
+    await this.db.smsChallenge.upsert({where:{phone},create:{phone,codeHash,consumedAt:pendingAt,expiresAt:new Date(Date.now()+300000)},update:{codeHash,attempts:0,consumedAt:pendingAt,requestedAt:pendingAt,expiresAt:new Date(Date.now()+300000)}});
+    const channel=await this.delivery.send(phone,code);
+    const activated=await this.db.smsChallenge.updateMany({where:{phone,codeHash,consumedAt:pendingAt},data:{consumedAt:null}});
+    if (!activated.count) throw new ServiceUnavailableException('Запрос кода устарел. Запросите новый код.');
+    return {sent:true,channel,retryAfterSeconds:60,...(this.config.devAuth?{development:true,developmentCode:this.config.devCode}:{})};
   }
   async verifyCode(phone:string, code:string, ip:string) {
     await this.limits.take(`verify:ip:${ip}`,40,900);
