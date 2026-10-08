@@ -19,6 +19,30 @@ test('Photon preserves coordinates and OSM identity, deduplicates labels and nev
   for(const value of [null,{...photonFeature,geometry:{type:'Point',coordinates:[181,41]}},{...photonFeature,properties:{osm_type:'X',osm_id:2,name:'Test'}}])assert.throws(()=>parsePhotonPlace(value));
 });
 
+test('Photon keeps real venue and bus-stop names before their street address', () => {
+  const venue = {...photonFeature, properties: {...photonFeature.properties, type:'house', osm_key:'shop', osm_value:'mall', name:'Азия Молл', street:'проспект Чынгыза Айтматова', housenumber:'3', city:'Бишкек'}};
+  const result = parsePhotonPlace(venue);
+  assert.equal(result.address, 'Азия Молл · проспект Чынгыза Айтматова, 3, Бишкек');
+  assert.equal(result.id, 'osm-way-27339503');
+  assert.equal(result.latitude, 41.2033565);
+  assert.equal(result.longitude, 72.1795757);
+  assert.equal(parsePhotonPlace({...venue, properties:{...venue.properties, osm_key:'highway', osm_value:'bus_stop'}}).address, 'Азия Молл · проспект Чынгыза Айтматова, 3, Бишкек');
+  assert.equal(parsePhotonPlace({...venue, properties:{...venue.properties, name:'3'}}).address, 'проспект Чынгыза Айтматова, 3, Бишкек');
+  assert.equal(parsePhotonPlace({...venue, properties:{...venue.properties, name:'проспект Чынгыза Айтматова'}}).address, 'проспект Чынгыза Айтматова, 3, Бишкек');
+  assert.equal(parsePhotonPlace({...venue, properties:{...venue.properties, name:undefined}}).address, 'проспект Чынгыза Айтматова, 3, Бишкек');
+  assert.equal(parsePhotonPlace({...venue, properties:{...venue.properties, name:'пр-т Чынгыза Айтматова', osm_key:'highway', osm_value:'primary', type:'street'}}).address, 'проспект Чынгыза Айтматова, 3, Бишкек');
+});
+
+test('Nominatim search and reverse formatting retain top-level or structured POI names', () => {
+  const raw = {...place, name:'Бишкек Парк', category:'shop', type:'mall', address:{road:'улица Керимбекова Кульчоро',house_number:'148',city:'Бишкек',country:'Кыргызстан'}};
+  assert.equal(parseNominatimPlace(raw).address, 'Бишкек Парк · улица Керимбекова Кульчоро, 148, Бишкек');
+  assert.equal(parseNominatimPlace({...raw, name:'', address:{...raw.address, shop:'Бишкек Парк'}}).address, 'Бишкек Парк · улица Керимбекова Кульчоро, 148, Бишкек');
+  assert.equal(parseNominatimPlace({...raw, name:'Бишкек'}).address, 'улица Керимбекова Кульчоро, 148, Бишкек');
+  assert.equal(parseNominatimPlace({...raw, name:'148'}).address, 'улица Керимбекова Кульчоро, 148, Бишкек');
+  assert.equal(parseNominatimPlace({...raw, name:'Остановка Парк', category:'highway', type:'bus_stop'}).address, 'Остановка Парк · улица Керимбекова Кульчоро, 148, Бишкек');
+  assert.equal(parseNominatimPlace({...raw, name:'Керимбекова', category:'highway', type:'residential'}).address, 'улица Керимбекова Кульчоро, 148, Бишкек');
+});
+
 test('Photon autocomplete shares parallel local/global work and caches normalized queries',async(t)=>{
   const finish:Array<(value:Response)=>void>=[];
   const mock=t.mock.method(globalThis,'fetch',async(input:any)=>{

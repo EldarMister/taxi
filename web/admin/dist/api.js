@@ -1,26 +1,36 @@
-// The panel is shipped with the API service, so a custom Railway domain can
-// be attached later without rebuilding the frontend or widening CORS.
+// Website, panel, API and live events share the website's current origin.
 export const API = `${window.location.origin}/api`;
 const KEY = 'taxigo.control.session';
 const REMEMBER_KEY = 'taxigo.control.remember';
 const USERNAME_KEY = 'taxigo.control.username';
 let current = null, rotation = null, epoch = 0;
-let persistence = sessionStorage;
-for (const storage of [localStorage, sessionStorage]) {
+function browserStorage(name) {
+  try { return window[name]; } catch { return null; }
+}
+const local = browserStorage('localStorage'), temporary = browserStorage('sessionStorage');
+let persistence = temporary;
+for (const storage of [local, temporary]) {
   try {
     const saved = JSON.parse(storage.getItem(KEY) || 'null');
     if (saved?.user?.role === 'ADMIN' && saved?.refreshToken) { current = saved; persistence = storage; break; }
   } catch {}
 }
 export const session = () => current;
-export const rememberedUsername = () => { try { return localStorage.getItem(USERNAME_KEY) || ''; } catch { return ''; } };
-export const rememberEnabled = () => { try { return localStorage.getItem(REMEMBER_KEY) !== '0'; } catch { return true; } };
+export const rememberedUsername = () => { try { return local?.getItem(USERNAME_KEY) || ''; } catch { return ''; } };
+export const rememberEnabled = () => { try { return local?.getItem(REMEMBER_KEY) !== '0'; } catch { return true; } };
+function removeSaved() {
+  for (const storage of [local, temporary]) { try { storage?.removeItem(KEY); } catch {} }
+}
 function keep(value) {
   current = value;
-  if (value) persistence.setItem(KEY, JSON.stringify(value));
-  else { localStorage.removeItem(KEY); sessionStorage.removeItem(KEY); }
+  try { if (value) persistence?.setItem(KEY, JSON.stringify(value)); else removeSaved(); } catch {}
 }
 export function clearSession() { ++epoch; keep(null); window.dispatchEvent(new Event('admin:signed-out')); }
+window.addEventListener('storage', event => {
+  if (current && local && persistence === local && event.storageArea === local && (event.key === KEY || event.key === null) && event.newValue === null) {
+    try { if (!local.getItem(KEY)) clearSession(); } catch {}
+  }
+});
 async function request(path, { method = 'GET', body, token = current?.accessToken } = {}) {
   const controller = new AbortController(), timeout = setTimeout(() => controller.abort(), 20000);
   try {
@@ -57,8 +67,25 @@ export async function refresh() {
   if (rotation) return rotation;
   const generation = epoch, token = current?.refreshToken;
   if (!token) throw new Error('Войдите в панель управления.');
+  const rotate = async () => {
+    if (generation !== epoch) throw new Error('Сессия завершена.');
+    // A second tab must reuse the first tab's rotated token. Sending the old
+    // token twice would revoke the entire session family on the server.
+    if (local && persistence === local) {
+      try {
+        const saved = JSON.parse(local.getItem(KEY) || 'null');
+        if (saved?.user?.role === 'ADMIN' && saved.refreshToken && saved.refreshToken !== token) { current = saved; return current; }
+      } catch {}
+    }
+    const next = await request('/auth/refresh', { method: 'POST', body: { refreshToken: token }, token: null });
+    if (generation !== epoch) throw new Error('Сессия завершена.');
+    keep({ ...current, ...next }); return current;
+  };
   rotation = (async () => {
-    try { const next = await request('/auth/refresh', { method: 'POST', body: { refreshToken: token }, token: null }); if (generation !== epoch) throw new Error('Сессия завершена.'); keep({ ...current, ...next }); return current; }
+    try {
+      return local && persistence === local && globalThis.navigator?.locks
+        ? await navigator.locks.request(`${KEY}.refresh`, rotate) : await rotate();
+    }
     catch (error) { if (generation === epoch && [401, 403].includes(error.status)) clearSession(); throw error; }
     finally { rotation = null; }
   })();
@@ -88,10 +115,12 @@ export async function signIn(username, password, remember = true) {
   const result = await request('/admin/auth/login', { method: 'POST', body: { username, password }, token: null });
   if (result?.user?.role !== 'ADMIN') throw new Error('Доступ разрешён только администратору.');
   ++epoch;
-  localStorage.removeItem(KEY); sessionStorage.removeItem(KEY);
-  persistence = remember ? localStorage : sessionStorage;
-  if (remember) { localStorage.setItem(USERNAME_KEY, username); localStorage.setItem(REMEMBER_KEY, '1'); }
-  else { localStorage.removeItem(USERNAME_KEY); localStorage.setItem(REMEMBER_KEY, '0'); }
+  removeSaved();
+  persistence = remember ? local : temporary;
+  try {
+    if (remember) { local?.setItem(USERNAME_KEY, username); local?.setItem(REMEMBER_KEY, '1'); }
+    else { local?.removeItem(USERNAME_KEY); local?.setItem(REMEMBER_KEY, '0'); }
+  } catch {}
   keep(result);
   return result;
 }

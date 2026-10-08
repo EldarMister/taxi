@@ -26,7 +26,6 @@ COPY --from=build --chown=node:node /app/dist ./dist
 COPY --from=build --chown=node:node /app/prisma ./prisma
 COPY --from=build --chown=node:node /app/package.json ./package.json
 COPY --chown=node:node server/data ./data
-COPY --chown=node:node admin/dist ./admin
 
 USER node
 EXPOSE 3000

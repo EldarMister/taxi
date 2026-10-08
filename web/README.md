@@ -17,7 +17,7 @@ The build script looks for the newest `Atlas-client-X.Y.Z.apk` and `Atlas-driver
 
 1. Replace every highlighted `[указать …]` and `[уточнить …]` in the privacy policy and terms with confirmed operator details, support contact, data retention rules and final service terms. Review both documents against actual data flows.
 2. Add published store URLs in `web/.env` using the four variables from `.env.example`. Missing store links appear as “Скоро” instead of pointing to search results or unrelated applications.
-3. Publish the static `dist/` folder at the intended domain. Check `https://YOUR-DOMAIN/privacy/`, `/terms/` and `/drivers/` directly, along with both APK downloads.
+3. Deploy the website independently with Root Directory `/web` and `Dockerfile`. The website, admin panel (`web/admin/dist`), proxy configuration and public APK downloads all belong to this directory. Set `API_UPSTREAM` to the separate application's private address. The API uses the root `Dockerfile.railway` and does not contain website files. Follow [the hosting guide](../docs/HOSTING.md). Check the public pages, admin login, Socket.IO and both APK downloads.
 4. Set `EXPO_PUBLIC_PRIVACY_URL=https://YOUR-DOMAIN/privacy/` and `EXPO_PUBLIC_TERMS_URL=https://YOUR-DOMAIN/terms/` for both mobile variants, then rebuild the apps. The login and support screens expose the links when these values are set.
 
 ## Add product screenshots

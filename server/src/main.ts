@@ -4,11 +4,10 @@ import { NestFactory } from '@nestjs/core';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import helmet from 'helmet';
 import { json, Request, urlencoded } from 'express';
-import { static as serveStatic } from 'express';
-import { join } from 'node:path';
 import { AppModule } from './app.module';
 import { AppConfig } from './config';
 import { ApiExceptionFilter, apiValidation, stripLegacyCacheQuery } from './http';
+import { mountSiteRedirects } from './site';
 
 async function bootstrap() {
   const app=await NestFactory.create(AppModule,{bodyParser:false});
@@ -20,9 +19,8 @@ async function bootstrap() {
   app.use((request:Request,_response:unknown,next:()=>void)=>{if(request.method==='GET')request.url=stripLegacyCacheQuery(request.url);next();});
   const config=app.get(AppConfig);
   app.setGlobalPrefix('api');
-  app.use(helmet());
-  app.use('/admin',serveStatic(join(process.cwd(),'admin'),{index:'index.html',fallthrough:false}));
-  app.getHttpAdapter().get('/',(_request:unknown,response:{redirect:(path:string)=>void})=>response.redirect('/admin/'));
+  app.use(helmet({contentSecurityPolicy:{directives:{'img-src':["'self'",'data:','blob:','https:']}}}));
+  mountSiteRedirects(app.getHttpAdapter().getInstance());
   app.enableCors({origin:config.origins,credentials:false});
   app.useGlobalPipes(apiValidation());
   app.useGlobalFilters(new ApiExceptionFilter());

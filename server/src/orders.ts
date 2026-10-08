@@ -43,8 +43,8 @@ export class OrdersService {
     if(passenger&&passenger.name.length<2)throw new BadRequestException('Укажите имя пассажира');
     const order = await this.db.$transaction(async tx=>{
       await tx.$queryRaw`SELECT "id" FROM "User" WHERE "id"=${actor.id}::uuid FOR UPDATE`;
-      const currentUser=await tx.user.findUnique({where:{id:actor.id},select:{role:true}});
-      if(currentUser?.role!=='CLIENT')throw new ForbiddenException('Заказ доступен клиенту');
+      const currentUser=await tx.user.findUnique({where:{id:actor.id},select:{role:true,deletedAt:true}});
+      if(currentUser?.role!=='CLIENT'||currentUser.deletedAt)throw new ForbiddenException('Заказ доступен клиенту');
       const existing = await tx.order.findUnique({where:{clientId_idempotencyKey:{clientId:actor.id,idempotencyKey:dto.idempotencyKey}}});
       if(existing) {
         if(existing.quoteId !== dto.quoteId || existing.comment !== (dto.comment?.trim()??'') || existing.passengerName !== (passenger?.name??null) || existing.passengerPhone !== (passenger?.phone??null) || this.stable(existing.deliveryDetails)!==this.stable(this.deliveryDetails(existing.kind,dto,false))) throw new ConflictException('Ключ повтора уже использован с другими данными');

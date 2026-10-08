@@ -76,6 +76,7 @@ model User {
   avatarData Bytes?
   avatarMime String?
   avatarUpdatedAt DateTime?
+  deletedAt DateTime?
   role Role @default(CLIENT)
   notifications Boolean @default(true)
   language String @default("ru")
@@ -549,4 +550,14 @@ model FoodStatusHistory {
   reason String?
   createdAt DateTime @default(now())
   @@index([orderId,createdAt])
+}
+
+model ServiceCity {
+  id String @id @default(uuid()) @db.Uuid
+  name String @unique
+  aliases String[] @default([])
+  status String @default("SOON")
+  sortOrder Int @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }

@@ -2,6 +2,7 @@ import { BadRequestException, ConflictException, ForbiddenException, Injectable,
 import { Prisma, RegistrationApplicationStatus } from '@prisma/client';
 import { createHash } from 'node:crypto';
 import sharp from 'sharp';
+import { CitiesService } from './cities';
 import { Actor, AuthService } from './auth';
 import { ACTIVE_STATUSES } from './domain';
 import { RealtimeEvents } from './events';
@@ -38,14 +39,14 @@ function registrationError(message:string,fieldErrors?:unknown) {
 }
 @Injectable()
 export class RegistrationService {
-  constructor(private readonly db:PrismaService,private readonly auth:AuthService,private readonly events:RealtimeEvents) {}
+  constructor(private readonly db:PrismaService,private readonly auth:AuthService,private readonly events:RealtimeEvents,private readonly cities:CitiesService) {}
 
-  config() {return REGISTRATION_CONFIG;}
+  config() {return this.cities.registrationConfig();}
 
   async current(actor:Actor) {
     this.assertPerformer(actor);
     const application=await this.db.performerApplication.findUnique({where:{userId:actor.id},include:registrationApplicationInclude});
-    return {application:application?this.serialize(application):null,config:REGISTRATION_CONFIG};
+    return {application:application?this.serialize(application):null,config:await this.config()};
   }
 
   async patch(actor:Actor,dto:PatchRegistrationDto) {
@@ -68,7 +69,7 @@ export class RegistrationService {
         if(error instanceof Error&&error.message.startsWith('PAYMENT_'))throw registrationError('Передавайте только тип платёжного способа и последние четыре цифры');
         throw registrationError('Некорректная структура данных анкеты');
       }
-      const valueErrors=validateRegistrationDataValues(nextData,nextRoles);
+      const valueErrors=validateRegistrationDataValues(nextData,nextRoles,undefined,undefined,(await this.cities.registrationConfig(tx)).acceptedCityNames);
       if(valueErrors.length)throw registrationError('Исправьте некорректные значения анкеты',valueErrors);
       this.assertCorrectionScope(current,currentData,nextData);
       if(Buffer.byteLength(stableJson(nextData),'utf8')>256*1024)throw new PayloadTooLargeException('Данные анкеты слишком велики');
@@ -236,7 +237,7 @@ export class RegistrationService {
       const data=(current.data&&typeof current.data==='object'&&!Array.isArray(current.data)?current.data:{}) as RegistrationData;
       try {assertSafeRegistrationData(data);} catch {throw registrationError('В анкете можно хранить только тип платёжного способа и последние четыре цифры');}
       const effectiveUploads=registrationUploadsWithEffectiveExpiry(data,current.uploads);
-      const fieldErrors=validateRegistrationSubmission({roles:validationRoles,selectedRoles:roles,data,uploads:effectiveUploads});
+      const fieldErrors=validateRegistrationSubmission({allowedCities:(await this.cities.registrationConfig(tx)).acceptedCityNames,roles:validationRoles,selectedRoles:roles,data,uploads:effectiveUploads});
       if(fieldErrors.length)throw registrationError('Заполните обязательные поля и загрузите документы',fieldErrors);
       const expiryOverrides=registrationUploadExpiryOverrides(data),uploadedSlots=new Set(current.uploads.filter(upload=>upload.status==='UPLOADED').map(upload=>upload.slotKey));
       for(const [slotKey,expiresAt] of Object.entries(expiryOverrides))if(uploadedSlots.has(slotKey))await tx.performerUpload.updateMany({where:{applicationId:current.id,slotKey,status:'UPLOADED'},data:{expiresAt}});
@@ -307,7 +308,8 @@ export class RegistrationService {
         const allowedExpiry=(item:string)=>correctionUploads.has(item)||[...allowed].some(candidate=>candidate===`documentExpiries.${item}`||candidate==='documentExpiries');
         return slot?!allowedExpiry(slot):changedExpirySlots.some(item=>!allowedExpiry(item));
       }
-      return ![...allowed].some(candidate=>path===candidate||path.startsWith(`${candidate}.`));
+      const fieldPath=path.replace(/^((?:taxiVehicle|cargoVehicle|courierVehicle|vehicles\.[^.]+))\.plate(?:\..*)?$/, '$1.plateNumber');
+      return ![...allowed].some(candidate=>fieldPath===candidate||fieldPath.startsWith(`${candidate}.`));
     });
     if(denied.length)throw new ForbiddenException({statusCode:403,code:'REGISTRATION_CORRECTION_SCOPE',message:'Можно изменять только поля, отмеченные оператором',fieldErrors:denied.map(field=>({field,code:'READ_ONLY',message:'Поле не возвращено на исправление'}))});
   }

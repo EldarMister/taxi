@@ -18,6 +18,15 @@ export function formatAddress(parts: Array<unknown>): string {
   }).join(', ').slice(0, 250);
 }
 
+/** Keep the provider's POI name alongside its routable address, without adding API fields. */
+export function formatPlaceAddress(name: unknown, road: unknown, number: unknown, unit: unknown, locality: unknown, named = true): string {
+  const title = clean(name), streetName = clean(road), cityName = cleanCity(locality);
+  const address = formatAddress([streetName || title, number, unit, cityName]);
+  const key = (value: string) => value.toLocaleLowerCase('ru').replace(/[^\p{L}\p{N}]/gu, '');
+  const distinct = title && streetName && ![streetName, cityName, clean(number)].some(value => key(value) === key(title));
+  return named && distinct && !house.test(title) ? `${title} · ${address}`.slice(0, 250) : address;
+}
+
 /** Handles Nominatim results without structured address fields. */
 export function compactAddress(value: string): string {
   const parts = value.split(',').map(clean).filter(part => part && !country.test(part) && !region.test(part) && !district.test(part) && !postcode.test(part));

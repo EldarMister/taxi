@@ -484,7 +484,7 @@ export class RegistrationAdminService {
     return {
       acceptsEconomy:selected.has('TAXI_DRIVER')&&role==='TAXI_DRIVER'&&transportClass!=='TRUCK',
       acceptsComfort:selected.has('TAXI_DRIVER')&&role==='TAXI_DRIVER'&&transportClass==='COMFORT',
-      acceptsDeliveryCar:courierMotor&&transportClass!=='TRUCK',
+      acceptsDeliveryCar:(selected.has('TAXI_DRIVER')&&role==='TAXI_DRIVER'||courierMotor)&&transportClass!=='TRUCK',
       acceptsDeliveryTruck:(selected.has('CARGO_DRIVER')&&role==='CARGO_DRIVER'||courierMotor)&&transportClass==='TRUCK',
     };
   }

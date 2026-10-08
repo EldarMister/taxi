@@ -13,7 +13,7 @@ export class RealtimeEvents extends EventEmitter {
   adminChanged(resource:string,id?:string) {
     this.emit('event',{userIds:[],audience:'admin',name:'admin:changed',payload:{resource,id,at:new Date().toISOString()}} satisfies RealtimeEvent);
   }
-  contentChanged(resource:'restaurants'|'banners'|'tariffs') {
+  contentChanged(resource:'restaurants'|'banners'|'tariffs'|'cities') {
     this.emit('event',{userIds:[],audience:'authenticated',name:'content:changed',payload:{resource,at:new Date().toISOString()}} satisfies RealtimeEvent);
   }
 }

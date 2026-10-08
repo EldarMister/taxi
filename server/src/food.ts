@@ -32,8 +32,8 @@ export class FoodService {
     const result=await this.db.$transaction(async tx=>{
       // Serializes retries and distinct submissions for this client without blocking other customers.
       await tx.$queryRaw`SELECT "id" FROM "User" WHERE "id"=${actor.id}::uuid FOR UPDATE`;
-      const user=await tx.user.findUnique({where:{id:actor.id},select:{role:true}});
-      if(user?.role!=='CLIENT')throw new ForbiddenException('Заказ еды доступен клиенту');
+      const user=await tx.user.findUnique({where:{id:actor.id},select:{role:true,deletedAt:true}});
+      if(user?.role!=='CLIENT'||user.deletedAt)throw new ForbiddenException('Заказ еды доступен клиенту');
       const existing=await tx.foodOrder.findUnique({where:{clientId_requestId:{clientId:actor.id,requestId:dto.requestId}}});
       if(existing) {
         if(existing.requestHash!==normalized.requestHash)throw new ConflictException('Ключ повтора уже использован с другим заказом');
@@ -54,8 +54,8 @@ export class FoodService {
     const normalized=normalizeFoodBatch(dto);
     const result=await this.db.$transaction(async tx=>{
       await tx.$queryRaw`SELECT "id" FROM "User" WHERE "id"=${actor.id}::uuid FOR UPDATE`;
-      const user=await tx.user.findUnique({where:{id:actor.id},select:{role:true}});
-      if(user?.role!=='CLIENT')throw new ForbiddenException('Заказ еды доступен клиенту');
+      const user=await tx.user.findUnique({where:{id:actor.id},select:{role:true,deletedAt:true}});
+      if(user?.role!=='CLIENT'||user.deletedAt)throw new ForbiddenException('Заказ еды доступен клиенту');
       const existing=await tx.foodOrder.findMany({where:{clientId:actor.id,requestId:{in:normalized.map(order=>order.requestId)}}});
       if(existing.length) {
         const byKey=new Map(existing.map(order=>[order.requestId,order]));
@@ -97,7 +97,7 @@ export class FoodService {
       const current=await this.lockOrder(tx,id);
       if(current.clientId!==actor.id)throw new ForbiddenException('Нет доступа к заказу');
       if(current.status==='CANCELLED')return {order:current,changed:false};
-      if(!['PLACED','CONFIRMED'].includes(current.status))throw new BadRequestException('Ресторан уже готовит заказ. Для отмены обратитесь в поддержку.');
+      if(current.status!=='PLACED')throw new BadRequestException('Ресторан уже подтвердил заказ. Для отмены обратитесь в поддержку.');
       const order=await tx.foodOrder.update({where:{id},data:{status:'CANCELLED',history:{create:{status:'CANCELLED',actorId:actor.id,reason:'CLIENT_CANCELLED'}}}});
       return {order,changed:true};
     });

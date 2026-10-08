@@ -1,6 +1,6 @@
 import { ServiceUnavailableException } from '@nestjs/common';
 import type { Place } from './places';
-import { cleanCity, formatAddress } from './address';
+import { formatPlaceAddress } from './address';
 
 const clean = (value: unknown) => typeof value === 'string' ? value.trim().replace(/\s+/g,' ').slice(0,250) : '';
 const nameKey=(text:string)=>text.toLocaleLowerCase('ru').replace(/^город\s+|^г\.\s*/u,'').replace(/[^\p{L}\p{N}]/gu,'').replace(/ё/g,'е');
@@ -25,7 +25,8 @@ export function parsePhotonPlace(value: unknown): Place {
   const osmType=type[String(p.osm_type)];
   if(!osmType||!/^\d+$/.test(String(p.osm_id)))throw new Error('Invalid Photon identity');
   const name=clean(p.name),street=clean(p.street),house=clean(p.housenumber);
-  const address=formatAddress([street || name,house,clean(p.unit),cleanCity(p.city || p.town || p.village)]);
+  const named = (p.osm_key !== 'highway' || ['bus_stop','services','rest_area'].includes(String(p.osm_value))) && !['street','city','town','village','hamlet','district','locality'].includes(String(p.type));
+  const address=formatPlaceAddress(name,street,house,p.unit,p.city || p.town || p.village,named);
   if(!name&&!street&&!house)throw new Error('Photon result has no address');
   return {id:`osm-${osmType}-${p.osm_id}`,address,latitude,longitude};
 }

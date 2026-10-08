@@ -14,7 +14,7 @@ import { REGISTRATION_UPLOADS_PER_USER_HOUR, RegistrationUploadGate } from '../s
 import { Subject, lastValueFrom, of } from 'rxjs';
 
 const today=new Date('2026-09-22T00:00:00.000Z');
-const personal={firstName:'Асан',lastName:'Ибраев',birthDate:'10.03.1990',city:'Бишкек'};
+const personal={firstName:'Асан',lastName:'Ибраев',birthDate:'10.03.1990',city:'Шамалды-Сай'};
 const identity={number:'ID-123',issuedAt:'01.01.2020',expiresAt:'01.01.2030',issuedBy:'МКК'};
 const uploaded=(slots:string[])=>slots.map(slotKey=>({slotKey,status:'UPLOADED',...(registrationUploadRequiresExpiry(slotKey)?{expiresAt:new Date('2030-01-01T23:59:59.999Z')}: {})}));
 
@@ -28,28 +28,26 @@ test('light courier submissions need only identity uploads and basic personal da
   }
 });
 
-test('taxi and cargo submit without operational preferences and seven vehicle photos',()=>{
+test('taxi and cargo submit with personal data, vehicle and four photos without documents',()=>{
   for(const role of ['TAXI_DRIVER','CARGO_DRIVER'] as const) {
     const prefix=role==='TAXI_DRIVER'?'taxi':'cargo';
-    const data={personal,identity:{expiresAt:'01.01.2030'},driverLicense:{categories:[role==='TAXI_DRIVER'?'B':'C'],expiresAt:'01.01.2030'},[`${prefix}Vehicle`]:{ownership:'OWN',brand:'Toyota',model:'Test',year:'2022',plateNumber:'01 100 AAA',...(role==='CARGO_DRIVER'?{type:'Фургон',capacityKg:'2000'}:{})}};
+    const data={personal,[`${prefix}Vehicle`]:{ownership:'OWN',brand:'Toyota',model:'Test',year:'2022',plateNumber:'01 100 AAA',...(role==='CARGO_DRIVER'?{type:'Фургон',capacityKg:'2000'}:{})}};
     const slots=requiredUploadSlots([role],data);
-    assert.deepEqual(slots.filter(slot=>slot.includes('_photo_')),[`${prefix}_photo_front`]);
+    assert.deepEqual(slots.filter(slot=>slot.includes('_photo_')),['front','back','left','right'].map(side=>`${prefix}_photo_${side}`));
     assert.deepEqual(validateRegistrationSubmission({roles:[role],data,uploads:uploaded(slots),today}),[]);
   }
 });
 
 test('a simplified taxi application reaches the admin moderation queue',async()=>{
   const userId='11111111-1111-4111-8111-111111111111',id='22222222-2222-4222-8222-222222222222';
-  const data={personal,identity:{expiresAt:'01.01.2030'},driverLicense:{categories:['B'],expiresAt:'01.01.2030'},
-    taxiVehicle:{ownership:'OWN',brand:'Toyota',model:'Camry',year:'2022',plateNumber:'01 100 AAA'},
-    documentExpiries:{taxi_insurance:'01.01.2030'}};
+  const data={personal,taxiVehicle:{ownership:'OWN',brand:'Toyota',model:'Camry',year:'2022',plateNumber:'01 100 AAA'}};
   const uploads=registrationUploadSlotSpecs(['TAXI_DRIVER'],data).filter(item=>item.required).map((item,index)=>({
     id:`33333333-3333-4333-8333-${String(index+1).padStart(12,'0')}`,slotKey:item.slotKey,kind:item.kind,role:item.role,
     status:'UPLOADED',mimeType:item.kind==='PROFILE_PHOTO'||item.kind==='VEHICLE_PHOTO'?'image/png':'application/pdf',
     byteSize:12,version:1,expiresAt:registrationUploadRequiresExpiry(item.slotKey)?new Date('2030-01-01T23:59:59.999Z'):null,
     reasonCode:null,reasonText:null,canReupload:true,createdAt:new Date(),updatedAt:new Date(),
   }));
-  assert.deepEqual(uploads.filter(item=>item.slotKey.startsWith('taxi_photo_')).map(item=>item.slotKey),['taxi_photo_front']);
+  assert.deepEqual(uploads.filter(item=>item.slotKey.startsWith('taxi_photo_')).map(item=>item.slotKey),['taxi_photo_front','taxi_photo_back','taxi_photo_left','taxi_photo_right']);
   const application:any={id,userId,status:'DRAFT',currentStep:'REVIEW',data,version:1,roles:[{
     id:'44444444-4444-4444-8444-444444444444',role:'TAXI_DRIVER',selected:true,status:'DRAFT',
     canResubmit:false,correctionFields:[],projectedAt:null,projectionIssueCode:null,reasonCode:null,reasonText:null,blockedUntil:null,
@@ -68,7 +66,7 @@ test('a simplified taxi application reaches the admin moderation queue',async()=
   const db:any={$transaction:async(work:any)=>Array.isArray(work)?Promise.all(work):work(tx),performerApplication:{findMany:async()=>[
     {...application,user:{id:userId,name:'Test',phone:'',role:'CLIENT'},_count:{uploads:uploads.length}},
   ],count:async()=>1}};
-  const registration=new RegistrationService(db,{} as any,{} as any);
+  const registration=new RegistrationService(db,{} as any,{} as any,{registrationConfig:async()=>({...REGISTRATION_CONFIG,acceptedCityNames:REGISTRATION_CONFIG.cities})} as any);
   const submitted=await registration.submit({id:userId,role:'CLIENT'} as any,{truthConfirmed:true,termsAccepted:true,
     acceptedConsentIds:['truth-confirmation','performer-terms'],legalTermsVersion:REGISTRATION_CONFIG.legalTermsVersion});
   assert.equal(submitted.application.status,'SUBMITTED');
@@ -120,7 +118,7 @@ test('scooter approval prepares an operational profile without creating a vehicl
 
 test('walking courier flow skips driver and vehicle requirements',()=>{
   const roles=['COURIER'] as const;
-  const data={personal,identity,courier:{transportModes:['FOOT'],orderTypes:['DOCUMENTS'],maxWeightKg:'5',city:'Бишкек'}};
+  const data={personal,identity,courier:{transportModes:['FOOT'],orderTypes:['DOCUMENTS'],maxWeightKg:'5',city:'Шамалды-Сай'}};
   const slots=requiredUploadSlots(roles,data);
   assert.deepEqual(slots,['identity_front','identity_back']);
   assert.ok(!registrationSteps(roles,data).includes('DRIVER_LICENSE'));
@@ -129,7 +127,7 @@ test('walking courier flow skips driver and vehicle requirements',()=>{
 
 test('motorized courier dynamically requires a licence and vehicle documents',()=>{
   const roles=['COURIER'] as const;
-  const data={personal,identity,driverLicense:{number:'DL-123',categories:['A'],expiresAt:'01.01.2030'},courier:{transportModes:['MOTORCYCLE'],orderTypes:['PARCELS'],maxWeightKg:'10',city:'Бишкек'},courierVehicle:{ownership:'OWN',brand:'Honda',model:'CB',year:'2022',plateNumber:'01 123 AAA'}};
+  const data={personal,identity,driverLicense:{number:'DL-123',categories:['A'],expiresAt:'01.01.2030'},courier:{transportModes:['MOTORCYCLE'],orderTypes:['PARCELS'],maxWeightKg:'10',city:'Шамалды-Сай'},courierVehicle:{ownership:'OWN',brand:'Honda',model:'CB',year:'2022',plateNumber:'01 123 AAA'}};
   const slots=requiredUploadSlots(roles,data);
   assert.ok(slots.includes('license_front'));
   assert.ok(slots.includes('courier_insurance'));
@@ -144,7 +142,7 @@ test('taxi and courier share common identity and licence uploads',()=>{
     personal,identity,
     driverLicense:{number:'DL-123',categories:['B'],expiresAt:'01.01.2030'},
     taxiVehicle:{ownership:'OWN',brand:'Toyota',model:'Camry',year:'2020',plateNumber:'01 777 AAA',tariffs:['ECONOMY']},
-    courier:{transportModes:['FOOT'],orderTypes:['DOCUMENTS'],maxWeightKg:'5',city:'Бишкек'},
+    courier:{transportModes:['FOOT'],orderTypes:['DOCUMENTS'],maxWeightKg:'5',city:'Шамалды-Сай'},
   };
   const slots=requiredUploadSlots(roles,data);
   assert.equal(slots.filter(slot=>slot==='identity_front').length,1);
@@ -154,7 +152,7 @@ test('taxi and courier share common identity and licence uploads',()=>{
 
 test('submission validation returns field-level minimum-age and upload errors',()=>{
   const roles=['COURIER'] as const;
-  const data={personal:{...personal,birthDate:'01.01.2012'},identity,courier:{transportModes:['BICYCLE'],orderTypes:['DOCUMENTS'],maxWeightKg:'5',city:'Бишкек'}};
+  const data={personal:{...personal,birthDate:'01.01.2012'},identity,courier:{transportModes:['BICYCLE'],orderTypes:['DOCUMENTS'],maxWeightKg:'5',city:'Шамалды-Сай'}};
   const errors=validateRegistrationSubmission({roles,data,uploads:[],today});
   assert.ok(errors.some(error=>error.field==='personal.birthDate'&&error.code==='MINIMUM_AGE'));
   assert.ok(errors.some(error=>error.field==='uploads.identity_front'&&error.code==='UPLOAD_REQUIRED'));
@@ -214,7 +212,7 @@ test('document expiry policy requires dates and has deterministic lifecycle boun
   assert.deepEqual(registrationExpiryCorrectionFields('identity_front'),['identity.expiresAt']);
   assert.deepEqual(registrationExpiryCorrectionFields('license_back'),['driverLicense.expiresAt']);
   assert.deepEqual(registrationExpiryCorrectionFields('taxi_insurance'),['documentExpiries.taxi_insurance']);
-  const motorData={personal,identity,driverLicense:{number:'DL-123',categories:['A'],expiresAt:'01.01.2030'},courier:{transportModes:['MOTORCYCLE'],orderTypes:['PARCELS'],maxWeightKg:'10',city:'Бишкек'},courierVehicle:{ownership:'OWN',brand:'Honda',model:'CB',year:'2022',plateNumber:'01 123 AAA'}};
+  const motorData={personal,identity,driverLicense:{number:'DL-123',categories:['A'],expiresAt:'01.01.2030'},courier:{transportModes:['MOTORCYCLE'],orderTypes:['PARCELS'],maxWeightKg:'10',city:'Шамалды-Сай'},courierVehicle:{ownership:'OWN',brand:'Honda',model:'CB',year:'2022',plateNumber:'01 123 AAA'}};
   const slots=requiredUploadSlots(['COURIER'],motorData),withoutInsuranceExpiry=uploaded(slots).map(upload=>upload.slotKey==='courier_insurance'?{...upload,expiresAt:null}:upload);
   assert.ok(validateRegistrationSubmission({roles:['COURIER'],data:motorData,uploads:withoutInsuranceExpiry,today}).some(error=>error.field==='uploads.courier_insurance.expiresAt'&&error.code==='EXPIRY_REQUIRED'));
   const datedData={...motorData,documentExpiries:{courier_insurance:'01.10.2030'}},effectiveUploads=registrationUploadsWithEffectiveExpiry(datedData,withoutInsuranceExpiry);
@@ -230,7 +228,7 @@ test('document expiry policy requires dates and has deterministic lifecycle boun
 test('config-driven expiry data is allow-listed and editable only for a returned upload',()=>{
   assert.deepEqual(validateRegistrationDataValues({taxiVehicle:{ownership:'OWN'},documentExpiries:{taxi_insurance:'01.10.2026'}},['TAXI_DRIVER'],today),[]);
   assert.ok(validateRegistrationDataValues({taxiVehicle:{ownership:'OWN'},documentExpiries:{arbitrary_slot:'01.10.2026'}},['TAXI_DRIVER'],today).some(error=>error.code==='UNKNOWN_FIELD'));
-  const service=new RegistrationService({} as never,{} as never,{} as never);
+  const service=new RegistrationService({} as never,{} as never,{} as never,{registrationConfig:async()=>({...REGISTRATION_CONFIG,acceptedCityNames:REGISTRATION_CONFIG.cities})} as any);
   const application={status:'CORRECTION_REQUIRED',roles:[{selected:true,status:'CORRECTION_REQUIRED',canResubmit:true,correctionFields:[]}],uploads:[{slotKey:'taxi_insurance',status:'CORRECTION_REQUIRED',canReupload:true}]};
   assert.doesNotThrow(()=>(service as any).assertCorrectionScope(application,{documentExpiries:{taxi_insurance:'01.10.2026'}},{documentExpiries:{taxi_insurance:'01.11.2026'}}));
   assert.throws(()=>(service as any).assertCorrectionScope(application,{documentExpiries:{taxi_insurance:'01.10.2026'}},{documentExpiries:{taxi_insurance:'01.10.2026',taxi_registration:'01.11.2026'}}));
@@ -281,7 +279,7 @@ test('expiry worker keeps due documents independent from deferred retry backlog'
 test('review requirements are calculated for one role at a time',()=>{
   const data={courier:{transportModes:['FOOT'],useExistingVehicle:true}};
   assert.deepEqual(requiredUploadSlotsForRole('COURIER',data),['identity_front','identity_back']);
-  assert.ok(requiredUploadSlotsForRole('TAXI_DRIVER',data).includes('taxi_registration'));
+  assert.ok(requiredUploadSlotsForRole('TAXI_DRIVER',data).includes('taxi_photo_front'));
   assert.ok(!requiredUploadSlotsForRole('TAXI_DRIVER',data).includes('cargo_registration'));
 });
 
@@ -308,7 +306,7 @@ test('server derives the only allowed kind and role for every upload slot',()=>{
   const data={taxiVehicle:{ownership:'OWN'},courier:{transportModes:['FOOT'],orderTypes:['MEALS']}};
   assert.deepEqual(registrationUploadSlotSpec('taxi_registration',['TAXI_DRIVER','COURIER'],data),{slotKey:'taxi_registration',kind:'VEHICLE_DOCUMENT',role:'TAXI_DRIVER',required:true});
   assert.deepEqual(registrationUploadSlotSpec('courier_health_book',['TAXI_DRIVER','COURIER'],data),{slotKey:'courier_health_book',kind:'ADDITIONAL_DOCUMENT',role:'COURIER',required:false});
-  assert.deepEqual(registrationUploadSlotSpec('taxi_additional_medical-certificate',['TAXI_DRIVER'],data),{slotKey:'taxi_additional_medical-certificate',kind:'ADDITIONAL_DOCUMENT',role:'TAXI_DRIVER',required:false});
+  assert.equal(registrationUploadSlotSpec('taxi_additional_medical-certificate',['TAXI_DRIVER'],data),null);
   assert.equal(registrationUploadSlotSpec('arbitrary_slot',['TAXI_DRIVER'],data),null);
   assert.deepEqual(registrationAdditionalDocumentSlotKeys('CARGO_DRIVER','permit',3),['cargo_additional_permit_front','cargo_additional_permit_back','cargo_additional_permit_side_3']);
 });
@@ -325,7 +323,7 @@ test('additional vehicles have role-scoped dynamic slots, expiry and their own c
     ],
   };
   const slots=requiredUploadSlots(roles,data);
-  for(const slot of ['vehicle_v-taxi2_registration','vehicle_v-taxi2_insurance','vehicle_v-taxi2_rental','vehicle_v-taxi2_photo_front','vehicle_v-cargo2_registration','vehicle_v-cargo2_insurance','vehicle_v-cargo2_photo_front'])assert.ok(slots.includes(slot),slot);
+  for(const slot of ['vehicle_v-taxi2_photo_front','vehicle_v-taxi2_photo_back','vehicle_v-taxi2_photo_left','vehicle_v-taxi2_photo_right','vehicle_v-cargo2_photo_front','vehicle_v-cargo2_photo_back','vehicle_v-cargo2_photo_left','vehicle_v-cargo2_photo_right'])assert.ok(slots.includes(slot),slot);
   assert.equal(registrationUploadRequiresExpiry('vehicle_v-cargo2_insurance'),true);
   assert.deepEqual(registrationUploadSlotSpec('vehicle_v-cargo2_photo_front',roles,data),{slotKey:'vehicle_v-cargo2_photo_front',kind:'VEHICLE_PHOTO',role:'CARGO_DRIVER',required:true});
   assert.deepEqual(validateRegistrationSubmission({roles,data,uploads:uploaded(slots),today}),[]);
@@ -343,7 +341,7 @@ test('courier extra reuse is exact and legacy candidate uses the selected vehicl
   const baseVehicle={ownership:'OWN',brand:'Toyota',model:'Prius',year:'2021',color:'Серый',plateNumber:'01 100 AAA',tariffs:['ECONOMY']};
   const data={
     personal,identity,driverLicense:{number:'DL-123',categories:['B'],expiresAt:'01.01.2030'},taxiVehicle:baseVehicle,
-    courier:{transportModes:['CAR'],orderTypes:['PARCELS'],maxWeightKg:'10',city:'Бишкек',useExistingVehicle:true,existingVehicleUsage:'TAXI',existingVehicleClientId:'v-second'},
+    courier:{transportModes:['CAR'],orderTypes:['PARCELS'],maxWeightKg:'10',city:'Шамалды-Сай',useExistingVehicle:true,existingVehicleUsage:'TAXI',existingVehicleClientId:'v-second'},
     vehicles:[{...baseVehicle,clientId:'v-second',usage:'TAXI',plateNumber:'01 200 BBB',equipment:{loadingTypes:[]}}],
   };
   const slots=requiredUploadSlots(['COURIER'],data);
@@ -357,7 +355,7 @@ test('courier extra reuse is exact and legacy candidate uses the selected vehicl
 });
 
 test('additional-vehicle correction scope is canonical and isolated by clientId and field',()=>{
-  const service=new RegistrationService({} as never,{} as never,{} as never),adminService=new RegistrationAdminService({} as never,{} as never,{} as never);
+  const service=new RegistrationService({} as never,{} as never,{} as never,{registrationConfig:async()=>({...REGISTRATION_CONFIG,acceptedCityNames:REGISTRATION_CONFIG.cities})} as any),adminService=new RegistrationAdminService({} as never,{} as never,{} as never);
   const before={vehicles:[
     {clientId:'v-one',usage:'TAXI',brand:'Toyota',model:'Prius'},
     {clientId:'v-two',usage:'TAXI',brand:'Honda',model:'Fit'},
@@ -371,6 +369,15 @@ test('additional-vehicle correction scope is canonical and isolated by clientId 
   assert.deepEqual((adminService as any).normalizeCorrectionFields(['vehicles.0.brand'],before),['vehicles.v-one.brand']);
   assert.doesNotThrow(()=>(adminService as any).assertCorrectionFields('TAXI_DRIVER',['vehicles.v-one.brand'],before));
   assert.throws(()=>(adminService as any).assertCorrectionFields('CARGO_DRIVER',['vehicles.v-one.brand'],before));
+});
+
+test('structured plate draft follows the exact number correction scope',()=>{
+  const service=new RegistrationService({} as any,{} as any,{} as any,{registrationConfig:async()=>({...REGISTRATION_CONFIG,acceptedCityNames:REGISTRATION_CONFIG.cities})} as any);
+  const before={taxiVehicle:{plateNumber:'01 007 AAA',plate:{format:'CURRENT',region:'01',digits:'007',series:'AAA'}},vehicles:[{clientId:'v-one',usage:'TAXI',plateNumber:'01 008 BBB'}]};
+  const application={status:'CORRECTION_REQUIRED',roles:[{selected:true,status:'CORRECTION_REQUIRED',canResubmit:true,correctionFields:['taxiVehicle.plateNumber']}],uploads:[]};
+  assert.doesNotThrow(()=>(service as any).assertCorrectionScope(application,before,{...before,taxiVehicle:{...before.taxiVehicle,plate:{...before.taxiVehicle.plate,region:'02'}}}));
+  assert.throws(()=>(service as any).assertCorrectionScope({...application,roles:[{...application.roles[0],correctionFields:['taxiVehicle.brand']}]},before,{...before,taxiVehicle:{...before.taxiVehicle,plate:{...before.taxiVehicle.plate,region:'02'}}}));
+  assert.throws(()=>(service as any).assertCorrectionScope(application,before,{...before,vehicles:[{...before.vehicles[0],plate:{format:'CURRENT',region:'02',digits:'008',series:'BBB'}}]}));
 });
 
 test('exact upload replay succeeds after correction replacement commit and correction delete is blocked',async()=>{
@@ -387,7 +394,7 @@ test('exact upload replay succeeds after correction replacement commit and corre
     performerUpload:{findUnique:async()=>previous,findUniqueOrThrow:async()=>previous,count:async()=>1,aggregate:async()=>({_sum:{byteSize:bytes.length}}),upsert:async()=>{mutations++;return previous;},delete:async()=>{mutations++;}},
   };
   const db:any={$transaction:async(callback:any)=>callback(tx),performerApplication:{findUnique:async()=>({id:'application-1'})}};
-  const service=new RegistrationService(db,{} as never,{} as never),actor={id:'user-1',role:'CLIENT'} as any;
+  const service=new RegistrationService(db,{} as never,{} as never,{registrationConfig:async()=>({...REGISTRATION_CONFIG,acceptedCityNames:REGISTRATION_CONFIG.cities})} as any),actor={id:'user-1',role:'CLIENT'} as any;
   const result=await service.upload(actor,'identity_front',{kind:'IDENTITY_DOCUMENT'}, {buffer:bytes,mimetype:'application/pdf',size:bytes.length});
   assert.match(result.remoteUrl,/\?v=2$/);assert.equal(mutations,0);
   await assert.rejects(()=>service.removeUpload(actor,'identity_front'),(error:any)=>error?.getStatus?.()===403);
@@ -409,5 +416,21 @@ test('server rejects out-of-config enums, dates and numeric ranges',()=>{
     payment:{type:'CRYPTO',last4:'12345'},
   },['TAXI_DRIVER'],today);
   const fields=new Set(errors.map(error=>error.field));
-  for(const field of ['personal.city','personal.birthDate','personal.language','driverLicense.categories','driverLicense.experienceYears','taxiVehicle.ownership','taxiVehicle.year','taxiVehicle.tariffs','taxiVehicle.plateNumber','payment.type','payment.last4'])assert.ok(fields.has(field),field);
+  for(const field of ['personal.city','personal.birthDate','personal.language','taxiVehicle.ownership','taxiVehicle.year','taxiVehicle.tariffs','taxiVehicle.plateNumber','payment.type','payment.last4'])assert.ok(fields.has(field),field);
+});
+
+
+test('public registration offers taxi and delivery without courier or documents and requires all four vehicle angles',()=>{
+  assert.deepEqual(REGISTRATION_CONFIG.cities,['Шамалды-Сай']);
+  assert.deepEqual(REGISTRATION_CONFIG.comingSoonCities,['Кочкор-Ата','Кербен']);
+  assert.deepEqual(REGISTRATION_CONFIG.roles.map(role=>role.id),['TAXI_DRIVER','CARGO_DRIVER']);
+  assert.equal(REGISTRATION_CONFIG.roles[0].title,'Такси и доставка');
+  assert.ok(REGISTRATION_CONFIG.documentRequirements.every(item=>item.kind==='VEHICLE_PHOTO'&&item.slots.length===4));
+  const data={personal,taxiVehicle:{ownership:'OWN',brand:'Toyota',model:'Camry',year:'2022',plateNumber:'01 100 AAA'}};
+  const slots=requiredUploadSlots(['TAXI_DRIVER'],data);
+  assert.equal(slots.length,4);
+  const errors=validateRegistrationSubmission({roles:['TAXI_DRIVER'],data,uploads:uploaded(slots.slice(0,3)),today});
+  assert.deepEqual(errors.map(error=>error.field),['uploads.taxi_photo_right']);
+  assert.deepEqual(validateRegistrationSubmission({roles:['TAXI_DRIVER'],data,uploads:uploaded(slots),today}),[]);
+  assert.equal(registrationCapabilityCeiling(['TAXI_DRIVER'],[],'ECONOMY').acceptsDeliveryCar,true);
 });

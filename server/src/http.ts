@@ -68,7 +68,18 @@ export class UsersController {
   constructor(private readonly db:PrismaService,private readonly auth:AuthService,private readonly limits:RateLimits) {}
   @Get('me') me(@Req() req:AuthedRequest) {return this.auth.user(req.actor.id);}
   @Patch('me') async update(@Req() req:AuthedRequest,@Body() dto:ProfileDto) {
-    await this.db.user.update({where:{id:req.actor.id},data:{...dto,...(dto.name!==undefined?{name:dto.name.trim()}:{})}});return this.auth.user(req.actor.id);
+    const result=await this.db.user.updateMany({where:{id:req.actor.id,deletedAt:null},data:{...dto,...(dto.name!==undefined?{name:dto.name.trim()}:{})}});if(!result.count)throw new ForbiddenException('Аккаунт удалён.');return this.auth.user(req.actor.id);
+  }
+  @Delete('me/avatar') async removeAvatar(@Req() req:AuthedRequest) {
+    if(req.actor.role!=='DRIVER')throw new ForbiddenException('Страница доступна водителю.');
+    await this.db.$transaction(async tx=>{
+      await tx.$queryRaw`SELECT "id" FROM "PerformerApplication" WHERE "userId"=${req.actor.id}::uuid FOR UPDATE`;
+      await tx.$queryRaw`SELECT "id" FROM "User" WHERE "id"=${req.actor.id}::uuid FOR UPDATE`;
+      const result=await tx.user.updateMany({where:{id:req.actor.id,deletedAt:null},data:{avatarData:null,avatarMime:null,avatarUpdatedAt:null}});
+      if(!result.count)throw new ForbiddenException('Аккаунт удалён.');
+      await tx.performerUpload.deleteMany({where:{application:{userId:req.actor.id},slotKey:'profile_photo'}});
+    });
+    return this.auth.user(req.actor.id);
   }
   @Get('me/notifications') async notifications(@Req() req:AuthedRequest) {
     const asOf=new Date();
@@ -109,7 +120,8 @@ export class UsersController {
     const normalized=await normalizeAvatar(file.buffer);
     await this.db.$transaction(async tx=>{
       await tx.$queryRaw`SELECT "id" FROM "User" WHERE "id"=${req.actor.id}::uuid FOR UPDATE`;
-      const current=await tx.user.findUniqueOrThrow({where:{id:req.actor.id},select:{avatarUpdatedAt:true}});
+      const current=await tx.user.findUniqueOrThrow({where:{id:req.actor.id},select:{avatarUpdatedAt:true,deletedAt:true}});
+      if(current.deletedAt)throw new ForbiddenException('Аккаунт удалён.');
       const avatarUpdatedAt=new Date(Math.max(Date.now(),(current.avatarUpdatedAt?.getTime()??0)+1));
       await tx.user.update({where:{id:req.actor.id},data:{avatarData:Uint8Array.from(normalized),avatarMime:'image/jpeg',avatarUpdatedAt}});
     });
@@ -191,7 +203,7 @@ export class AdminController {
 export class PublicController {
   constructor(private readonly db:PrismaService,private readonly config:AppConfig) {}
   @Get('health') async health() {await this.db.$queryRaw`SELECT 1`;return {status:'ok'};}
-  @Get('config') configValue() {return {currency:'KGS',development:this.config.development,supportPhone:process.env.SUPPORT_PHONE??'+996700000000'};}
+  @Get('config') configValue() {return {currency:'KGS',development:this.config.development,supportPhone:process.env.SUPPORT_PHONE??'+996700000000',balanceTopupTelegramUrl:process.env.BALANCE_TOPUP_TELEGRAM_URL?.trim()||null};}
   @Get('tariffs') tariffs(@Query('kind') kind:string|undefined) {
     const normalized=kind??'RIDE';
     if(!['RIDE','DELIVERY_CAR','DELIVERY_TRUCK'].includes(normalized))throw new BadRequestException('Неизвестный вид тарифа.');

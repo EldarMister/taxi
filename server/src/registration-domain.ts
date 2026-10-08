@@ -20,8 +20,8 @@ export function registrationProjectionIssueText(code:string|null|undefined) {
 }
 
 const DRIVER_LICENSE_UPLOADS = ['license_front','license_back'] as const;
-const TAXI_PHOTOS = ['taxi_photo_front'];
-const CARGO_PHOTOS = ['cargo_photo_front'];
+const TAXI_PHOTOS = ['taxi_photo_front','taxi_photo_back','taxi_photo_left','taxi_photo_right'];
+const CARGO_PHOTOS = ['cargo_photo_front','cargo_photo_back','cargo_photo_left','cargo_photo_right'];
 const ADDITIONAL_VEHICLE_PHOTOS={TAXI:['front'],CARGO:['front'],COURIER:['front']} as const;
 export const DOCUMENTED_COURIER_METHODS = new Set(['MOPED','MOTORCYCLE','CAR','TRUCK','CARGO_CAR']);
 export const LIGHT_COURIER_METHODS = new Set(['FOOT','BICYCLE','E_BICYCLE','SCOOTER']);
@@ -55,7 +55,7 @@ export function registrationCapabilityCeiling(roles:readonly PerformerRoleValue[
   return {
     acceptsEconomy:selected.has('TAXI_DRIVER')&&transportClass!=='TRUCK',
     acceptsComfort:selected.has('TAXI_DRIVER')&&transportClass==='COMFORT',
-    acceptsDeliveryCar:selected.has('COURIER')&&motorCourier&&transportClass!=='TRUCK',
+    acceptsDeliveryCar:(selected.has('TAXI_DRIVER')||selected.has('COURIER')&&motorCourier)&&transportClass!=='TRUCK',
     acceptsDeliveryTruck:transportClass==='TRUCK'&&(selected.has('CARGO_DRIVER')||selected.has('COURIER')&&motorCourier),
   };
 }
@@ -128,7 +128,7 @@ export function registrationUploadsWithEffectiveExpiry<T extends {slotKey:string
 }
 
 export const REGISTRATION_CONFIG = {
-  version:'kg-2026-09-24',
+  version:'kg-2026-10-06-no-documents',
   country:'KG',
   minimumAge:18,
   minimumAgeByRole:{TAXI_DRIVER:18,CARGO_DRIVER:18,COURIER:18},
@@ -138,20 +138,17 @@ export const REGISTRATION_CONFIG = {
   documentExpiry:{warningDays:REGISTRATION_EXPIRY_WARNING_DAYS,requiredSlots:[...REQUIRED_EXPIRY_UPLOAD_SLOTS]},
   supportPhone:'+996700000000',
   roles:[
-    {id:'TAXI_DRIVER',title:'Водитель такси',description:'Перевозите пассажиров на легковом автомобиле'},
+    {id:'TAXI_DRIVER',title:'Такси и доставка',description:'Перевозите пассажиров и доставляйте заказы на машине'},
     {id:'CARGO_DRIVER',title:'Водитель грузового транспорта',description:'Выполняйте грузовые перевозки на собственном или арендованном транспорте'},
-    {id:'COURIER',title:'Курьер',description:'Доставляйте посылки, документы, продукты и другие заказы'},
   ],
   countries:['Кыргызстан','Казахстан','Узбекистан','Таджикистан','Россия','Другое'],
-  cities:['Бишкек','Ош','Джалал-Абад','Каракол','Токмок','Нарын','Талас','Баткен'],
-  districts:{
-    'Бишкек':['Ленинский','Октябрьский','Первомайский','Свердловский'],
-    'Ош':['Ак-Буура','Анар','Керме-Тоо','Курманжан-Датка','Манас-Ата','Сулайман-Тоо'],
-  },
+  cities:['Шамалды-Сай'],
+  comingSoonCities:['Кочкор-Ата','Кербен'],
+  districts:{} as Record<string,string[]>,
   citizenships:[{id:'KG',name:'Кыргызстан'},{id:'KZ',name:'Казахстан'},{id:'UZ',name:'Узбекистан'},{id:'TJ',name:'Таджикистан'},{id:'RU',name:'Россия'},{id:'OTHER',name:'Другое'}],
   languages:[{id:'ru',name:'Русский'},{id:'ky',name:'Кыргызча'}],
   driverLicenseCategories:['A','A1','B','B1','BE','C','C1','CE','D','D1','DE','Tm','Tb'],
-  cargoVehicleTypes:['Пикап','Минивэн','Каблук','Фургон','Бортовой','Тентованный','Рефрижератор','Эвакуатор','Самосвал','Тягач','Другое'],
+  cargoVehicleTypes:['Каблук', 'Грузовой минивэн', 'Фургон', 'Бортовой', 'Тентованный', 'Рефрижератор'],
   taxiBodyTypes:['Седан','Хэтчбек','Универсал','Кроссовер','Минивэн','Другое'],
   tariffs:[{id:'ECONOMY',title:'Эконом'},{id:'COMFORT',title:'Комфорт'},{id:'BUSINESS',title:'Бизнес'}],
   courierTransportModes:['FOOT','BICYCLE','E_BICYCLE','MOPED','SCOOTER','MOTORCYCLE','CAR','TRUCK'],
@@ -167,16 +164,8 @@ export const REGISTRATION_CONFIG = {
     {id:'performer-terms',required:true,title:'Принимаю условия работы исполнителя'},
   ],
   documentRequirements:[
-    {id:'profile-photo',title:'Фотография профиля',kind:'PROFILE_PHOTO',slots:['profile_photo'],requiredFor:[...PERFORMER_ROLES]},
-    {id:'identity',title:'Удостоверение личности',kind:'IDENTITY_DOCUMENT',slots:['identity_front','identity_back'],requiredFor:[...PERFORMER_ROLES]},
-    {id:'driver-license',title:'Водительское удостоверение',kind:'DRIVER_LICENSE',slots:[...DRIVER_LICENSE_UPLOADS],requiredFor:['TAXI_DRIVER','CARGO_DRIVER'],condition:'Также требуется для моторизованной доставки'},
-    {id:'taxi-registration',title:'Документы автомобиля',kind:'VEHICLE_DOCUMENT',slots:['taxi_registration','taxi_insurance'],expirySlots:['taxi_insurance'],requiredFor:['TAXI_DRIVER']},
-    {id:'taxi-photos',title:'Фотографии автомобиля такси',kind:'VEHICLE_PHOTO',slots:TAXI_PHOTOS,requiredFor:['TAXI_DRIVER']},
-    {id:'cargo-registration',title:'Документы грузового автомобиля',kind:'VEHICLE_DOCUMENT',slots:['cargo_registration','cargo_insurance'],expirySlots:['cargo_insurance'],requiredFor:['CARGO_DRIVER']},
-    {id:'cargo-photos',title:'Фотографии грузового автомобиля',kind:'VEHICLE_PHOTO',slots:CARGO_PHOTOS,requiredFor:['CARGO_DRIVER']},
-    {id:'courier-vehicle',title:'Документы транспорта курьера',kind:'VEHICLE_DOCUMENT',slots:['courier_registration','courier_insurance'],expirySlots:['courier_insurance'],requiredFor:['COURIER'],condition:'Только для моторизованной доставки с отдельным транспортом'},
-    {id:'courier-vehicle-photo',title:'Фотография транспорта курьера',kind:'VEHICLE_PHOTO',slots:['courier_photo'],requiredFor:['COURIER'],condition:'Только для моторизованной доставки с отдельным транспортом'},
-    {id:'rental-proof',title:'Договор аренды или доверенность',kind:'VEHICLE_DOCUMENT',slots:[],requiredFor:['TAXI_DRIVER','CARGO_DRIVER'],condition:'Только для арендованного транспорта'},
+    {id:'taxi-photos',title:'Четыре фото автомобиля',kind:'VEHICLE_PHOTO',slots:TAXI_PHOTOS,requiredFor:['TAXI_DRIVER']},
+    {id:'cargo-photos',title:'Четыре фото автомобиля',kind:'VEHICLE_PHOTO',slots:CARGO_PHOTOS,requiredFor:['CARGO_DRIVER']},
   ],
   upload:{maxBytes:12*1024*1024,maxTotalBytes:256*1024*1024,maxFiles:128,allowedMimeTypes:['image/jpeg','image/png','image/webp','application/pdf']},
 } as const;
@@ -226,6 +215,7 @@ export function requiresDriverLicense(roles:readonly PerformerRoleValue[],data:R
 }
 
 export function registrationSteps(roles:readonly PerformerRoleValue[],data:RegistrationData) {
+  if(!roles.includes('COURIER'))return ['ROLES','PERSONAL_DATA',...(roles.includes('TAXI_DRIVER')?['TAXI_VEHICLE','TAXI_PHOTOS']:[]),...(roles.includes('CARGO_DRIVER')?['CARGO_VEHICLE','CARGO_PHOTOS']:[]),'REVIEW'];
   const steps=['ROLES'];
   if(roles.includes('COURIER'))steps.push('COURIER_TRANSPORT');
   steps.push('PERSONAL_DATA');
@@ -256,6 +246,15 @@ export function registrationAdditionalDocumentSlotKeys(role:PerformerRoleValue,i
   return Array.from({length:sides},(_,index)=>`${base}_${index===0?'front':index===1?'back':`side_${index+1}`}`);
 }
 export function registrationUploadSlotSpecs(roles:readonly PerformerRoleValue[],data:RegistrationData):RegistrationUploadSlotSpec[] {
+  if(!roles.includes('COURIER')) {
+    const specs:RegistrationUploadSlotSpec[]=roles.flatMap(role=>(role==='TAXI_DRIVER'?TAXI_PHOTOS:CARGO_PHOTOS).map(slotKey=>({slotKey,kind:'VEHICLE_PHOTO' as const,role,required:true})));
+    for(const {vehicle} of registrationAdditionalVehicles(data)) {
+      if(!vehicle)continue;
+      const clientId=text(vehicle.clientId),usage=text(vehicle.usage).toUpperCase(),role=performerRoleForVehicleUsage(usage);
+      if(role&&roles.includes(role)&&ADDITIONAL_VEHICLE_CLIENT_ID_PATTERN.test(clientId))for(const suffix of ['front','back','left','right'])specs.push({slotKey:`vehicle_${clientId}_photo_${suffix}`,kind:'VEHICLE_PHOTO',role,required:true});
+    }
+    return specs;
+  }
   const specs:RegistrationUploadSlotSpec[]=[];
   const add=(slotKey:string,kind:RegistrationUploadKindValue,role:PerformerRoleValue|null,required=true)=>{if(!specs.some(item=>item.slotKey===slotKey))specs.push({slotKey,kind,role,required});};
   if(roles.length) {
@@ -345,7 +344,7 @@ function parsedBirthDate(value:string):Date|null {
   return date.getUTCFullYear()===year&&date.getUTCMonth()===month!-1&&date.getUTCDate()===day?date:null;
 }
 
-export function validateRegistrationDataValues(data:RegistrationData,roles:readonly PerformerRoleValue[],today=new Date(),_allowedRoles:readonly PerformerRoleValue[]=roles) {
+export function validateRegistrationDataValues(data:RegistrationData,roles:readonly PerformerRoleValue[],today=new Date(),_allowedRoles:readonly PerformerRoleValue[]=roles,allowedCities:readonly string[]=REGISTRATION_CONFIG.cities) {
   const errors:RegistrationValidationError[]=[];
   const invalid=(field:string,message:string,code='INVALID')=>{if(!errors.some(item=>item.field===field&&item.code===code))errors.push({field,code,message});};
   const checkText=(field:string,value:unknown,max:number)=>{if(value!==undefined&&value!==null&&typeof value!=='string')invalid(field,'Значение должно быть строкой');else if(typeof value==='string'&&value.length>max)invalid(field,`Максимальная длина — ${max} символов`,'TOO_LONG');};
@@ -381,18 +380,18 @@ export function validateRegistrationDataValues(data:RegistrationData,roles:reado
   if(data.personal!==undefined&&!personal)invalid('personal','Некорректный раздел личных данных');
   if(personal) {
     checkText('personal.firstName',personal.firstName,80);checkText('personal.lastName',personal.lastName,80);checkText('personal.middleName',personal.middleName,80);
-    checkDate('personal.birthDate',personal.birthDate,{past:true});checkEnum('personal.city',personal.city,REGISTRATION_CONFIG.cities);
+    checkDate('personal.birthDate',personal.birthDate,{past:true});checkEnum('personal.city',personal.city,allowedCities);
     checkEnum('personal.citizenship',personal.citizenship,[...REGISTRATION_CONFIG.countries,...REGISTRATION_CONFIG.citizenships.map(item=>item.id)]);checkEnum('personal.language',personal.language,['ru','ky']);
   }
   const identity=record(data.identity);
-  if(data.identity!==undefined&&!identity)invalid('identity','Некорректный раздел удостоверения личности');
-  if(identity) {
+  if(roles.includes('COURIER')&&data.identity!==undefined&&!identity)invalid('identity','Некорректный раздел удостоверения личности');
+  if(identity&&roles.includes('COURIER')) {
     checkText('identity.number',identity.number,64);checkText('identity.issuedBy',identity.issuedBy,160);
     const issued=checkDate('identity.issuedAt',identity.issuedAt,{past:true}),expires=checkDate('identity.expiresAt',identity.expiresAt,{future:true});
     if(issued&&expires&&issued>=expires)invalid('identity.expiresAt','Срок действия должен быть позже даты выдачи');
   }
   const license=record(data.driverLicense);
-  const licenseRequired=requiresDriverLicense(roles,data);
+  const licenseRequired=roles.includes('COURIER')&&requiresDriverLicense(roles,data);
   if(licenseRequired&&data.driverLicense!==undefined&&!license)invalid('driverLicense','Некорректный раздел водительского удостоверения');
   if(license&&licenseRequired) {
     checkText('driverLicense.number',license.number,64);checkArray('driverLicense.categories',license.categories,REGISTRATION_CONFIG.driverLicenseCategories,16);
@@ -446,7 +445,7 @@ export function validateRegistrationDataValues(data:RegistrationData,roles:reado
   if(courier&&roles.includes('COURIER')) {
     checkArray('courier.transportModes',courier.transportModes,REGISTRATION_CONFIG.courierTransportModes,12);checkArray('courier.orderTypes',courier.orderTypes,REGISTRATION_CONFIG.courierOrderTypes,12);
     checkNumber('courier.maxWeightKg',courier.maxWeightKg,0.1,1000);checkBoolean('courier.hasThermalBag',courier.hasThermalBag);checkBoolean('courier.acceptsCash',courier.acceptsCash);checkBoolean('courier.useExistingVehicle',courier.useExistingVehicle);
-    checkEnum('courier.city',courier.city,REGISTRATION_CONFIG.cities);checkEnum('courier.existingVehicleUsage',courier.existingVehicleUsage,['TAXI','CARGO']);checkText('courier.existingVehicleClientId',courier.existingVehicleClientId,64);
+    checkEnum('courier.city',courier.city,allowedCities);checkEnum('courier.existingVehicleUsage',courier.existingVehicleUsage,['TAXI','CARGO']);checkText('courier.existingVehicleClientId',courier.existingVehicleClientId,64);
     const existingVehicleClientId=text(courier.existingVehicleClientId);
     if(existingVehicleClientId&&!ADDITIONAL_VEHICLE_CLIENT_ID_PATTERN.test(existingVehicleClientId))invalid('courier.existingVehicleClientId','Некорректный идентификатор выбранного транспорта');
     if(courier.useExistingVehicle!==true&&existingVehicleClientId)invalid('courier.existingVehicleClientId','Выбранный транспорт допустим только при повторном использовании');
@@ -455,8 +454,8 @@ export function validateRegistrationDataValues(data:RegistrationData,roles:reado
   const cargo=record(data.cargoEquipment);
   if(roles.includes('CARGO_DRIVER')&&data.cargoEquipment!==undefined)validateCargoEquipmentValues('cargoEquipment',cargo,true);
   const work=record(data.work);
-  if(work) {checkEnum('work.city',work.city,REGISTRATION_CONFIG.cities);const city=text(work.city)||text(personal?.city),districts=REGISTRATION_CONFIG.districts[city as keyof typeof REGISTRATION_CONFIG.districts]??[];checkArray('work.districts',work.districts,districts,32);checkBoolean('work.intercity',work.intercity);checkBoolean('work.night',work.night);checkBoolean('work.notifications',work.notifications);checkEnum('work.schedule',work.schedule,['FULL','FLEXIBLE']);checkText('work.preferredTime',work.preferredTime,80);checkNumber('work.maxPickupDistanceKm',work.maxPickupDistanceKm,0.1,1000);}
-  const location=record(data.location);if(location) {checkEnum('location.choice',location.choice,['PRECISE','MANUAL']);checkEnum('location.city',location.city,REGISTRATION_CONFIG.cities);}
+  if(work) {checkEnum('work.city',work.city,allowedCities);const city=text(work.city)||text(personal?.city),districts=REGISTRATION_CONFIG.districts[city as keyof typeof REGISTRATION_CONFIG.districts]??[];checkArray('work.districts',work.districts,districts,32);checkBoolean('work.intercity',work.intercity);checkBoolean('work.night',work.night);checkBoolean('work.notifications',work.notifications);checkEnum('work.schedule',work.schedule,['FULL','FLEXIBLE']);checkText('work.preferredTime',work.preferredTime,80);checkNumber('work.maxPickupDistanceKm',work.maxPickupDistanceKm,0.1,1000);}
+  const location=record(data.location);if(location) {checkEnum('location.choice',location.choice,['PRECISE','MANUAL']);checkEnum('location.city',location.city,allowedCities);}
   const payment=record(data.payment);
   if(payment) {
     const allowed=new Set(['type','last4','taxIdLast4']);for(const key of Object.keys(payment))if(!allowed.has(key))invalid(`payment.${key}`,'Платёжное поле не поддерживается','UNKNOWN_FIELD');
@@ -482,8 +481,8 @@ export function validateRegistrationDataValues(data:RegistrationData,roles:reado
   return errors;
 }
 
-export function validateRegistrationSubmission(input:{roles:readonly PerformerRoleValue[];selectedRoles?:readonly PerformerRoleValue[];data:RegistrationData;uploads:readonly RegistrationUploadForValidation[];today?:Date}) {
-  const {roles,data,uploads}=input,errors:RegistrationValidationError[]=[...validateRegistrationDataValues(data,roles,input.today,input.selectedRoles??roles)];
+export function validateRegistrationSubmission(input:{roles:readonly PerformerRoleValue[];selectedRoles?:readonly PerformerRoleValue[];data:RegistrationData;uploads:readonly RegistrationUploadForValidation[];today?:Date;allowedCities?:readonly string[]}) {
+  const {roles,data,uploads}=input,errors:RegistrationValidationError[]=[...validateRegistrationDataValues(data,roles,input.today,input.selectedRoles??roles,input.allowedCities)];
   if(!roles.length)errors.push({field:'roles',code:'REQUIRED',message:'Выберите хотя бы одно направление работы'});
   required(errors,data,'personal.firstName',[['personal','firstName'],['personalData','firstName'],['firstName']],'Введите имя');
   required(errors,data,'personal.lastName',[['personal','lastName'],['personalData','lastName'],['lastName']],'Введите фамилию');
@@ -500,8 +499,8 @@ export function validateRegistrationSubmission(input:{roles:readonly PerformerRo
       if(age<minimum)errors.push({field:'personal.birthDate',code:'MINIMUM_AGE',message:`Минимальный возраст — ${minimum} лет`});
     }
   }
-  required(errors,data,'identity.expiresAt',[['identity','expiresAt'],['identityDocument','expiryDate']],'Укажите срок действия документа');
-  if(requiresDriverLicense(roles,data)) {
+  if(roles.includes('COURIER'))required(errors,data,'identity.expiresAt',[['identity','expiresAt'],['identityDocument','expiryDate']],'Укажите срок действия документа');
+  if(roles.includes('COURIER')&&requiresDriverLicense(roles,data)) {
     if(!stringArray(valueAt(data,'driverLicense','categories')).length)errors.push({field:'driverLicense.categories',code:'REQUIRED',message:'Выберите категорию водительских прав'});
     required(errors,data,'driverLicense.expiresAt',[['driverLicense','expiresAt'],['driverLicense','expiryDate']],'Укажите срок действия водительского удостоверения');
   }

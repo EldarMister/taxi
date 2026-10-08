@@ -9,6 +9,7 @@
     "dev:mobile": "npm --prefix mobile start",
     "dev:web": "npm --prefix web run dev",
     "build:web": "npm --prefix web run build",
+    "test:hosting": "npm --prefix server run test:site && node --test web/admin/test/session.test.cjs",
     "check": "npm --prefix server run build && npm --prefix mobile run typecheck",
     "test:integration": "npm --prefix server run test:integration",
     "db:local": "node scripts/local-postgres.mjs",

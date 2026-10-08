@@ -54,12 +54,12 @@ test('food and ordinary car delivery eligibility are independent for every saved
   assert.equal(driverCanTake(fixture().profile, 'DELIVERY_CAR', 'ECONOMY', true), false);
 });
 
-test('food delivery respects registration approvals and cannot restore a revoked courier role', async () => {
+test('taxi and delivery approval enables delivery preferences and revoked approvals cannot be restored', async () => {
   const h = fixture({ registrationManaged: true, acceptsDeliveryCar: false });
   h.tx.performerApplication.findUnique = async () => ({ id: 'application' });
-  h.tx.performerApplicationRole = { findMany: async () => [{ role: 'TAXI_DRIVER' }] };
+  h.tx.performerApplicationRole = { findMany: async () => [] };
   await assert.rejects(h.service().preferences(actor, { acceptsDeliveryFood: true }), /одобренные направления/);
-  h.tx.performerApplicationRole.findMany = async () => [{ role: 'TAXI_DRIVER' }, { role: 'COURIER' }];
+  h.tx.performerApplicationRole.findMany = async () => [{ role: 'TAXI_DRIVER' }];
   h.profile.courierModes = ['CAR'];
   await h.service().preferences(actor, { acceptsDeliveryFood: true });
   assert.equal(h.profile.acceptsDeliveryFood, true);

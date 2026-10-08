@@ -1,0 +1,22 @@
+.git
+.local
+.agents
+.github
+**/node_modules
+**/.env
+**/.env.*
+**/*.log
+**/*.keystore
+**/*.jks
+**/google-services*.json
+**/GoogleService-Info.plist
+mobile
+restaurant-mobile
+artifacts
+designe
+docs
+web/design
+web/*.png
+web/dist
+server/dist
+# Website builds use web/.dockerignore and its own context.

@@ -84,7 +84,8 @@ export class AuthService {
       if (session.revokedAt || session.expiresAt.getTime() <= Date.now()) {
         await tx.refreshSession.updateMany({where:{familyId:session.familyId,revokedAt:null},data:{revokedAt:new Date()}}); return null;
       }
-      const user=await tx.user.findUniqueOrThrow({where:{id:session.userId},select:{role:true,adminCredential:{select:{disabled:true}}}});
+      const user=await tx.user.findUniqueOrThrow({where:{id:session.userId},select:{role:true,deletedAt:true,adminCredential:{select:{disabled:true}}}});
+      if(user.deletedAt)return null;
       if(user.role==='ADMIN') {
         // Coordinate password resets with token rotation so a reset cannot be bypassed by an in-flight refresh.
         await tx.$queryRaw`SELECT "userId" FROM "AdminCredential" WHERE "userId"=${session.userId}::uuid FOR UPDATE`;
@@ -115,8 +116,8 @@ export class AuthService {
       payload = await this.jwt.verifyAsync<{sub:string;sid:string;fid:string;exp:number}>(token,{secret:this.config.jwtSecret,issuer:'taxi-api',audience:'taxi-mobile',algorithms:['HS256']});
     } catch {throw new UnauthorizedException('Сессия истекла. Войдите снова.');}
     // A temporary database outage is a server error, not an instruction to erase a valid session.
-    const session = await this.db.refreshSession.findUnique({where:{id:payload.sid},select:{id:true,userId:true,familyId:true,revokedAt:true,expiresAt:true,adminAuthenticated:true,user:{select:{role:true,adminCredential:{select:{disabled:true}}}}}});
-    if (!session || session.userId !== payload.sub || session.familyId !== payload.fid || session.revokedAt || session.expiresAt.getTime() <= Date.now()) throw new UnauthorizedException('Сессия истекла. Войдите снова.');
+    const session = await this.db.refreshSession.findUnique({where:{id:payload.sid},select:{id:true,userId:true,familyId:true,revokedAt:true,expiresAt:true,adminAuthenticated:true,user:{select:{role:true,deletedAt:true,adminCredential:{select:{disabled:true}}}}}});
+    if (!session || session.user.deletedAt || session.userId !== payload.sub || session.familyId !== payload.fid || session.revokedAt || session.expiresAt.getTime() <= Date.now()) throw new UnauthorizedException('Сессия истекла. Войдите снова.');
     if(session.user.role==='ADMIN'&&(!session.adminAuthenticated||!session.user.adminCredential||session.user.adminCredential.disabled))throw new UnauthorizedException('Используйте вход в панель управления');
     return {id:session.userId,role:session.user.role,sessionId:session.id,familyId:session.familyId,expiresAt:payload.exp};
   }
