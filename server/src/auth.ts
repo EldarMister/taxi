@@ -6,6 +6,7 @@ import { PrismaService } from './prisma.service';
 import { AppConfig } from './config';
 import { RealtimeEvents } from './events';
 import { OtpDelivery } from './otp-delivery';
+import { OtpFallback } from './otp-fallback';
 export interface Actor { id:string; role:Role; sessionId:string; familyId:string; expiresAt:number }
 const hash = (value:string) => createHash('sha256').update(value).digest('hex');
 @Injectable()
@@ -24,7 +25,7 @@ export class RateLimits {
 }
 @Injectable()
 export class AuthService {
-  constructor(private readonly db:PrismaService,private readonly jwt:JwtService,private readonly config:AppConfig,private readonly limits:RateLimits,private readonly events:RealtimeEvents,private readonly delivery:OtpDelivery) {}
+  constructor(private readonly db:PrismaService,private readonly jwt:JwtService,private readonly config:AppConfig,private readonly limits:RateLimits,private readonly events:RealtimeEvents,private readonly delivery:OtpDelivery,private readonly fallback:OtpFallback) {}
   private otpHash(phone:string, code:string) {return createHmac('sha256',this.config.otpSecret).update(`${phone}:${code}`).digest('hex');}
   async requestCode(phone:string, ip:string) {
     await this.limits.take(`sms:ip:${ip}`,20,3600);
@@ -37,10 +38,12 @@ export class AuthService {
     // Keep the replacement unusable until the provider accepts the request.
     const pendingAt=new Date();
     await this.db.smsChallenge.upsert({where:{phone},create:{phone,codeHash,consumedAt:pendingAt,expiresAt:new Date(Date.now()+300000)},update:{codeHash,attempts:0,consumedAt:pendingAt,requestedAt:pendingAt,expiresAt:new Date(Date.now()+300000)}});
-    const channel=await this.delivery.send(phone,code);
+    const receipt=this.config.smsProvider==='messaggio' && this.config.telegramGatewayToken
+      ? await this.fallback.start(phone,code,codeHash)
+      : {channel:await this.delivery.send(phone,code)};
     const activated=await this.db.smsChallenge.updateMany({where:{phone,codeHash,consumedAt:pendingAt},data:{consumedAt:null}});
     if (!activated.count) throw new ServiceUnavailableException('Запрос кода устарел. Запросите новый код.');
-    return {sent:true,channel,retryAfterSeconds:60,...(this.config.devAuth?{development:true,developmentCode:this.config.devCode}:{})};
+    return {sent:true,...receipt,retryAfterSeconds:60,...(this.config.devAuth?{development:true,developmentCode:this.config.devCode}:{})};
   }
   async verifyCode(phone:string, code:string, ip:string) {
     await this.limits.take(`verify:ip:${ip}`,40,900);

@@ -94,7 +94,7 @@ async function setup(t, options = {}) {
       if (id === './ui') return ui;
       if (id.endsWith('.png')) return id;
       if (id === './api') return {
-        api: { post: async (endpoint, body) => {
+        api: { request: async endpoint => options.get ? options.get(endpoint) : {}, post: async (endpoint, body) => {
           calls.push({ endpoint, body: JSON.parse(JSON.stringify(body)) });
           return options.post ? options.post(endpoint, body) : { retryAfterSeconds: 60 };
         } },
@@ -242,6 +242,21 @@ test('WhatsApp channel description follows the selected interface language', asy
   await h.submit();
   assert.match(h.text(), /Code sent via WhatsApp to/);
   assert.equal(h.input('auth-code').props.accessibilityLabel, 'Verification code');
+});
+
+test('automatic fallback updates WhatsApp to Telegram without resending or replacing entered digits', async t => {
+  const h=await setup(t,{post:async()=>({channel:'whatsapp',deliveryId:'opaque-attempt-id',retryAfterSeconds:60}),get:async endpoint=>{
+    assert.equal(endpoint,'/auth/code-delivery/opaque-attempt-id');return {channel:'telegram',state:'telegram_accepted'};
+  }});
+  await h.change('auth-phone','700123456');await h.submit();await h.change('auth-code','65');
+  await h.advance(3);
+  assert.match(h.text(),/Код отправлен в Telegram на номер/);assert.equal(h.input('auth-code').props.value,'65');assert.equal(h.calls.length,1);
+});
+
+test('direct Telegram fallback uses the normal confirmation and cooldown screen',async t=>{
+  const h=await setup(t,{post:async()=>({channel:'telegram',deliveryId:'attempt',retryAfterSeconds:60})});
+  await h.change('auth-phone','700123456');await h.submit();
+  assert.match(h.text(),/Код отправлен в Telegram на номер/);assert.match(h.text(),/через 60 с/);
 });
 
 test('failed SMS request keeps the phone screen, displays the error and allows retry', async t => {

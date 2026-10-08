@@ -10,7 +10,7 @@ import { readSelectedLanguage, writeSelectedLanguage } from './auth/languageStor
 import { useAuthDesign } from './auth/design';
 import { fonts } from './design/typography';
 
-type CodeResponse = { retryAfterSeconds?: number; channel?: 'whatsapp' | 'sms' | 'development'; development?: boolean; developmentCode?: string };
+type CodeResponse = { retryAfterSeconds?: number; channel?: 'whatsapp' | 'telegram' | 'sms' | 'development'; deliveryId?: string; development?: boolean; developmentCode?: string };
 
 export function AuthScreen({ onLogin }: { onLogin: (session: Session, language: Language) => Promise<void> }) {
   const { isDark, palette } = useAuthDesign();
@@ -32,6 +32,7 @@ export function AuthScreen({ onLogin }: { onLogin: (session: Session, language: 
   const [error, setError] = useState('');
   const [developmentCode, setDevelopmentCode] = useState('');
   const [deliveryChannel, setDeliveryChannel] = useState<CodeResponse['channel']>('sms');
+  const [deliveryId, setDeliveryId] = useState('');
   const [retryAt, setRetryAt] = useState(0);
   const [secondsLeft, setSecondsLeft] = useState(0);
   const [codeFocused, setCodeFocused] = useState(false);
@@ -98,6 +99,24 @@ export function AuthScreen({ onLogin }: { onLogin: (session: Session, language: 
     tick(); const timer = setInterval(tick, 1000);
     return () => clearInterval(timer);
   }, [retryAt]);
+  useEffect(() => {
+    if (step !== 'code' || !deliveryId || verified) return;
+    let cancelled = false, checking = false, finished = false;
+    const check = async () => {
+      if (checking || finished || submitting.current) return;
+      checking = true;
+      try {
+        const result = await api.request<{channel?: CodeResponse['channel'];state:string}>(`/auth/code-delivery/${deliveryId}`);
+        if (cancelled || !mounted.current) return;
+        if (result.channel === 'telegram' && result.state === 'telegram_accepted') setDeliveryChannel('telegram');
+        if (['telegram_accepted','whatsapp_delivered','failed','expired','stopped'].includes(result.state)) finished = true;
+        if (result.state === 'failed') setError(text('Не удалось доставить код в WhatsApp и Telegram. Запросите новый код.', 'Код WhatsApp жана Telegram аркылуу жеткирилген жок. Жаңы код сураңыз.', 'The code could not be sent via WhatsApp or Telegram. Request a new code.'));
+      } catch { /* A status request failure must not invalidate a received code. */ }
+      finally { checking = false; }
+    };
+    const timer = setInterval(() => void check(), 3000);
+    return () => { cancelled = true; clearInterval(timer); };
+  }, [step, deliveryId, verified, language]);
   const measureKeyboardOverlap = useCallback(() => {
     if (Platform.OS !== 'android' || keyboardTop.current === null) return;
     const top = keyboardTop.current;
@@ -148,6 +167,7 @@ export function AuthScreen({ onLogin }: { onLogin: (session: Session, language: 
       Keyboard.dismiss(); setSentPhone(normalizedPhone); setCode('');
       setDevelopmentCode(result.development ? result.developmentCode || '' : '');
       setDeliveryChannel(result.channel ?? 'sms');
+      setDeliveryId(result.deliveryId ?? '');
       setRetryAt(Date.now() + (result.retryAfterSeconds ?? 60) * 1000);
       setStep('code');
     } catch (e) { if (mounted.current) setError(messageOf(e)); }
@@ -230,7 +250,7 @@ export function AuthScreen({ onLogin }: { onLogin: (session: Session, language: 
             <View style={a.codeScreen}>
               <Pressable accessibilityRole="button" accessibilityLabel={t('Назад')} onPress={back} style={a.back}><Icon name="arrow-back" size={26 * scale} color={palette.ink} /></Pressable>
               <Text style={[a.title, a.codeTitle]}>{text('Введите код', 'Кодду киргизиңиз', 'Enter the code')}</Text>
-              <Text style={a.subtitle}>{developmentCode ? text('Тестовый вход для номера', 'Номер үчүн сыноо кирүүсү', 'Test sign in for') : deliveryChannel === 'whatsapp' ? text('Код отправлен в WhatsApp на номер', 'Бул номерге WhatsApp аркылуу код жөнөтүлдү', 'Code sent via WhatsApp to') : text('Отправили SMS на номер', 'Бул номерге SMS жөнөтүлдү', 'We sent an SMS to')}</Text>
+              <Text style={a.subtitle}>{developmentCode ? text('Тестовый вход для номера', 'Номер үчүн сыноо кирүүсү', 'Test sign in for') : deliveryChannel === 'telegram' ? text('Код отправлен в Telegram на номер', 'Бул номерге Telegram аркылуу код жөнөтүлдү', 'Code sent via Telegram to') : deliveryChannel === 'whatsapp' ? text('Код отправлен в WhatsApp на номер', 'Бул номерге WhatsApp аркылуу код жөнөтүлдү', 'Code sent via WhatsApp to') : text('Отправили SMS на номер', 'Бул номерге SMS жөнөтүлдү', 'We sent an SMS to')}</Text>
               <Pressable accessibilityRole="button" disabled={busy} onPress={back} style={a.editPhone}>
                 <Text style={a.sentPhone}>{`+996 ${displayPhone(sentPhone.slice(4))}`}</Text>
               </Pressable>

@@ -413,6 +413,21 @@ model SmsChallenge {
   consumedAt DateTime?
   requestedAt DateTime @default(now())
 }
+model OtpDeliveryAttempt {
+  id String @id @default(uuid()) @db.Uuid
+  phone String
+  codeHash String
+  codeCiphertext String
+  channel String @default("whatsapp")
+  state String @default("sending_whatsapp")
+  whatsappMessageId String?
+  telegramRequestId String?
+  createdAt DateTime @default(now())
+  expiresAt DateTime
+  nextCheckAt DateTime @default(now())
+  @@index([state, nextCheckAt])
+  @@index([expiresAt])
+}
 model RateLimit {
   key String @id
   count Int

@@ -5,6 +5,7 @@ import { createHmac } from 'node:crypto';
 import { JwtService } from '@nestjs/jwt';
 import { ServiceUnavailableException, UnauthorizedException } from '@nestjs/common';
 import { AppConfig } from '../src/config';
+import { OtpFallback } from '../src/otp-fallback';
 import { AuthService, RateLimits } from '../src/auth';
 import { OtpDelivery, acceptedWhatsappMessage } from '../src/otp-delivery';
 import { PrismaService } from '../src/prisma.service';
@@ -48,7 +49,7 @@ function authHarness(delivery: OtpDelivery, cfg = config) {
     },
   };
   const service = new AuthService(db as PrismaService, new JwtService(), cfg,
-    { take: async (key: string) => { limits.push(key); } } as unknown as RateLimits, {} as RealtimeEvents, delivery);
+    { take: async (key: string) => { limits.push(key); } } as unknown as RateLimits, {} as RealtimeEvents, delivery, {} as OtpFallback);
   service.user = async () => user as any;
   return { service, limits, challenge: () => challenge };
 }

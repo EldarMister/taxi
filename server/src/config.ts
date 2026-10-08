@@ -19,6 +19,7 @@ export class AppConfig {
   readonly messaggioWhatsappSender = process.env.MESSAGGIO_WHATSAPP_SENDER?.trim() || '';
   readonly messaggioWhatsappTemplate = process.env.MESSAGGIO_WHATSAPP_TEMPLATE?.trim() || '';
   readonly messaggioWhatsappLanguage = process.env.MESSAGGIO_WHATSAPP_LANGUAGE?.trim() || 'ru';
+  readonly telegramGatewayToken = process.env.TELEGRAM_GATEWAY_TOKEN?.trim() || '';
   readonly routingProvider = process.env.ROUTING_PROVIDER ?? 'osrm';
   readonly osrmBaseUrl = this.endpoint('OSRM_BASE_URL', 'https://router.project-osrm.org');
   readonly nominatimBaseUrl = process.env.NOMINATIM_BASE_URL?.trim() ? this.endpoint('NOMINATIM_BASE_URL', '') : '';
@@ -57,6 +58,7 @@ export class AppConfig {
       }
       if (!/^[a-z]{2,3}(?:_[A-Z]{2})?$/.test(this.messaggioWhatsappLanguage)) throw new Error('Invalid MESSAGGIO_WHATSAPP_LANGUAGE');
     }
+    if (this.telegramGatewayToken && (this.telegramGatewayToken.length > 512 || /[\r\n]/.test(this.telegramGatewayToken))) throw new Error('Invalid TELEGRAM_GATEWAY_TOKEN');
     if (!this.development) {
       if (!process.env.OSRM_BASE_URL || new URL(this.osrmBaseUrl).hostname === 'router.project-osrm.org') throw new Error('Configure a dedicated OSRM_BASE_URL outside development');
       if (!this.nominatimBaseUrl) throw new Error('Configure a dedicated NOMINATIM_BASE_URL outside development');

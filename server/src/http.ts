@@ -6,6 +6,7 @@ import { Prisma } from '@prisma/client';
 import sharp from 'sharp';
 import { Actor, AuthGuard, AuthService, RateLimits } from './auth';
 import { AppConfig } from './config';
+import { OtpFallback } from './otp-fallback';
 import { DriverService } from './driver';
 import { CreateOrderDto, DriverPositionDto, DriverPreferencesDto, OrdersHistoryDto, MessageDto, PhotoMessageDto, OnlineDto, PhoneDto, ProfileDto, PushTokenDto, QuoteDto, RatingDto, ReadNotificationsDto, RefreshDto, RemovePushTokenDto, TopupDto, VerifyDriverDto, VerifyDto } from './dto';
 import { OrdersService } from './orders';
@@ -55,7 +56,9 @@ export async function normalizeAvatar(data:Buffer):Promise<Buffer> {
 @ApiTags('auth')
 @Controller('auth')
 export class AuthController {
-  constructor(private readonly auth:AuthService,private readonly limits:RateLimits) {}
+  constructor(private readonly auth:AuthService,private readonly limits:RateLimits,private readonly fallback:OtpFallback) {}
+  @Get('code-delivery/:id')
+  async deliveryStatus(@Param('id',ParseUUIDPipe) id:string,@Req() req:Request) {await this.limits.take(`otp-status:${req.ip??'unknown'}`,120,60);return this.fallback.status(id);}
   @Post('request-code') @ApiOperation({summary:'Запросить SMS-код; тестовый код доступен только в development'})
   request(@Body() dto:PhoneDto,@Req() req:Request) {return this.auth.requestCode(dto.phone,req.ip??'unknown');}
   @Post('verify-code') verify(@Body() dto:VerifyDto,@Req() req:Request) {return this.auth.verifyCode(dto.phone,dto.code,req.ip??'unknown');}

@@ -2,7 +2,7 @@ import { Injectable, Logger, ServiceUnavailableException } from '@nestjs/common'
 import { randomUUID } from 'node:crypto';
 import { AppConfig } from './config';
 
-export type OtpChannel = 'whatsapp' | 'sms' | 'development';
+export type OtpChannel = 'whatsapp' | 'telegram' | 'sms' | 'development';
 const MESSAGGIO_SEND_URL = 'https://msg.messaggio.com/api/v1/send';
 
 class DeliveryError extends Error {}
@@ -13,7 +13,7 @@ export function whatsappOtpPayload(config: AppConfig, phone: string, code: strin
   return {
     recipients: [{ phone: phone.slice(1) }],
     channels: ['whatsapp'],
-    options: { ttl: 300, external_id: randomUUID() },
+    options: { ttl: config.telegramGatewayToken ? 60 : 300, external_id: randomUUID() },
     whatsapp: {
       from: config.messaggioWhatsappSender,
       content: [{ type: 'template', template: {
@@ -41,6 +41,48 @@ export class OtpDelivery {
   private readonly logger = new Logger(OtpDelivery.name);
   constructor(private readonly config: AppConfig) {}
 
+  async sendWhatsapp(phone: string, code: string): Promise<string> {
+    const response = await fetch(MESSAGGIO_SEND_URL, {
+      method: 'POST', redirect: 'error', signal: AbortSignal.timeout(6000),
+      headers: { 'Messaggio-Login': this.config.messaggioLogin, 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify(whatsappOtpPayload(this.config, phone, code)),
+    });
+    if (response.status !== 200) throw new DeliveryError(`http-${response.status}`);
+    const result = await response.json();
+    if (!acceptedWhatsappMessage(result, phone)) throw new DeliveryError('recipient-not-accepted');
+    return result.messages[0].message_id;
+  }
+
+  async whatsappStatus(messageId: string, phone: string): Promise<'delivered' | 'failed' | 'pending'> {
+    const response = await fetch('https://msg.messaggio.com/api/v1/statuses', {
+      method: 'POST', redirect: 'error', signal: AbortSignal.timeout(5000),
+      headers: { 'Messaggio-Login': this.config.messaggioLogin, 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify({recipients:[{id:messageId}],channels:['whatsapp'],whatsapp:[{from:this.config.messaggioWhatsappSender}]}),
+    });
+    if (response.status !== 200) throw new DeliveryError(`http-${response.status}`);
+    const result = await response.json();
+    const report = Array.isArray(result?.statuses) ? result.statuses.find((item: any) => item.message_id === messageId && item.type === 'status'
+      && item.status?.channel === 'whatsapp' && item.status?.recipient?.phone === phone.slice(1)) : null;
+    const status = report?.status?.status;
+    if ([70,69,67].includes(status)) return 'delivered';
+    if ([196,98,97,96,95,94,92,91,90,89,87,85,68,65,60].includes(status)) return 'failed';
+    return 'pending';
+  }
+
+  async sendTelegram(phone: string, code: string, ttl: number): Promise<string> {
+    if (!this.config.telegramGatewayToken || !/^\+[1-9]\d{7,14}$/.test(phone) || !/^\d{6}$/.test(code) || ttl < 30) throw new DeliveryError('invalid-telegram-input');
+    const response = await fetch('https://gatewayapi.telegram.org/sendVerificationMessage', {
+      method:'POST', redirect:'error', signal:AbortSignal.timeout(6000),
+      headers:{Authorization:`Bearer ${this.config.telegramGatewayToken}`,'Content-Type':'application/json'},
+      body:JSON.stringify({phone_number:phone,code,ttl:Math.min(ttl,300)}),
+    });
+    if (!response.ok) throw new DeliveryError(`telegram-http-${response.status}`);
+    const value = await response.json();
+    if (value?.ok !== true || value.result?.phone_number !== phone || typeof value.result?.request_id !== 'string' || !value.result.request_id.trim()
+      || ['expired','revoked'].includes(value.result?.delivery_status?.status)) throw new DeliveryError('telegram-not-accepted');
+    return value.result.request_id;
+  }
+
   async send(phone: string, code: string): Promise<OtpChannel> {
     if (this.config.smsProvider === 'development') {
       if (!this.config.devAuth) throw new ServiceUnavailableException('Отправка кодов входа не настроена.');
@@ -48,14 +90,7 @@ export class OtpDelivery {
     }
     try {
       if (this.config.smsProvider === 'messaggio') {
-        const response = await fetch(MESSAGGIO_SEND_URL, {
-          method: 'POST', redirect: 'error', signal: AbortSignal.timeout(10000),
-          headers: { 'Messaggio-Login': this.config.messaggioLogin, 'Content-Type': 'application/json', Accept: 'application/json' },
-          body: JSON.stringify(whatsappOtpPayload(this.config, phone, code)),
-        });
-        if (response.status !== 200) throw new DeliveryError(`http-${response.status}`);
-        // A 200 response can still reject this recipient. Accepted is not delivered.
-        if (!acceptedWhatsappMessage(await response.json(), phone)) throw new DeliveryError('recipient-not-accepted');
+        await this.sendWhatsapp(phone,code);
         return 'whatsapp';
       }
       if (this.config.smsProvider !== 'http') throw new DeliveryError('unknown-provider');
