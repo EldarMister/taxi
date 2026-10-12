@@ -11,6 +11,7 @@ import { AdminAuditService } from './admin.security';
 import { RealtimeEvents } from './events';
 import { applyFoodPromotionsForDisplay } from './food-promotions';
 import { CatalogAudience, projectCatalog } from './catalog-capabilities';
+import { SingleFlight } from './single-flight';
 
 export function serializeFoodOrder(order:FoodOrder) {
   return {id:order.id,status:order.status,createdAt:order.createdAt,updatedAt:order.updatedAt,completedAt:order.completedAt,restaurant:order.restaurantSnapshot,items:order.items,subtotal:order.subtotal,deliveryFee:order.deliveryFee,total:order.total,currency:'KGS',fulfillment:order.fulfillment,address:order.address,deliveryPoint:order.deliveryPoint,deliveryMethod:order.deliveryMethod,courierName:order.courierName,courierPhone:order.courierPhone,comment:order.comment,paymentMethod:order.paymentMethod,isDemo:order.isDemo};
@@ -18,7 +19,13 @@ export function serializeFoodOrder(order:FoodOrder) {
 
 @Injectable()
 export class FoodService {
+  private readonly catalogFlights = new SingleFlight<string>(4);
   constructor(private readonly db:PrismaService,private readonly config:AppConfig,private readonly limits:RateLimits,private readonly audit:AdminAuditService,private readonly events:RealtimeEvents) {}
+
+  catalogJson(audience:CatalogAudience='food-modifiers-v2') {
+    const key=JSON.stringify([audience,this.config.development?'development':'production']);
+    return this.catalogFlights.run(key,async()=>JSON.stringify(await this.catalog(audience)));
+  }
 
   async catalog(audience:CatalogAudience='food-modifiers-v2') {
     const rows=await this.db.foodRestaurant.findMany({where:{active:true,...(!this.config.development?{isDemo:false}:{})},orderBy:[{sortOrder:'asc'},{id:'asc'}]});

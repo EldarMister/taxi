@@ -16,13 +16,13 @@ export class FoodCatalogController {
   constructor(private readonly food:FoodService) {}
   @Get('catalog') async catalog(@Req() request:Request,@Res() response:Response) {
     const audience=catalogAudience(request.headers['x-atlas-capabilities']);
-    const body=await this.food.catalog(audience);
-    const etag=`"catalog-${audience}-${createHash('sha256').update(JSON.stringify(body)).digest('hex')}"`;
+    const json=await this.food.catalogJson(audience);
+    const etag=`"catalog-${audience}-${createHash('sha256').update(json).digest('hex')}"`;
     response.setHeader('Vary','X-Atlas-Capabilities');
     response.setHeader('Cache-Control','public, max-age=0, must-revalidate');
     response.setHeader('ETag',etag);
     if(request.headers['if-none-match']===etag)return response.status(304).end();
-    return response.json(body);
+    return response.type('application/json').send(json);
   }
 }
 
