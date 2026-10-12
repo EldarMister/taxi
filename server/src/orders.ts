@@ -2,14 +2,24 @@ import { BadRequestException, ConflictException, ForbiddenException, Injectable,
 import { Order, OrderStatus, Prisma } from '@prisma/client';
 import { Actor, AuthService, RateLimits } from './auth';
 import { AppConfig } from './config';
-import { ACTIVE_STATUSES, ASSIGNED_STATUSES, assertDriverTransition, calculateFare, haversine, historySince, Point } from './domain';
+import { ACTIVE_STATUSES, ASSIGNED_STATUSES, assertDriverTransition, calculateFare, calculateWaiting, haversine, historySince, Point } from './domain';
 import { CreateOrderDto, MessageDto, QuoteDto } from './dto';
 import { RealtimeEvents } from './events';
 import { PrismaService } from './prisma.service';
 import { RoutingService } from './providers';
 import { visibleDriverLocation } from './tracking';
-import { nextDriver, OFFER_SECONDS, POSITION_MAX_AGE_MS } from './dispatch-ranking';
+import { nextDriver, OFFER_SECONDS, POSITION_MAX_AGE_MS, IDLE_POSITION_MAX_AGE_MS } from './dispatch-ranking';
 import { driverCanTake } from './driver-eligibility';
+import { detectMediaMime, normalizeContentImage } from './content-domain';
+import { isRestaurantDelivery, ordinaryClientOrders, RESTAURANT_DELIVERY_KEY, syncRestaurantFoodStatus } from './restaurant-delivery-state';
+import { serializeFoodOrder } from './food';
+import { isPushNotificationEvent } from './pushPresentation';
+
+const chatMessageFields = {id:true,orderId:true,senderId:true,clientMessageId:true,text:true,createdAt:true,imageMime:true} as const;
+function chatMessageView(row:{id:string;orderId:string;senderId:string;clientMessageId:string;text:string;createdAt:Date;imageMime:string|null}) {
+  return {id:row.id,orderId:row.orderId,senderId:row.senderId,clientMessageId:row.clientMessageId,text:row.text,createdAt:row.createdAt,
+    photoUrl:row.imageMime?`/orders/${row.orderId}/messages/${row.id}/photo`:null};
+}
 
 @Injectable()
 export class OrdersService {
@@ -27,27 +37,28 @@ export class OrdersService {
   }
   async create(actor:Actor,dto:CreateOrderDto) {
     if(actor.role !== 'CLIENT') throw new ForbiddenException('Заказ доступен клиенту');
+    if(dto.idempotencyKey.startsWith(RESTAURANT_DELIVERY_KEY))throw new BadRequestException('Недопустимый ключ заказа');
     await this.limits.take(`orders:${actor.id}`,15,60);
     const passenger=dto.passenger?{name:dto.passenger.name.trim(),phone:dto.passenger.phone.replace(/[\s()-]/g,'')}:null;
     if(passenger&&passenger.name.length<2)throw new BadRequestException('Укажите имя пассажира');
     const order = await this.db.$transaction(async tx=>{
       await tx.$queryRaw`SELECT "id" FROM "User" WHERE "id"=${actor.id}::uuid FOR UPDATE`;
-      const currentUser=await tx.user.findUnique({where:{id:actor.id},select:{role:true}});
-      if(currentUser?.role!=='CLIENT')throw new ForbiddenException('Заказ доступен клиенту');
+      const currentUser=await tx.user.findUnique({where:{id:actor.id},select:{role:true,deletedAt:true}});
+      if(currentUser?.role!=='CLIENT'||currentUser.deletedAt)throw new ForbiddenException('Заказ доступен клиенту');
       const existing = await tx.order.findUnique({where:{clientId_idempotencyKey:{clientId:actor.id,idempotencyKey:dto.idempotencyKey}}});
       if(existing) {
         if(existing.quoteId !== dto.quoteId || existing.comment !== (dto.comment?.trim()??'') || existing.passengerName !== (passenger?.name??null) || existing.passengerPhone !== (passenger?.phone??null) || this.stable(existing.deliveryDetails)!==this.stable(this.deliveryDetails(existing.kind,dto,false))) throw new ConflictException('Ключ повтора уже использован с другими данными');
         return existing;
       }
-      if(await tx.order.findFirst({where:{clientId:actor.id,status:{in:ACTIVE_STATUSES}}})) throw new ConflictException('У вас уже есть активный заказ');
-      const quote = await tx.quote.findFirst({where:{id:dto.quoteId,userId:actor.id,expiresAt:{gt:new Date()}},include:{order:true}});
+      if(await tx.order.findFirst({where:{clientId:actor.id,...ordinaryClientOrders,status:{in:ACTIVE_STATUSES}}})) throw new ConflictException('У вас уже есть активный заказ');
+      const quote = await tx.quote.findFirst({where:{id:dto.quoteId,userId:actor.id,expiresAt:{gt:new Date()}},include:{order:true,tariff:true}});
       if(!quote) throw new BadRequestException('Расчёт стоимости истёк. Постройте маршрут ещё раз.');
       if(quote.order) throw new ConflictException('Этот расчёт уже использован');
       const details=this.deliveryDetails(quote.kind,dto);
       if(quote.kind!=='RIDE'&&passenger)throw new BadRequestException('Для доставки укажите сведения о грузе вместо пассажира');
       const dispatchAfter=details?.scheduledAt?new Date(details.scheduledAt):new Date();
-      const created = await tx.order.create({data:{clientId:actor.id,quoteId:quote.id,idempotencyKey:dto.idempotencyKey,kind:quote.kind,deliveryDetails:details?details as Prisma.InputJsonValue:Prisma.DbNull,dispatchAfter,pickup:quote.pickup as Prisma.InputJsonValue,dropoff:quote.dropoff as Prisma.InputJsonValue,geometry:quote.geometry as Prisma.InputJsonValue,distanceMeters:quote.distanceMeters,durationSeconds:quote.durationSeconds,price:quote.price,commission:quote.commission,comment:dto.comment?.trim()??'',passengerName:passenger?.name,passengerPhone:passenger?.phone,searchExpiresAt:new Date(dispatchAfter.getTime()+OFFER_SECONDS*1000),history:{create:{status:'SEARCHING',actorId:actor.id}}}});
-      await this.push(tx,[actor.id],'order:created',created.id); return created;
+      const created = await tx.order.create({data:{clientId:actor.id,quoteId:quote.id,idempotencyKey:dto.idempotencyKey,kind:quote.kind,deliveryDetails:details?details as Prisma.InputJsonValue:Prisma.DbNull,dispatchAfter,pickup:quote.pickup as Prisma.InputJsonValue,dropoff:quote.dropoff as Prisma.InputJsonValue,geometry:quote.geometry as Prisma.InputJsonValue,distanceMeters:quote.distanceMeters,durationSeconds:quote.durationSeconds,price:quote.price,commission:quote.commission,waitingGraceMinutes:quote.tariff.waitingGraceMinutes,freeWaitingMinutes:quote.tariff.freeWaitingMinutes,waitingPricePerMinute:quote.tariff.waitingPricePerMinute,comment:dto.comment?.trim()??'',passengerName:passenger?.name,passengerPhone:passenger?.phone,searchExpiresAt:new Date(dispatchAfter.getTime()+OFFER_SECONDS*1000),history:{create:{status:'SEARCHING',actorId:actor.id}}}});
+      return created;
     });
     await this.dispatchOrder(order.id); await this.publish(order.id); return this.serialize(order.id,false,actor.id);
   }
@@ -57,16 +68,30 @@ export class OrdersService {
     if(!order) throw new NotFoundException('Заказ не найден'); return order;
   }
   private async push(tx:Prisma.TransactionClient,users:string[],event:string,orderId:string) {
-    if(users.length) await tx.pushJob.createMany({data:[...new Set(users)].map(userId=>({userId,event,orderId}))});
+    if(users.length && isPushNotificationEvent(event)) await tx.pushJob.createMany({data:[...new Set(users)].map(userId=>({userId,event,orderId}))});
   }
-  private participants(order:Order) {return [order.clientId,...(order.driverId?[order.driverId]:[])];}
+  private participants(order:Order) {return [...(isRestaurantDelivery(order)?[]:[order.clientId]),...(order.driverId?[order.driverId]:[])];}
   async active(actor:Actor) {
-    const order = await this.db.order.findFirst({where:{...(actor.role==='DRIVER'?{driverId:actor.id}:{clientId:actor.id}),status:{in:ACTIVE_STATUSES}},orderBy:{createdAt:'desc'}});
+    const order = await this.db.order.findFirst({where:{...(actor.role==='DRIVER'?{driverId:actor.id}:{clientId:actor.id,...ordinaryClientOrders}),status:{in:ACTIVE_STATUSES}},orderBy:{createdAt:'desc'}});
     return order?this.serialize(order.id,false,actor.id):null;
   }
-  async history(actor:Actor,period:string) {
-    const orders = await this.db.order.findMany({where:{...(actor.role==='DRIVER'?{driverId:actor.id}:{clientId:actor.id}),createdAt:{gte:historySince(period)}},orderBy:{createdAt:'desc'},take:100});
-    return Promise.all(orders.map(order=>this.serialize(order.id,false,actor.id)));
+  async history(actor:Actor,period:string,from?:string,to?:string) {
+    const since = from ? new Date(from) : historySince(period);
+    const until = to ? new Date(to) : undefined;
+    if (since && !Number.isFinite(since.getTime()) || until && !Number.isFinite(until.getTime()) || since && until && since >= until) {
+      throw new BadRequestException('Укажите корректный период истории');
+    }
+    const driver = actor.role === 'DRIVER';
+    const orders = await this.db.order.findMany({where:{...(driver?{driverId:actor.id}:{clientId:actor.id,...ordinaryClientOrders}),createdAt:{gte:since,...(until?{lt:until}:{})}},orderBy:{createdAt:'desc'},...(!(driver&&since&&until)?{take:100}:{})});
+    // The receipt is charged separately from the cash fare. Read its original
+    // signed amount rather than estimating a fee from today's tariff.
+    const completedIds = driver ? orders.filter(order=>order.status==='COMPLETED').map(order=>order.id) : [];
+    const entries = completedIds.length ? await this.db.ledgerEntry.findMany({where:{driverId:actor.id,orderId:{in:completedIds},kind:'COMMISSION'},select:{orderId:true,amount:true}}) : [];
+    const commissions = new Map(entries.map(entry=>[entry.orderId,entry.amount]));
+    return Promise.all(orders.map(async order=>{
+      const snapshot = await this.serialize(order.id,false,actor.id);
+      return driver ? {...snapshot,commissionAmount:order.status==='COMPLETED'?commissions.get(order.id)??0:0} : snapshot;
+    }));
   }
   async get(actor:Actor,id:string) {return this.serialize(id,false,actor.id);}
   async authorize(actor:Actor,id:string) {
@@ -80,16 +105,32 @@ export class OrdersService {
     const assignment = !offer&&order.driverId&&ASSIGNED_STATUSES.includes(order.status)
       ? await this.db.statusHistory.findFirst({where:{orderId:id,status:'ASSIGNED',actorId:order.driverId},orderBy:{createdAt:'desc'},select:{id:true}})
       : null;
+    const tripStart = order.status==='COMPLETED'&&order.completedAt
+      ? await this.db.statusHistory.findFirst({where:{orderId:id,status:'IN_PROGRESS'},orderBy:{createdAt:'desc'},select:{createdAt:true}})
+      : null;
+    const actualDurationSeconds = tripStart&&order.completedAt
+      ? Math.max(0,Math.round((order.completedAt.getTime()-tripStart.createdAt.getTime())/1000)) : null;
     const driver = !offer&&order.driverId?await this.auth.user(order.driverId):null;
     const client = offer?undefined:await this.auth.user(order.clientId);
     const clientRating = await this.db.clientRating.aggregate({where:{order:{clientId:order.clientId,passengerName:null}},_avg:{score:true}});
     const safeClient = client?{id:client.id,name:client.name,phone:client.phone,photoUrl:client.photoUrl,role:client.role}:undefined;
-    return {driverLocation:offer?null:visibleDriverLocation(order),assignmentId:assignment?.id??null,id:order.id,kind:order.kind,deliveryDetails:order.deliveryDetails,dispatchAfter:order.dispatchAfter,status:order.status,pickup:order.pickup,dropoff:order.dropoff,geometry:order.geometry,distanceMeters:order.distanceMeters,durationSeconds:order.durationSeconds,price:order.price,currency:'KGS',paymentMethod:'CASH',comment:order.comment,passenger:order.passengerName?{name:order.passengerName,phone:offer?undefined:order.passengerPhone}:null,createdAt:order.createdAt,updatedAt:order.updatedAt,searchExpiresAt:order.searchExpiresAt,completedAt:order.completedAt,driver,client:safeClient,rating:order.rating?.score??null,clientRating:clientRating._avg.score??null,driverRating:order.clientRating?.score??null,tariff:order.quote.tariff,routeProvider:order.quote.routeProvider};
+    const waiting = order.arrivedAt ? order.status==='ARRIVED'
+      ? calculateWaiting(order.arrivedAt,new Date(),order)
+      : {phase:'FINISHED' as const,elapsedSeconds:0,remainingSeconds:0,billedMinutes:order.waitingBilledMinutes,charge:order.waitingCharge}
+      : null;
+    return {foodOrderId:order.foodOrderId??null,restaurantDelivery:isRestaurantDelivery(order),driverLocation:offer?null:visibleDriverLocation(order),assignmentId:assignment?.id??null,id:order.id,kind:order.kind,deliveryDetails:order.deliveryDetails,dispatchAfter:order.dispatchAfter,status:order.status,pickup:order.pickup,dropoff:order.dropoff,geometry:order.geometry,distanceMeters:order.distanceMeters,durationSeconds:order.durationSeconds,actualDurationSeconds,price:order.price,basePrice:order.price-order.waitingCharge,waiting:waiting?{...waiting,arrivedAt:order.arrivedAt,graceMinutes:order.waitingGraceMinutes,freeMinutes:order.freeWaitingMinutes,pricePerMinute:order.waitingPricePerMinute,totalPrice:order.status==='ARRIVED'?order.price+waiting.charge:order.price}:null,currency:'KGS',paymentMethod:'CASH',comment:order.comment,passenger:order.passengerName?{name:order.passengerName,phone:offer?undefined:order.passengerPhone}:null,createdAt:order.createdAt,updatedAt:order.updatedAt,searchExpiresAt:order.searchExpiresAt,completedAt:order.completedAt,driver,client:safeClient,rating:order.rating?.score??null,clientRating:clientRating._avg.score??null,driverRating:order.clientRating?.score??null,tariff:order.quote.tariff,routeProvider:order.quote.routeProvider};
   }
   async publish(id:string,additionalUsers:string[]=[]) {
     const snapshot=await this.serialize(id);
-    const users=[snapshot.client?.id,snapshot.driver?.id].filter((value):value is string=>Boolean(value));
+    const users=[...(!snapshot.restaurantDelivery?[snapshot.client?.id]:[]),snapshot.driver?.id].filter((value):value is string=>Boolean(value));
     this.events.publish(users,'order:updated',snapshot);
+    if(snapshot.foodOrderId) {
+      const food=await this.db.foodOrder.findUnique({where:{id:snapshot.foodOrderId}});
+      if(food) {
+        this.events.publish([food.clientId],'food:order:updated',serializeFoodOrder(food));
+        this.events.adminChanged('food-orders',food.id);
+      }
+    }
     if(additionalUsers.length)this.events.publish(additionalUsers.filter(userId=>!users.includes(userId)),'order:updated',{...snapshot,status:'SEARCHING',driver:null,client:undefined});
     if(snapshot.status!=='SEARCHING') {
       const offered=await this.db.orderOffer.findMany({where:{orderId:id},select:{driverId:true}});
@@ -108,7 +149,7 @@ export class OrdersService {
       const withdrawn=existing.filter(offer=>!offer.skipped&&offer.expiresAt.getTime()<=now).map(offer=>offer.driverId);
       if(withdrawn.length)await tx.orderOffer.updateMany({where:{orderId:id,driverId:{in:withdrawn}},data:{skipped:true}});
       const requiredClass=(await tx.quote.findUniqueOrThrow({where:{id:order.quoteId},select:{tariff:{select:{requiredClass:true}}}})).tariff.requiredClass;
-      const drivers=(await tx.driverProfile.findMany({where:{verified:true,online:true,deposit:{gte:Math.max(this.config.minimumDeposit,order.commission)},vehicle:{isNot:null},locationMeasuredAt:{gte:new Date(now-POSITION_MAX_AGE_MS)}}})).filter(d=>driverCanTake(d,order.kind,requiredClass));
+      const drivers=(await tx.driverProfile.findMany({where:{verified:true,online:true,deposit:{gte:Math.max(this.config.minimumDeposit,order.commission)},vehicle:{isNot:null},locationMeasuredAt:{gte:new Date(now-IDLE_POSITION_MAX_AGE_MS)}}})).filter(d=>driverCanTake(d,order.kind,requiredClass,isRestaurantDelivery(order)));
       const busy=new Set((await tx.order.findMany({where:{driverId:{in:drivers.map(d=>d.userId)},status:{in:ACTIVE_STATUSES}},select:{driverId:true}})).map(o=>o.driverId));
       const offered=new Set(existing.map(o=>o.driverId));
       const eligible=drivers.filter(d=>!busy.has(d.userId)&&!offered.has(d.userId));
@@ -118,7 +159,8 @@ export class OrdersService {
         const rows=await tx.$queryRaw<{driverId:string;rating:number}[]>`SELECT o."driverId", AVG(r."score")::float AS "rating" FROM "Rating" r JOIN "Order" o ON o."id"=r."orderId" WHERE o."driverId" IN (${Prisma.join(ids)}) GROUP BY o."driverId"`;
         ratings=new Map(rows.map(row=>[row.driverId,row.rating]));
       }
-      const next=nextDriver(order.pickup as unknown as Point,eligible,ratings,now);
+      const pickup=order.pickup as unknown as Point;
+      const next=nextDriver(pickup,eligible,ratings,now) ?? nextDriver(pickup,eligible,ratings,now,IDLE_POSITION_MAX_AGE_MS);
       if(next){
         const expiresAt=new Date(now+OFFER_SECONDS*1000);
         await tx.orderOffer.create({data:{orderId:id,driverId:next,expiresAt}});
@@ -128,7 +170,8 @@ export class OrdersService {
       }
       if(existing.length||order.searchExpiresAt.getTime()<=now){
         await tx.order.update({where:{id},data:{status:'NO_DRIVER',history:{create:{status:'NO_DRIVER',reason:'SEARCH_TIMEOUT'}}}});
-        await this.push(tx,[order.clientId],'order:updated',id);
+        await syncRestaurantFoodStatus(tx,order,'NO_DRIVER');
+        if(!isRestaurantDelivery(order))await this.push(tx,[order.clientId],'order:updated',id);
         return {offered:null,withdrawn,expired:true};
       }
       return {offered:null,withdrawn,expired:false};
@@ -150,7 +193,7 @@ export class OrdersService {
     if(!driver?.verified || !driver.online) return [];
     if(await this.db.order.findFirst({where:{driverId:actor.id,status:{in:ACTIVE_STATUSES}}})) return [];
     const offers = await this.db.orderOffer.findMany({where:{driverId:actor.id,skipped:false,expiresAt:{gt:new Date()},order:{status:'SEARCHING',commission:{lte:driver.deposit}}},include:{order:{include:{quote:{include:{tariff:true}}}}},orderBy:{createdAt:'desc'},take:50});
-    const valid = offers.filter(offer=>driver.deposit>=this.config.minimumDeposit&&driverCanTake(driver,offer.order.kind,offer.order.quote.tariff.requiredClass));
+    const valid = offers.filter(offer=>driver.deposit>=this.config.minimumDeposit&&driverCanTake(driver,offer.order.kind,offer.order.quote.tariff.requiredClass,isRestaurantDelivery(offer.order)));
     return Promise.all(valid.map(async offer=>({...await this.serialize(offer.orderId,true),searchExpiresAt:offer.expiresAt})));
   }
   async accept(actor:Actor,id:string) {
@@ -163,13 +206,13 @@ export class OrdersService {
       const driver = await tx.driverProfile.findUnique({where:{userId:actor.id},include:{vehicle:true}});
       if(!driver?.verified||!driver.online||!driver.vehicle) throw new ForbiddenException('Водитель не подтверждён или не на линии');
       const requiredClass=(await tx.quote.findUniqueOrThrow({where:{id:order.quoteId},select:{tariff:{select:{requiredClass:true}}}})).tariff.requiredClass;
-      if(!driverCanTake(driver,order.kind,requiredClass))throw new ForbiddenException('Этот вид заказа не разрешён водителю');
+      if(!driverCanTake(driver,order.kind,requiredClass,isRestaurantDelivery(order)))throw new ForbiddenException('Этот вид заказа не разрешён водителю');
       if(driver.deposit<Math.max(order.commission,this.config.minimumDeposit)) throw new BadRequestException('Недостаточно средств на депозите');
       const offer = await tx.orderOffer.findUnique({where:{orderId_driverId:{orderId:id,driverId:actor.id}}});
       if(!offer||offer.skipped||offer.expiresAt.getTime()<=Date.now()) throw new ForbiddenException('Предложение истекло или заказ не был предложен вам');
       if(await tx.order.findFirst({where:{driverId:actor.id,status:{in:ACTIVE_STATUSES}}})) throw new ConflictException('У вас уже есть активный заказ');
       await tx.order.update({where:{id},data:{status:'ASSIGNED',driverId:actor.id,driverLocation:Prisma.DbNull,history:{create:{status:'ASSIGNED',actorId:actor.id}}}});
-      await this.push(tx,[order.clientId],'order:assigned',id);
+      if(!isRestaurantDelivery(order))await this.push(tx,[order.clientId],'order:assigned',id);
     });
     await this.publish(id);return this.serialize(id,false,actor.id);
   }
@@ -194,35 +237,32 @@ export class OrdersService {
         await tx.driverProfile.update({where:{userId:actor.id},data:{deposit:balanceAfter,...(balanceAfter<this.config.minimumDeposit?{online:false,locationLatitude:null,locationLongitude:null,locationAccuracyM:null,locationMeasuredAt:null}:{})}});
         await tx.ledgerEntry.create({data:{driverId:actor.id,orderId:id,kind:'COMMISSION',amount:-order.commission,balanceAfter,idempotencyKey:`commission:${id}`,note:'Комиссия за поездку'}});
       }
-      await tx.order.update({where:{id},data:{status,...(status==='COMPLETED'?{completedAt:new Date(),driverLocation:Prisma.DbNull}:{}),history:{create:{status,actorId:actor.id}}}});
-      if(status==='ARRIVED') await this.push(tx,[order.clientId],'trip:arrived',id);
+      const now=new Date();
+      const waiting=status==='IN_PROGRESS'&&order.arrivedAt?calculateWaiting(order.arrivedAt,now,order):null;
+      await tx.order.update({where:{id},data:{status,...(status==='ARRIVED'?{arrivedAt:now}:{}),...(waiting?{waitingCharge:waiting.charge,waitingBilledMinutes:waiting.billedMinutes,price:order.price+waiting.charge}:{}),...(status==='COMPLETED'?{completedAt:now,driverLocation:Prisma.DbNull}:{}),history:{create:{status,actorId:actor.id}}}});
+      await syncRestaurantFoodStatus(tx,order,status,actor.id);
+      if(status==='ARRIVED'&&!isRestaurantDelivery(order)) await this.push(tx,[order.clientId],'trip:arrived',id);
       else await this.push(tx,this.participants(order),status==='COMPLETED'?'trip:completed':'order:updated',id);
     });
     await this.publish(id);return this.serialize(id,false,actor.id);
   }
   async cancel(actor:Actor,id:string) {
-    let previousDriver:string|undefined;
-    let cancelledByDriver=false;
     await this.db.$transaction(async tx=>{
       const order = await this.lockOrder(tx,id);
       if(order.clientId !== actor.id && order.driverId !== actor.id) throw new ForbiddenException();
-      if(order.status==='CANCELLED'&&order.clientId===actor.id) return;
-      if(!['SEARCHING','ASSIGNED','ARRIVED'].includes(order.status)) throw new BadRequestException('После начала поездки отмена недоступна');
-      previousDriver=order.driverId??undefined;
-      const byDriver=order.driverId===actor.id;
-      cancelledByDriver=byDriver;
-      if(byDriver) {
-        await tx.orderOffer.updateMany({where:{orderId:id,driverId:actor.id},data:{skipped:true}});
-        // Other drivers may receive a fresh offer after a driver cancellation.
-        await tx.orderOffer.deleteMany({where:{orderId:id,driverId:{not:actor.id},skipped:false}});
-      }
-      const status = byDriver?'SEARCHING':'CANCELLED';
-      await tx.order.update({where:{id},data:{status,driverLocation:Prisma.DbNull,...(byDriver?{driverId:null,searchExpiresAt:new Date(Date.now()+OFFER_SECONDS*1000)}:{}),history:{create:{status,actorId:actor.id,reason:byDriver?'DRIVER_CANCELLED':'CLIENT_CANCELLED'}}}});
+      if(isRestaurantDelivery(order)&&actor.role==='CLIENT')throw new ForbiddenException('Доставкой еды управляет ресторан');
+      if(order.status==='CANCELLED') return;
+      const byDriver=actor.role==='DRIVER'&&order.driverId===actor.id;
+      if(!['SEARCHING','ASSIGNED','ARRIVED'].includes(order.status)&&!(byDriver&&order.status==='IN_PROGRESS')) throw new BadRequestException('На этом этапе отмена недоступна');
+      await tx.orderOffer.updateMany({where:{orderId:id},data:{skipped:true}});
+      // Keep the assignment for history and access to the final cancellation.
+      // A cancelled trip is terminal and must never restart dispatch.
+      await tx.order.update({where:{id},data:{status:'CANCELLED',driverLocation:Prisma.DbNull,history:{create:{status:'CANCELLED',actorId:actor.id,reason:byDriver?'DRIVER_CANCELLED':'CLIENT_CANCELLED'}}}});
+      await syncRestaurantFoodStatus(tx,order,'CANCELLED',actor.id);
       await this.push(tx,this.participants(order),'order:updated',id);
     });
-    await this.publish(id,previousDriver?[previousDriver]:[]);await this.dispatchOrder(id);
-    const snapshot=await this.serialize(id);
-    return cancelledByDriver?{...snapshot,status:'SEARCHING',driver:null,client:undefined}:snapshot;
+    await this.publish(id);
+    return this.serialize(id,false,actor.id);
   }
   async coming(actor:Actor,id:string) {
     const order = await this.authorize(actor,id);
@@ -238,25 +278,42 @@ export class OrdersService {
       if(!order.driverId)return [];
       const assignment=await tx.statusHistory.findFirst({where:{orderId:id,status:'ASSIGNED'},orderBy:{createdAt:'desc'}});
       // A replacement driver sees only the conversation for their own assignment.
-      return tx.message.findMany({where:{orderId:id,senderId:{in:this.participants(order)},createdAt:{gte:assignment?.createdAt}},orderBy:{createdAt:'asc'},take:500});
+      const rows=await tx.message.findMany({where:{orderId:id,senderId:{in:this.participants(order)},createdAt:{gte:assignment?.createdAt}},orderBy:{createdAt:'asc'},take:500,select:chatMessageFields});
+      return rows.map(chatMessageView);
     });
   }
-  async sendMessage(actor:Actor,id:string,dto:MessageDto) {
+  async sendMessage(actor:Actor,id:string,dto:MessageDto,photo?:{buffer:Buffer;mimetype:string}) {
     await this.limits.take(`chat:${actor.id}`,40,60);
+    const text=dto.text.trim();
+    if(!text&&!photo)throw new BadRequestException('Сообщение пустое');
+    const image=photo?await normalizeContentImage(photo.buffer,photo.mimetype):null;
     const message = await this.db.$transaction(async tx=>{
       const order = await this.lockOrder(tx,id);
       if(!this.participants(order).includes(actor.id)) throw new ForbiddenException();
       if(!ASSIGNED_STATUSES.includes(order.status)) throw new BadRequestException('Чат доступен во время активной поездки');
-      if(!dto.text.trim()) throw new BadRequestException('Сообщение пустое');
       const existing = await tx.message.findUnique({where:{senderId_clientMessageId:{senderId:actor.id,clientMessageId:dto.clientMessageId}}});
       if(existing) {
-        if(existing.orderId!==id||existing.text!==dto.text.trim()) throw new ConflictException('Ключ сообщения уже использован');return existing;
+        if(existing.orderId!==id||existing.text!==text||Boolean(existing.imageData)!==Boolean(image)
+          || image&&existing.imageData&&!Buffer.from(existing.imageData).equals(image.data))throw new ConflictException('Ключ сообщения уже использован');
+        return chatMessageView(existing);
       }
-      const created = await tx.message.create({data:{orderId:id,senderId:actor.id,text:dto.text.trim(),clientMessageId:dto.clientMessageId}});
-      await this.push(tx,this.participants(order).filter(userId=>userId!==actor.id),'chat:message',id);return created;
+      const created = await tx.message.create({data:{orderId:id,senderId:actor.id,text,clientMessageId:dto.clientMessageId,imageData:image?Uint8Array.from(image.data):null,imageMime:image?.mime??null},select:chatMessageFields});
+      await this.push(tx,this.participants(order).filter(userId=>userId!==actor.id),'chat:message',id);return chatMessageView(created);
     });
     const order = await this.db.order.findUniqueOrThrow({where:{id}});
     this.events.publish(this.participants(order),'chat:message',message);return message;
+  }
+  async messagePhoto(actor:Actor,id:string,messageId:string) {
+    return this.db.$transaction(async tx=>{
+      const order=await this.lockOrder(tx,id);
+      if(!this.participants(order).includes(actor.id)||!order.driverId)throw new ForbiddenException('Нет доступа к чату');
+      const assignment=await tx.statusHistory.findFirst({where:{orderId:id,status:'ASSIGNED'},orderBy:{createdAt:'desc'}});
+      const row=await tx.message.findUnique({where:{id:messageId},select:{orderId:true,senderId:true,createdAt:true,imageData:true,imageMime:true}});
+      if(!row||row.orderId!==id||!this.participants(order).includes(row.senderId)
+        ||assignment&&row.createdAt<assignment.createdAt||!row.imageData||row.imageMime!=='image/webp'
+        ||detectMediaMime(row.imageData)!==row.imageMime)throw new NotFoundException('Фотография не найдена');
+      return {data:row.imageData,mime:row.imageMime};
+    });
   }
   async rate(actor:Actor,id:string,score:number,comment?:string) {
     const normalizedComment=comment?.trim()??'';

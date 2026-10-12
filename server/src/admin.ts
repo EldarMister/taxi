@@ -8,6 +8,7 @@ import { ACTIVE_FOOD_STATUSES } from './food-domain';
 import { RealtimeEvents } from './events';
 import { OrdersService } from './orders';
 import { PrismaService } from './prisma.service';
+import { isRestaurantDelivery, syncRestaurantFoodStatus } from './restaurant-delivery-state';
 
 const person={id:true,name:true,phone:true} as const;
 const taxiInclude={client:{select:person},driver:{select:{...person,driverProfile:{select:{vehicle:true}}}},quote:{select:{tariff:true}}} as const;
@@ -72,7 +73,9 @@ export class AdminService {
       if(current.status==='CANCELLED')return;
       if(!['SEARCHING','ASSIGNED','ARRIVED'].includes(current.status))throw new ConflictException('Отмена доступна только до начала поездки');
       await tx.order.update({where:{id},data:{status:'CANCELLED',history:{create:{status:'CANCELLED',actorId:actor.id,reason:`ADMIN: ${reason}`}}}});
-      await tx.pushJob.createMany({data:[current.clientId,...(current.driverId?[current.driverId]:[])].map(userId=>({userId,event:'order:updated',orderId:id}))});
+      await syncRestaurantFoodStatus(tx,current,'CANCELLED',actor.id);
+      const recipients=[...(!isRestaurantDelivery(current)?[current.clientId]:[]),...(current.driverId?[current.driverId]:[])];
+      if(recipients.length)await tx.pushJob.createMany({data:recipients.map(userId=>({userId,event:'order:updated',orderId:id}))});
       await this.audit.record(tx,actor,'taxi.cancel','taxi-orders',id,{previousStatus:current.status,reason});
     });
     await this.ordersService.publish(id);return this.order(actor,'taxi',id);
@@ -136,7 +139,7 @@ export class AdminService {
       if(!vehicle.make||!vehicle.color||!vehicle.plate)throw new BadRequestException('Заполните данные автомобиля');
       await tx.user.update({where:{id},data:{...(dto.phone?{phone:dto.phone}:{}),...(dto.name===undefined?{}:{name:validateText(dto.name,'Имя')})}});
       const transportClass=dto.transportClass??user.driverProfile.transportClass;
-      const classDefaults=dto.transportClass===undefined?{}:{transportClass,acceptsEconomy:transportClass!=='TRUCK',acceptsComfort:transportClass==='COMFORT',acceptsDeliveryCar:false,acceptsDeliveryTruck:transportClass==='TRUCK'};
+      const classDefaults=dto.transportClass===undefined?{}:{transportClass,acceptsEconomy:transportClass!=='TRUCK',acceptsComfort:transportClass==='COMFORT',acceptsDeliveryCar:false,...(transportClass==='TRUCK'?{acceptsDeliveryFood:false}:{}),acceptsDeliveryTruck:transportClass==='TRUCK'};
       await tx.driverProfile.update({where:{userId:id},data:{...(dto.verified===undefined?{}:{verified:dto.verified}),...classDefaults,online:false,locationLatitude:null,locationLongitude:null,locationAccuracyM:null,locationMeasuredAt:null}});
       await tx.vehicle.upsert({where:{driverId:id},create:{driverId:id,make:vehicle.make,color:vehicle.color,plate:vehicle.plate},update:{make:vehicle.make,color:vehicle.color,plate:vehicle.plate}});
       if(dto.phone&&dto.phone!==user.phone) {

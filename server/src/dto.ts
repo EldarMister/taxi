@@ -1,5 +1,5 @@
 import { Type } from 'class-transformer';
-import { IsBoolean, IsDefined, IsIn, IsInt, IsISO8601, IsNumber, IsOptional, IsString, IsUUID, Matches, Max, MaxLength, Min, MinLength, ValidateNested } from 'class-validator';
+import { ArrayMaxSize, ArrayMinSize, IsArray, IsBoolean, IsDefined, IsIn, IsInt, IsISO8601, IsNumber, IsOptional, IsString, IsUUID, Matches, Max, MaxLength, Min, MinLength, ValidateNested } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 export class PhoneDto {
   @ApiProperty({example:'+996700123456'}) @Matches(/^\+[1-9]\d{7,14}$/) phone!:string;
@@ -15,6 +15,9 @@ export class ProfileDto {
   @ApiPropertyOptional() @IsOptional() @IsBoolean() notifications?:boolean;
   @ApiPropertyOptional({enum:['ru','ky']}) @IsOptional() @IsIn(['ru','ky']) language?:string;
 }
+export class ReadNotificationsDto {
+  @ApiProperty() @IsISO8601() through!:string;
+}
 export class PointDto {
   @ApiProperty({example:42.875}) @IsNumber() @Min(-90) @Max(90) latitude!:number;
   @ApiProperty({example:74.603}) @IsNumber() @Min(-180) @Max(180) longitude!:number;
@@ -24,6 +27,26 @@ export class RouteDto {
   @ApiProperty({type:PointDto}) @IsDefined() @ValidateNested() @Type(()=>PointDto) pickup!:PointDto;
   @ApiProperty({type:PointDto}) @IsDefined() @ValidateNested() @Type(()=>PointDto) dropoff!:PointDto;
   @ApiPropertyOptional({enum:['ru','ky']}) @IsOptional() @IsIn(['ru','ky']) language?:'ru'|'ky';
+  @ApiPropertyOptional() @IsOptional() @IsNumber() @Min(0) @Max(359.999) bearing?:number;
+  @ApiPropertyOptional() @IsOptional() @IsBoolean() fast?:boolean;
+}
+export class MatchFixDto {
+  @IsNumber() @Min(-90) @Max(90) latitude!:number;
+  @IsNumber() @Min(-180) @Max(180) longitude!:number;
+  @IsNumber() @Min(0) @Max(80) accuracy!:number;
+  @IsOptional() @IsNumber() @Min(0) @Max(359.999) heading?:number;
+  @IsOptional() @IsNumber() @Min(0) @Max(100) speed?:number;
+}
+export class MatchTraceDto {
+  @IsArray() @ArrayMinSize(3) @ArrayMaxSize(10) @ValidateNested({each:true}) @Type(()=>MatchFixDto) points!:MatchFixDto[];
+}
+export class RoadFeaturePointDto {
+  @IsNumber() @Min(-90) @Max(90) latitude!:number;
+  @IsNumber() @Min(-180) @Max(180) longitude!:number;
+}
+export class RoadFeaturesDto {
+  @IsNumber() @Min(0) @Max(500000) startAlong!:number;
+  @IsArray() @ArrayMinSize(2) @ArrayMaxSize(80) @ValidateNested({each:true}) @Type(()=>RoadFeaturePointDto) points!:RoadFeaturePointDto[];
 }
 export class QuoteDto extends RouteDto {
   @ApiProperty({example:'economy'}) @IsString() @MaxLength(80) tariffId!:string;
@@ -57,6 +80,7 @@ export class DriverPreferencesDto {
   @ApiPropertyOptional() @IsOptional() @IsBoolean() acceptsEconomy?:boolean;
   @ApiPropertyOptional() @IsOptional() @IsBoolean() acceptsComfort?:boolean;
   @ApiPropertyOptional() @IsOptional() @IsBoolean() acceptsDeliveryCar?:boolean;
+  @ApiPropertyOptional() @IsOptional() @IsBoolean() acceptsDeliveryFood?:boolean;
   @ApiPropertyOptional() @IsOptional() @IsBoolean() acceptsDeliveryTruck?:boolean;
 }
 export class DriverRegisterDto {
@@ -71,14 +95,24 @@ export class MessageDto {
   @ApiProperty() @IsString() @MinLength(1) @MaxLength(1000) text!:string;
   @ApiProperty() @IsString() @MinLength(8) @MaxLength(100) clientMessageId!:string;
 }
+export class PhotoMessageDto {
+  @ApiPropertyOptional({maxLength:1000}) @IsOptional() @IsString() @MaxLength(1000) text?:string;
+  @ApiProperty() @IsString() @MinLength(8) @MaxLength(100) clientMessageId!:string;
+}
 export class RatingDto {
   @ApiProperty({minimum:1,maximum:5}) @IsInt() @Min(1) @Max(5) score!:number;
   @ApiPropertyOptional({maxLength:500}) @IsOptional() @IsString() @MaxLength(500) comment?:string;
 }
 export class HistoryDto { @ApiPropertyOptional({enum:['today','week','all']}) @IsOptional() @IsIn(['today','week','all']) period:'today'|'week'|'all' = 'all'; }
+export class OrdersHistoryDto {
+  @ApiPropertyOptional({enum:['today','week','month','all']}) @IsOptional() @IsIn(['today','week','month','all']) period:'today'|'week'|'month'|'all' = 'all';
+  @ApiPropertyOptional({format:'date-time',description:'Inclusive creation date boundary.'}) @IsOptional() @IsISO8601({strict:true}) from?:string;
+  @ApiPropertyOptional({format:'date-time',description:'Exclusive creation date boundary.'}) @IsOptional() @IsISO8601({strict:true}) to?:string;
+}
 export class PushTokenDto {
   @ApiProperty() @IsString() @MinLength(20) @MaxLength(4096) token!:string;
   @ApiProperty({enum:['android','ios']}) @IsIn(['android','ios']) platform!:string;
+  @ApiPropertyOptional() @IsOptional() @IsBoolean() driverOfferActions?:boolean;
 }
 export class RemovePushTokenDto { @ApiProperty() @IsString() @MaxLength(4096) token!:string; }
 export class TopupDto {

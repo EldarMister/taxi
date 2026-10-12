@@ -76,6 +76,7 @@ model User {
   avatarData Bytes?
   avatarMime String?
   avatarUpdatedAt DateTime?
+  deletedAt DateTime?
   role Role @default(CLIENT)
   notifications Boolean @default(true)
   language String @default("ru")
@@ -102,6 +103,7 @@ model DriverProfile {
   acceptsEconomy Boolean @default(true)
   acceptsComfort Boolean @default(false)
   acceptsDeliveryCar Boolean @default(false)
+  acceptsDeliveryFood Boolean @default(false)
   acceptsDeliveryTruck Boolean @default(false)
   courierModes String[] @default([])
   registrationManaged Boolean @default(false)
@@ -133,6 +135,9 @@ model Tariff {
   basePrice Int
   pricePerKm Int
   pricePerMinute Int
+  waitingGraceMinutes Int @default(1)
+  freeWaitingMinutes Int @default(5)
+  waitingPricePerMinute Int @default(0)
   minimumPrice Int
   commissionBps Int
   active Boolean @default(true)
@@ -161,6 +166,8 @@ model Quote {
 }
 model Order {
   id String @id @default(uuid()) @db.Uuid
+  foodOrderId String? @unique @db.Uuid
+  foodOrder FoodOrder? @relation(fields:[foodOrderId],references:[id])
   clientId String @db.Uuid
   client User @relation("ClientOrders",fields:[clientId],references:[id])
   driverId String? @db.Uuid
@@ -181,6 +188,12 @@ model Order {
   price Int
   commission Int
   comment String @default("")
+  waitingGraceMinutes Int @default(1)
+  freeWaitingMinutes Int @default(5)
+  waitingPricePerMinute Int @default(0)
+  arrivedAt DateTime?
+  waitingCharge Int @default(0)
+  waitingBilledMinutes Int @default(0)
   passengerName String?
   passengerPhone String?
   createdAt DateTime @default(now())
@@ -229,6 +242,8 @@ model Message {
   sender User @relation(fields:[senderId],references:[id])
   clientMessageId String
   text String
+  imageData Bytes?
+  imageMime String?
   createdAt DateTime @default(now())
   @@unique([senderId,clientMessageId])
   @@index([orderId,createdAt])
@@ -393,10 +408,27 @@ model MediaAsset {
 model SmsChallenge {
   phone String @id
   codeHash String
+  provider String @default("local")
+  providerTokenCiphertext String?
   attempts Int @default(0)
   expiresAt DateTime
   consumedAt DateTime?
   requestedAt DateTime @default(now())
+}
+model OtpDeliveryAttempt {
+  id String @id @default(uuid()) @db.Uuid
+  phone String
+  codeHash String
+  codeCiphertext String
+  channel String @default("whatsapp")
+  state String @default("sending_whatsapp")
+  whatsappMessageId String?
+  telegramRequestId String?
+  createdAt DateTime @default(now())
+  expiresAt DateTime
+  nextCheckAt DateTime @default(now())
+  @@index([state, nextCheckAt])
+  @@index([expiresAt])
 }
 model RateLimit {
   key String @id
@@ -409,6 +441,7 @@ model PushToken {
   user User @relation(fields:[userId],references:[id])
   token String @unique
   platform String
+  driverOfferActions Boolean @default(false)
   updatedAt DateTime @updatedAt
 }
 model PushJob {
@@ -420,8 +453,10 @@ model PushJob {
   attempts Int @default(0)
   availableAt DateTime @default(now())
   sentAt DateTime?
+  readAt DateTime?
   createdAt DateTime @default(now())
   @@index([sentAt,availableAt])
+  @@index([userId,readAt,createdAt])
 }
 
 enum FoodOrderStatus {
@@ -450,6 +485,7 @@ model FoodRestaurant {
   sortOrder Int @default(0)
   updatedAt DateTime @updatedAt
   orders FoodOrder[]
+  members RestaurantMembership[]
 }
 model FoodOrder {
   id String @id @default(uuid()) @db.Uuid
@@ -466,6 +502,11 @@ model FoodOrder {
   total Int
   fulfillment FoodFulfillment
   address String
+  deliveryPoint Json?
+  deliveryMethod String?
+  courierName String?
+  courierPhone String?
+  atlasDelivery Order?
   comment String @default("")
   paymentMethod FoodPaymentMethod
   status FoodOrderStatus @default(PLACED)
@@ -478,6 +519,46 @@ model FoodOrder {
   @@index([clientId,createdAt])
   @@index([status,createdAt])
 }
+
+model RestaurantAccount {
+  id String @id @default(uuid()) @db.Uuid
+  phone String @unique
+  name String @default("")
+  passwordHash String
+  active Boolean @default(true)
+  sessionVersion Int @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  memberships RestaurantMembership[]
+  sessions RestaurantSession[]
+}
+model RestaurantMembership {
+  id String @id @default(uuid()) @db.Uuid
+  accountId String @db.Uuid
+  account RestaurantAccount @relation(fields:[accountId],references:[id],onDelete:Cascade)
+  restaurantId String
+  restaurant FoodRestaurant @relation(fields:[restaurantId],references:[id])
+  role String
+  permissions String[] @default([])
+  active Boolean @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  @@unique([accountId,restaurantId])
+  @@index([restaurantId,active])
+}
+model RestaurantSession {
+  id String @id @default(uuid()) @db.Uuid
+  accountId String @db.Uuid
+  account RestaurantAccount @relation(fields:[accountId],references:[id],onDelete:Cascade)
+  tokenHash String @unique
+  familyId String @db.Uuid
+  sessionVersion Int
+  expiresAt DateTime
+  revokedAt DateTime?
+  createdAt DateTime @default(now())
+  @@index([accountId,revokedAt])
+  @@index([familyId])
+}
 model FoodStatusHistory {
   id String @id @default(uuid()) @db.Uuid
   orderId String @db.Uuid
@@ -487,4 +568,14 @@ model FoodStatusHistory {
   reason String?
   createdAt DateTime @default(now())
   @@index([orderId,createdAt])
+}
+
+model ServiceCity {
+  id String @id @default(uuid()) @db.Uuid
+  name String @unique
+  aliases String[] @default([])
+  status String @default("SOON")
+  sortOrder Int @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }

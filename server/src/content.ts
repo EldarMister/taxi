@@ -1,21 +1,22 @@
-import { BadRequestException, Body, Controller, Delete, Get, Injectable, NotFoundException, Param, ParseUUIDPipe, Patch, Post, Req, Res, UploadedFile, UseGuards, UseInterceptors } from '@nestjs/common';
+import { BadRequestException, Body, ConflictException, Controller, Delete, Get, Injectable, NotFoundException, Param, ParseUUIDPipe, Patch, Post, Req, Res, UploadedFile, UseGuards, UseInterceptors } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { ApiBearerAuth, ApiBody, ApiConsumes, ApiTags } from '@nestjs/swagger';
 import { Prisma } from '@prisma/client';
-import { IsBoolean, IsInt, IsObject, IsOptional, IsString, Matches, Max, MaxLength, Min } from 'class-validator';
+import { ArrayMaxSize, ArrayUnique, IsArray, IsBoolean, IsInt, IsObject, IsOptional, IsString, IsUUID, Matches, Max, MaxLength, Min } from 'class-validator';
 import { randomUUID } from 'node:crypto';
 import { Request, Response } from 'express';
 import { Actor, AuthGuard, RateLimits } from './auth';
 import { AdminAuditService, AdminGuard, assertAdmin } from './admin.security';
 import { RealtimeEvents } from './events';
 import { PrismaService } from './prisma.service';
-import { assertBannerCapacity, contentId, detectMediaMime, MAX_MEDIA_BYTES, normalizeContentImage, validateBanner, validateRestaurantCatalog } from './content-domain';
+import { assertBannerCapacity, contentId, detectMediaMime, MAX_MEDIA_BYTES, normalizeContentImage, validateBanner, validateBannerSelection, validateRestaurantCatalog } from './content-domain';
 
 type AuthedRequest=Request&{actor:Actor};
 type MediaFile={buffer:Buffer;mimetype:string;size:number};
 export class RestaurantInputDto {
   @IsOptional() @IsString() @Matches(/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,99}$/) id?:string;
   @IsOptional() @IsObject() catalog?:Record<string,unknown>;
+  @IsOptional() @IsString() @MaxLength(50) updatedAt?:string;
   @IsOptional() @IsBoolean() active?:boolean;
   @IsOptional() @IsBoolean() isDemo?:boolean;
   @IsOptional() @IsInt() @Min(-10_000) @Max(10_000) sortOrder?:number;
@@ -29,6 +30,9 @@ export class BannerInputDto {
   @IsOptional() @IsString() @MaxLength(100) restaurantId?:string|null;
   @IsOptional() @IsInt() @Min(-10_000) @Max(10_000) sortOrder?:number;
   @IsOptional() @IsBoolean() active?:boolean;
+}
+export class BannerDisplayDto {
+  @IsArray() @ArrayMaxSize(3) @ArrayUnique() @IsUUID('all',{each:true}) ids!:string[];
 }
 
 @Injectable()
@@ -50,6 +54,7 @@ export class ContentService {
       const current=await tx.foodRestaurant.findUnique({where:{id:restaurantId}});
       if(id&&!current)throw new NotFoundException('Ресторан не найден.');
       if(!id&&current)throw new BadRequestException('Ресторан с таким идентификатором уже существует.');
+      if(current&&input.updatedAt!==undefined&&current.updatedAt.toISOString()!==input.updatedAt)throw new ConflictException('Ресторан уже изменён. Обновите данные перед сохранением.');
       const active=input.active??current?.active??false,isDemo=input.isDemo??current?.isDemo??false,sortOrder=input.sortOrder??current?.sortOrder??0;
       if(typeof active!=='boolean'||typeof isDemo!=='boolean'||!Number.isInteger(sortOrder)||Math.abs(sortOrder)>10_000)throw new BadRequestException('Некорректные настройки ресторана.');
       const catalog=validateRestaurantCatalog(input.catalog??current?.catalog,restaurantId,isDemo);
@@ -100,6 +105,22 @@ export class ContentService {
     });
     this.events.adminChanged('banners',row.id);this.events.contentChanged('banners');
     return row;
+  }
+  async setBannerDisplay(actor:Actor,input:BannerDisplayDto) {
+    assertAdmin(actor);
+    const ids=validateBannerSelection(input);
+    const rows=await this.db.$transaction(async tx=>{
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(219861074)`;
+      const selected=await tx.banner.findMany({where:{id:{in:ids}}});
+      if(selected.length!==ids.length)throw new NotFoundException('Один из выбранных баннеров не найден.');
+      if(selected.some(banner=>!banner.imageUrl&&!banner.imageKey))throw new BadRequestException('Загрузите изображение для каждого выбранного баннера.');
+      await tx.banner.updateMany({data:{active:false},where:{active:true}});
+      for(const [sortOrder,id] of ids.entries())await tx.banner.update({where:{id},data:{active:true,sortOrder}});
+      await this.audit.record(tx,actor,'banner.display','banner','display',{ids,layout:ids.length===3?'THREE_SQUARE':ids.length===1?'ONE_WIDE':'HIDDEN'});
+      return tx.banner.findMany({orderBy:[{sortOrder:'asc'},{id:'asc'}]});
+    });
+    this.events.adminChanged('banners','display');this.events.contentChanged('banners');
+    return {items:rows,total:rows.length};
   }
   async deleteBanner(actor:Actor,id:string) {
     assertAdmin(actor);
@@ -156,6 +177,7 @@ export class AdminCatalogController {
   @Delete('restaurants/:id') archiveRestaurant(@Req() req:AuthedRequest,@Param('id') id:string) {return this.content.archiveRestaurant(req.actor,id);}
   @Get('banners') banners(@Req() req:AuthedRequest) {return this.content.adminBanners(req.actor);}
   @Post('banners') createBanner(@Req() req:AuthedRequest,@Body() dto:BannerInputDto) {return this.content.saveBanner(req.actor,dto);}
+  @Patch('banners/display') bannerDisplay(@Req() req:AuthedRequest,@Body() dto:BannerDisplayDto) {return this.content.setBannerDisplay(req.actor,dto);}
   @Patch('banners/:id') updateBanner(@Req() req:AuthedRequest,@Param('id',ParseUUIDPipe) id:string,@Body() dto:BannerInputDto) {return this.content.saveBanner(req.actor,dto,id);}
   @Delete('banners/:id') deleteBanner(@Req() req:AuthedRequest,@Param('id',ParseUUIDPipe) id:string) {return this.content.deleteBanner(req.actor,id);}
   @Post('media') @ApiConsumes('multipart/form-data')

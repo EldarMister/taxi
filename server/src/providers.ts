@@ -4,7 +4,8 @@ import { getMessaging } from 'firebase-admin/messaging';
 import { PrismaService } from './prisma.service';
 import { AppConfig } from './config';
 export { RoutingService } from './routing';
-import { pushPresentation } from './pushPresentation';
+import { driverOfferPresentation, pushPresentation } from './pushPresentation';
+import { sendExpoPushIndividually } from './expo-push';
 
 const PUSH_TTL = {
   chat: 6 * 60 * 60,
@@ -55,45 +56,77 @@ export function safePushFailureReason(error: unknown) {
 @Injectable()
 export class PushService {
   private readonly logger = new Logger(PushService.name);
+  private selecting = false;
+  private readonly activeJobs = new Set<string>();
+  private readonly activeUsers = new Set<string>();
+  private readonly concurrency = 6;
   constructor(private readonly db:PrismaService,private readonly config:AppConfig) {
     if (config.pushProvider === 'firebase' && !getApps().length) initializeApp({credential:applicationDefault()});
   }
   async deliverPending() {
-    const jobs = await this.db.pushJob.findMany({where:{sentAt:null,attempts:{lt:8},availableAt:{lte:new Date()}},orderBy:{createdAt:'asc'},take:50});
-    for (const job of jobs) {
+    if (this.selecting || this.activeJobs.size >= this.concurrency) return;
+    this.selecting = true;
+    const deliveries: Promise<void>[] = [];
+    try {
+      const jobs = await this.db.pushJob.findMany({where:{sentAt:null,attempts:{lt:8},availableAt:{lte:new Date()},
+        ...(this.activeUsers.size ? { userId: { notIn: [...this.activeUsers] } } : {})},orderBy:{createdAt:'asc'},take:50});
+      for (const job of jobs) {
+        if (this.activeJobs.size >= this.concurrency) break;
+        // Keep one recipient's events ordered, but a slow provider request for
+        // one phone must not block delivery to every other recipient.
+        if (this.activeJobs.has(job.id) || this.activeUsers.has(job.userId)) continue;
+        this.activeJobs.add(job.id); this.activeUsers.add(job.userId);
+        deliveries.push(this.deliverJob(job).catch(error => {
+          this.logger.warn(`Push worker deferred job ${job.id}: ${safePushFailureReason(error)}`);
+        }).finally(() => { this.activeJobs.delete(job.id); this.activeUsers.delete(job.userId); }));
+      }
+    } finally { this.selecting = false; }
+    await Promise.all(deliveries);
+  }
+  private async deliverJob(job: {id:string;userId:string;event:string;orderId:string|null;payload:unknown;attempts:number;createdAt:Date}) {
       const claimed = await this.db.pushJob.updateMany({where:{id:job.id,sentAt:null,availableAt:{lte:new Date()}},data:{availableAt:new Date(Date.now()+60000),attempts:{increment:1}}});
-      if (!claimed.count) continue;
+      if (!claimed.count) return;
       try {
         const user = await this.db.user.findUnique({where:{id:job.userId},select:{
           notifications:true,
           role:true,
-          pushTokens:{select:{id:true,token:true}},
+          language:true,
+          pushTokens:{select:{id:true,token:true,platform:true,driverOfferActions:true}},
         }});
+        let presentation = user ? pushPresentation(job.event, user.role) : null;
+        if (!presentation) {
+          // Consume obsolete queued events without sending or retrying them.
+          await this.db.pushJob.update({where:{id:job.id},data:{sentAt:new Date()}});
+          return;
+        }
         if (user?.notifications && user.pushTokens.length && this.config.pushProvider !== 'development') {
-          const { title, body, sound, channelId } = pushPresentation(job.event, user.role);
           let ttl = pushTtlSeconds(job.event);
+          let data = pushDeliveryData(job);
           if (job.event === 'order:offer') {
-            if(!job.orderId) {await this.db.pushJob.update({where:{id:job.id},data:{sentAt:new Date()}});continue;}
+            if(!job.orderId || user.role !== 'DRIVER') {await this.db.pushJob.update({where:{id:job.id},data:{sentAt:new Date()}});return;}
             const offer = await this.db.orderOffer.findFirst({where:{orderId:job.orderId,driverId:job.userId,skipped:false,expiresAt:{gt:new Date()},driver:{online:true,verified:true},order:{status:'SEARCHING'}},include:{order:true}});
-            if (!offer) { await this.db.pushJob.update({where:{id:job.id},data:{sentAt:new Date()}}); continue; }
+            if (!offer) { await this.db.pushJob.update({where:{id:job.id},data:{sentAt:new Date()}}); return; }
             ttl = pushTtlSeconds(job.event, offer.expiresAt);
+            presentation = driverOfferPresentation(offer.order, user.language);
+            data = { ...data, recipientId: job.userId, offerExpiresAt: offer.expiresAt.toISOString() };
           }
+          const { title, body, sound, channelId, categoryId } = presentation;
           if (this.config.pushProvider === 'expo') {
-            const headers: Record<string,string> = {'Content-Type':'application/json'};
-            if (this.config.expoAccessToken) headers.Authorization = `Bearer ${this.config.expoAccessToken}`;
-            const response = await fetch('https://exp.host/--/api/v2/push/send',{method:'POST',headers,body:JSON.stringify(user.pushTokens.map(t=>({to:t.token,title,body,sound,channelId,ttl,priority:'high',data:pushDeliveryData(job)}))),signal:AbortSignal.timeout(10000)});
-            if (!response.ok) throw new PushDeliveryError(`expo-http-${response.status}`);
-            const result = await response.json() as {data?:{status:string;details?:{error:string}}[]};
-            if (!Array.isArray(result.data) || result.data.length !== user.pushTokens.length) throw new PushDeliveryError('expo-invalid-ticket-response');
-            const temporaryFailures = new Set<string>();
-            for (let i=0;i<result.data.length;i++) {
-              if (result.data[i].status !== 'error') continue;
-              if (result.data[i].details?.error === 'DeviceNotRegistered') await this.db.pushToken.deleteMany({where:{id:user.pushTokens[i].id}});
-              else temporaryFailures.add(safeProviderCode(result.data[i].details?.error, 'unknown-ticket-error'));
+            const report = await sendExpoPushIndividually(user.pushTokens,
+              {title,body,sound,channelId,categoryId,ttl,priority:'high',data},this.config.expoAccessToken);
+            for (const id of report.invalidIds) await this.db.pushToken.deleteMany({where:{id}});
+            if (report.failures.length) {
+              const reasons = [...new Set(report.failures)].sort().join(',');
+              if (!report.delivered) throw new PushDeliveryError(reasons);
+              this.logger.warn(`Push job ${job.id} delivered to ${report.delivered} device(s), removed ${report.invalidIds.length} stale token(s), ${report.failures.length} device(s) failed: ${reasons}`);
             }
-            if (temporaryFailures.size) throw new PushDeliveryError(`expo-ticket-${[...temporaryFailures].sort().join(',')}`);
           } else {
-            const result = await getMessaging().sendEachForMulticast({tokens:user.pushTokens.map(t=>t.token),notification:{title,body},data:pushDeliveryData(job),android:{priority:'high',ttl:ttl*1000,notification:{channelId,sound:sound.replace(/\.wav$/,'')}},apns:{headers:{'apns-expiration':String(Math.floor(Date.now()/1000)+ttl)},payload:{aps:{sound}}}});
+            // Data-only Android offers reach Expo's native builder, which adds
+            // the registered action buttons even when the app is backgrounded.
+            const result = await getMessaging().sendEachForMulticast({tokens:user.pushTokens.map(t=>t.token),
+              ...(categoryId ? {data:{title,message:body,body:JSON.stringify(data),categoryId,channelId,sound}} : {notification:{title,body},data}),
+              android:{priority:'high',ttl:ttl*1000,...(!categoryId ? {notification:{channelId,sound:sound.replace(/\.wav$/,'')}} : {})},
+              apns:{headers:{'apns-expiration':String(Math.floor(Date.now()/1000)+ttl)},payload:{aps:{sound,...(categoryId ? {category:categoryId,alert:{title,body}} : {})}}}});
             const temporaryFailures = new Set<string>();
             for (let i=0;i<result.responses.length;i++) {
               const error = result.responses[i].error;
@@ -104,10 +137,10 @@ export class PushService {
           }
         }
         await this.db.pushJob.update({where:{id:job.id},data:{sentAt:new Date()}});
+        this.logger.log(`Push job ${job.id} event=${job.event} provider=${this.config.pushProvider} processed ageMs=${Date.now()-job.createdAt.getTime()}`);
       } catch (error) {
         this.logger.warn(`Push job ${job.id} event=${job.event} provider=${this.config.pushProvider} attempt=${job.attempts+1} failed reason=${safePushFailureReason(error)}; queued for retry`);
         await this.db.pushJob.update({where:{id:job.id},data:{availableAt:new Date(Date.now()+Math.min(3600,2**job.attempts*15)*1000)}});
       }
-    }
   }
 }

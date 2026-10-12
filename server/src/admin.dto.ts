@@ -24,6 +24,9 @@ export class AdminTariffDto {
   @IsInt() @Min(0) @Max(1000000) basePrice!:number;
   @IsInt() @Min(0) @Max(1000000) pricePerKm!:number;
   @IsInt() @Min(0) @Max(1000000) pricePerMinute!:number;
+  @IsInt() @Min(0) @Max(60) waitingGraceMinutes!:number;
+  @IsInt() @Min(0) @Max(180) freeWaitingMinutes!:number;
+  @IsInt() @Min(0) @Max(1000000) waitingPricePerMinute!:number;
   @IsInt() @Min(0) @Max(1000000) minimumPrice!:number;
   @IsInt() @Min(0) @Max(10000) commissionBps!:number;
   @IsBoolean() active!:boolean;
@@ -36,6 +39,9 @@ export class AdminTariffPatchDto {
   @IsOptional() @IsInt() @Min(0) @Max(1000000) basePrice?:number;
   @IsOptional() @IsInt() @Min(0) @Max(1000000) pricePerKm?:number;
   @IsOptional() @IsInt() @Min(0) @Max(1000000) pricePerMinute?:number;
+  @IsOptional() @IsInt() @Min(0) @Max(60) waitingGraceMinutes?:number;
+  @IsOptional() @IsInt() @Min(0) @Max(180) freeWaitingMinutes?:number;
+  @IsOptional() @IsInt() @Min(0) @Max(1000000) waitingPricePerMinute?:number;
   @IsOptional() @IsInt() @Min(0) @Max(1000000) minimumPrice?:number;
   @IsOptional() @IsInt() @Min(0) @Max(10000) commissionBps?:number;
   @IsOptional() @IsBoolean() active?:boolean;

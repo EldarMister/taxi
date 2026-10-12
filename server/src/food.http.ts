@@ -3,7 +3,7 @@ import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { Request, Response } from 'express';
 import { Actor, AuthGuard } from './auth';
 import { HistoryDto } from './dto';
-import { CreateFoodOrderDto, FoodStatusDto } from './food.dto';
+import { CreateFoodOrderBatchDto, CreateFoodOrderDto, FoodStatusDto } from './food.dto';
 import { FoodService } from './food';
 import { AdminGuard } from './admin.security';
 
@@ -19,7 +19,9 @@ export class FoodCatalogController {
 export class FoodOrdersController {
   constructor(private readonly food:FoodService) {}
   @Post() create(@Req() req:AuthedRequest,@Body() dto:CreateFoodOrderDto) {return this.food.create(req.actor,dto);}
+  @Post('batch') createBatch(@Req() req:AuthedRequest,@Body() dto:CreateFoodOrderBatchDto) {return this.food.createBatch(req.actor,dto);}
   @Get('active') async active(@Req() req:AuthedRequest,@Res() response:Response) {return response.json(await this.food.active(req.actor));}
+  @Get('active-all') activeAll(@Req() req:AuthedRequest) {return this.food.activeAll(req.actor);}
   @Get('history') history(@Req() req:AuthedRequest,@Query() query:HistoryDto) {return this.food.history(req.actor,query.period);}
   @Get(':id') get(@Req() req:AuthedRequest,@Param('id',ParseUUIDPipe) id:string) {return this.food.get(req.actor,id);}
   @Post(':id/cancel') cancel(@Req() req:AuthedRequest,@Param('id',ParseUUIDPipe) id:string) {return this.food.cancel(req.actor,id);}
