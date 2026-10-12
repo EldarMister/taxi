@@ -50,3 +50,58 @@ test('non-UTC transaction defaults stay UTC and a second outbox worker cannot cl
     throw rollback;
   },{timeout:15000}),error=>error===rollback);
 });
+
+function gate(){let resolve!:()=>void;const promise=new Promise<void>(done=>{resolve=done;});return {promise,resolve};}
+async function bounded<T>(promise:Promise<T>,message:string):Promise<T>{
+  let timer!:ReturnType<typeof setTimeout>;
+  try{return await Promise.race([promise,new Promise<never>((_,reject)=>{timer=setTimeout(()=>reject(new Error(message)),3000);})]);}
+  finally{clearTimeout(timer);}
+}
+
+for(const outcome of ['acknowledge','retry'] as const)test(`Prisma fencing prevents a stale owner from ${outcome} after another worker reclaims the lease`,async()=>{
+  const rollback=new Error('Rollback synthetic lease-fencing fixture');
+  await assert.rejects(()=>db.$transaction(async tx=>{
+    // This is only the guarded disposable database. The transaction always
+    // rolls back, including the temporary hiding of unrelated pending rows.
+    await tx.$executeRawUnsafe("SET LOCAL TIME ZONE 'UTC'");
+    await tx.orderEventOutbox.updateMany({where:{deliveredAt:null},data:{availableAt:new Date('2999-01-01T00:00:00Z')}});
+    const id=randomUUID();
+    const user=await tx.user.create({data:{phone:'+996'+BigInt('0x'+id.replaceAll('-','').slice(0,11)).toString().padStart(9,'0').slice(-9),name:'Synthetic lease client'}});
+    const restaurant=await tx.foodRestaurant.create({data:{id:'lease-'+id,catalog:{id:'lease-'+id,name:'Synthetic lease restaurant'},active:true,isDemo:true}});
+    const food=await tx.foodOrder.create({data:{clientId:user.id,restaurantId:restaurant.id,restaurantSnapshot:{id:restaurant.id,name:'Synthetic lease restaurant'},requestId:id,requestHash:id,items:[],subtotal:100,deliveryFee:0,total:100,fulfillment:'PICKUP',address:'',paymentMethod:'CASH',isDemo:true}});
+    const pending=await tx.orderEventOutbox.findMany({where:{aggregateId:food.id,deliveredAt:null}});
+    assert.equal(pending.length,1);const eventId=pending[0].id;
+    await tx.orderEventOutbox.update({where:{id:eventId},data:{availableAt:new Date(0)}});
+    const transactionalDb=new Proxy(tx,{get(target,property){return property==='$transaction'?async(callback:(client:typeof tx)=>unknown)=>callback(target):Reflect.get(target,property);}});
+    const oldStarted=gate(),releaseOld=gate(),newStarted=gate(),releaseNew=gate();
+    const oldEvents=new RealtimeEvents(),newEvents=new RealtimeEvents();
+    const oldListener=async(event:any)=>{
+      if(event.name==='food:order:updated'&&event.payload.id===food.id){oldStarted.resolve();await releaseOld.promise;if(outcome==='retry')throw new Error('Synthetic recipient access unavailable');}
+    };
+    const newListener=async(event:any)=>{if(event.name==='food:order:updated'&&event.payload.id===food.id){newStarted.resolve();await releaseNew.promise;}};
+    oldEvents.on('event',oldListener);newEvents.on('event',newListener);
+    const worker=(events:RealtimeEvents)=>new OrderOutboxWorker(transactionalDb as any,{} as any,{serialize:serializeFoodOrder} as any,events);
+    const old=worker(oldEvents).flush(1);old.catch(()=>undefined);
+    let current:ReturnType<OrderOutboxWorker['flush']>|undefined;
+    try{
+      await bounded(Promise.race([oldStarted.promise,old.then(()=>{throw new Error('Old worker finished before held delivery');})]),'Old worker never acquired its lease');
+      assert.equal((await tx.orderEventOutbox.findUniqueOrThrow({where:{id:eventId}})).attempts,1);
+      // Simulate expiry of this own fixture's lease, without a 30s sleep.
+      await tx.orderEventOutbox.update({where:{id:eventId},data:{availableAt:new Date(0)}});
+      current=worker(newEvents).flush(1);current.catch(()=>undefined);
+      await bounded(Promise.race([newStarted.promise,current.then(()=>{throw new Error('New worker finished before held delivery');})]),'New worker never reclaimed the lease');
+      const lease=await tx.orderEventOutbox.findUniqueOrThrow({where:{id:eventId}});
+      assert.equal(lease.attempts,2);assert.equal(lease.deliveredAt,null);assert.ok(lease.availableAt.getTime()>Date.now()+25000);
+      releaseOld.resolve();assert.deepEqual(await bounded(old,'Old worker did not finish'),{claimed:1,delivered:0});
+      const unchanged=await tx.orderEventOutbox.findUniqueOrThrow({where:{id:eventId}});
+      assert.equal(unchanged.attempts,2);assert.equal(unchanged.deliveredAt,null);assert.equal(unchanged.availableAt.getTime(),lease.availableAt.getTime());
+      releaseNew.resolve();assert.deepEqual(await bounded(current,'New worker did not finish'),{claimed:1,delivered:1});
+      assert.notEqual((await tx.orderEventOutbox.findUniqueOrThrow({where:{id:eventId}})).deliveredAt,null);
+    }finally{
+      releaseOld.resolve();releaseNew.resolve();
+      try{await bounded(Promise.allSettled(current?[old,current]:[old]),'Held worker cleanup did not complete');}
+      finally{oldEvents.off('event',oldListener);newEvents.off('event',newListener);}
+    }
+    throw rollback;
+  },{timeout:15000}),error=>error===rollback);
+});
