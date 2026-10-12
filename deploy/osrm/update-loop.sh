@@ -1,18 +1,27 @@
 #!/bin/bash
 set -euo pipefail
+source "$(dirname "$0")/http-update.sh"
+source "$(dirname "$0")/supervisor.sh"
 
 refresh() {
   local stage previous next current_hash new_hash attempt old_pid live_pid
   stage="$(mktemp -d /data/sets/build.XXXXXXXX)"
   trap 'rm -rf "$stage"' RETURN
   echo 'Checking Geofabrik for a newer Kyrgyzstan extract'
-  curl --fail --location --retry 3 --max-time 900 "$OSM_PBF_URL" -o "$stage/kyrgyzstan.osm.pbf" \
-    || curl --fail --location --retry 3 --max-time 900 "$OSM_PBF_FALLBACK_URL" -o "$stage/kyrgyzstan.osm.pbf" \
-    || return 1
+  local fetch_status=0
+  http_fetch_candidate "$OSM_PBF_URL" "$stage/kyrgyzstan.osm.pbf" /data/http "$stage/http" || fetch_status=$?
+  if [ "$fetch_status" = 3 ]; then http_mark_checked /data/http; echo 'OSRM extract unchanged (HTTP 304)'; return; fi
+  if [ "$fetch_status" != 0 ]; then
+    fetch_status=0
+    http_fetch_candidate "$OSM_PBF_FALLBACK_URL" "$stage/kyrgyzstan.osm.pbf" /data/http "$stage/http" || fetch_status=$?
+    if [ "$fetch_status" = 3 ]; then http_mark_checked /data/http; echo 'OSRM fallback unchanged (HTTP 304)'; return; fi
+    [ "$fetch_status" = 0 ] || return 1
+  fi
   [ -s "$stage/kyrgyzstan.osm.pbf" ] || return 1
   current_hash="$(sha256sum /data/current/kyrgyzstan.osm.pbf | cut -d ' ' -f 1)" || return 1
   new_hash="$(sha256sum "$stage/kyrgyzstan.osm.pbf" | cut -d ' ' -f 1)" || return 1
   if [ "$new_hash" = "$current_hash" ]; then
+    http_accept_candidate "$stage/http" /data/http || return 1
     echo 'OSRM extract is unchanged'
     return
   fi
@@ -33,6 +42,7 @@ refresh() {
   for attempt in $(seq 1 30); do
     live_pid="$(cat /tmp/taxi-osrm-router.pid 2>/dev/null || true)"
     if [ -n "$live_pid" ] && [ "$live_pid" != "$old_pid" ] && curl --fail --silent --max-time 2 "http://127.0.0.1:${PORT:-5000}/route/v1/driving/74.6001,42.8743;74.5866,42.8704" | grep -q '"code":"Ok"'; then
+      http_accept_candidate "$next/http" /data/http || return 1
       echo "OSRM switched to $next"
       if [ "$previous" != "$next" ] && [ "${previous#/data/sets/}" != "$previous" ]; then
         rm -rf -- "$previous"
@@ -50,7 +60,4 @@ refresh() {
   return 1
 }
 
-while true; do
-  refresh || echo 'OSRM daily refresh failed; keeping the previous graph' >&2
-  sleep "${MAP_UPDATE_INTERVAL_SECONDS:-86400}"
-done
+refresh_loop

@@ -5,10 +5,14 @@ RUN sed -i 's/--bind :8080/--bind [::]:8080/g' /app/start.sh \
     && sed -i 's/sudo -E -u nominatim gunicorn/sudo -H -E -u nominatim gunicorn/' /app/start.sh \
     && sed -i 's@^#!/bin/bash -ex$@#!/bin/bash -e@; s/^set -x$/set +x/' /app/start.sh /app/init.sh /app/config.sh \
     && sed -i 's@/var/lib/postgresql/16/main@/var/lib/postgresql/16/main/data@g' /app/start.sh /app/init.sh /etc/postgresql/16/main/postgresql.conf \
+    && sed -i '/^service postgresql start$/i chown -R nominatim:nominatim /var/lib/postgresql/16/main/project' /app/start.sh \
+    && sed -i 's@sudo -E -u nominatim nominatim replication --project-dir ${PROJECT_DIR} \&> /var/log/replication.log \&@/usr/local/bin/taxi-nominatim-replication \&@' /app/start.sh \
     && mv /nominatim /nominatim-template \
     && ln -s /var/lib/postgresql/16/main/project /nominatim
 COPY start.sh /usr/local/bin/taxi-nominatim-start
-RUN chmod +x /usr/local/bin/taxi-nominatim-start
+COPY replication.sh /usr/local/bin/taxi-nominatim-replication
+RUN sed -i 's/\r$//' /usr/local/bin/taxi-nominatim-start /usr/local/bin/taxi-nominatim-replication \
+    && chmod +x /usr/local/bin/taxi-nominatim-start /usr/local/bin/taxi-nominatim-replication
 ENV PBF_URL=https://download.geofabrik.de/asia/kyrgyzstan-latest.osm.pbf \
     REPLICATION_URL=https://download.geofabrik.de/asia/kyrgyzstan-updates/ \
     REPLICATION_UPDATE_INTERVAL=86400 REPLICATION_RECHECK_INTERVAL=900 UPDATE_MODE=continuous \

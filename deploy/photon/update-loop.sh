@@ -1,16 +1,22 @@
 #!/bin/bash
 set -euo pipefail
+source "$(dirname "$0")/http-update.sh"
+source "$(dirname "$0")/supervisor.sh"
 
 refresh() {
   local stage previous next old_hash new_hash trial_pid attempt old_pid live_pid
   stage="$(mktemp -d /data/indices/build.XXXXXXXX)"
   trap 'rm -rf "$stage"' RETURN
   echo 'Checking GraphHopper for a newer Photon dump'
-  curl --fail --location --retry 3 --max-time 900 "$PHOTON_DUMP_URL" -o "$stage/input.jsonl.zst" || return 1
+  local fetch_status=0
+  http_fetch_candidate "$PHOTON_DUMP_URL" "$stage/input.jsonl.zst" /data/http "$stage/http" || fetch_status=$?
+  if [ "$fetch_status" = 3 ]; then http_mark_checked /data/http; echo 'Photon dump unchanged (HTTP 304)'; return; fi
+  [ "$fetch_status" = 0 ] || return 1
   [ -s "$stage/input.jsonl.zst" ] || return 1
   old_hash="$(sha256sum /data/current/input.jsonl.zst | cut -d ' ' -f 1)" || return 1
   new_hash="$(sha256sum "$stage/input.jsonl.zst" | cut -d ' ' -f 1)" || return 1
   if [ "$new_hash" = "$old_hash" ]; then
+    http_accept_candidate "$stage/http" /data/http || return 1
     echo 'Photon dump is unchanged'
     return
   fi
@@ -43,6 +49,7 @@ refresh() {
   for attempt in $(seq 1 30); do
     live_pid="$(cat /tmp/taxi-photon-server.pid 2>/dev/null || true)"
     if [ -n "$live_pid" ] && [ "$live_pid" != "$old_pid" ] && curl --fail --silent --max-time 2 "http://127.0.0.1:${PORT:-8080}/status" | grep -q '"status":"Ok"'; then
+      http_accept_candidate "$next/http" /data/http || return 1
       echo "Photon switched to $next"
       if [ "$previous" != /data/index-v1 ] && [ "${previous#/data/indices/}" != "$previous" ]; then
         rm -rf -- "$previous"
@@ -60,7 +67,4 @@ refresh() {
   return 1
 }
 
-while true; do
-  refresh || echo 'Photon daily refresh failed; keeping the previous index' >&2
-  sleep "${MAP_UPDATE_INTERVAL_SECONDS:-86400}"
-done
+refresh_loop

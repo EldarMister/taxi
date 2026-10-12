@@ -1,5 +1,6 @@
 #!/bin/bash
 set -euo pipefail
+source /app/supervisor.sh
 mkdir -p /data/index-v1 /data/indices
 cd /data/index-v1
 if [ ! -f import-complete ]; then
@@ -26,12 +27,4 @@ trap shutdown TERM INT
 
 /app/update-loop.sh &
 updater_pid=$!
-while true; do
-  java -Xms256m -Xmx768m -XX:ActiveProcessorCount=2 -jar /app/photon.jar serve -data-dir /data/current -listen-ip :: -listen-port "${PORT:-8080}" -default-language ru -query-timeout 3 -max-results 20 &
-  server_pid=$!
-  printf '%s\n' "$server_pid" > /tmp/taxi-photon-server.pid
-  wait "$server_pid" || true
-  server_pid=''
-  rm -f /tmp/taxi-photon-server.pid
-  sleep 2
-done
+supervise_server /tmp/taxi-photon-server.pid java -Xms256m -Xmx768m -XX:ActiveProcessorCount=2 -jar /app/photon.jar serve -data-dir /data/current -listen-ip :: -listen-port "${PORT:-8080}" -default-language ru -query-timeout 3 -max-results 20

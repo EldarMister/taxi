@@ -1,5 +1,6 @@
 #!/bin/bash
 set -euo pipefail
+source "$(dirname "$0")/supervisor.sh"
 cd /data
 mkdir -p /data/sets
 
@@ -21,7 +22,7 @@ if [ ! -L /data/current ]; then
   ln -s /data/sets/initial /data/current
 fi
 
-router_pid=''
+server_pid=''
 updater_pid=''
 shutdown() {
   trap - TERM INT
@@ -34,12 +35,4 @@ trap shutdown TERM INT
 
 /usr/local/bin/taxi-osrm-update-loop &
 updater_pid=$!
-while true; do
-  osrm-routed --ip :: --port "${PORT:-5000}" --threads 2 --algorithm mld --max-viaroute-size 10 /data/current/kyrgyzstan.osrm &
-  router_pid=$!
-  printf '%s\n' "$router_pid" > /tmp/taxi-osrm-router.pid
-  wait "$router_pid" || true
-  router_pid=''
-  rm -f /tmp/taxi-osrm-router.pid
-  sleep 2
-done
+supervise_server /tmp/taxi-osrm-router.pid osrm-routed --ip :: --port "${PORT:-5000}" --threads 2 --algorithm mld --max-viaroute-size 10 /data/current/kyrgyzstan.osrm

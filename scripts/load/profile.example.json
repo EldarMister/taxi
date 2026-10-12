@@ -1,0 +1,20 @@
+{
+  "fixtureRunId": "replace-with-isolated-synthetic-seed-id",
+  "approvalId": "local-only",
+  "candidate": { "commit": "replace-with-git-sha", "sourceDigest": "replace-with-source-sha256" },
+  "target": "http://127.0.0.1:3000/api",
+  "approvedStagingOrigin": "",
+  "resources": {
+    "host": { "os": "win32", "arch": "x64", "logicalCpu": 12, "memoryMiB": 23869, "cpuModel": "AMD Ryzen 5 6600H" },
+    "api": { "replicas": 1, "cpu": null, "memoryMiB": null, "runtime": "Node 22", "connectionLimit": null },
+    "postgres": { "replicas": 1, "cpu": null, "memoryMiB": null, "version": "18", "maxConnections": null },
+    "generator": { "replicas": 1, "cpu": null, "memoryMiB": null, "coLocatedWithApi": true },
+    "maps": { "osrm": "unmeasured", "photon": "unmeasured", "nominatim": "unmeasured" }
+  },
+  "providers": { "sms": "development", "push": "development", "routing": "explicitly specify local mock or measured local OSRM", "payments": "CASH synthetic" },
+  "activeUsers": 50,
+  "durationSeconds": 180,
+  "intervalsSeconds": { "clientSync": 12, "driverGps": 5, "driverOffers": 12, "restaurantOrders": 10, "catalog": 60, "bookingPerClient": 120, "forcedReconnect": 60 },
+  "mix": { "clients": 0.8, "drivers": 0.15, "restaurants": 0.05, "foodBooking": 0.5, "taxiBooking": 0.5 },
+  "notes": "Templates are deliberately incomplete. Fill measured/allocated resources before running. 50 -> 100 -> 250 -> 500 -> 1000; same profile/resources/candidate per comparison. Restaurant uses HTTP foreground polling, clients/drivers Socket.IO."
+}

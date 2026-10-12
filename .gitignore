@@ -4,6 +4,8 @@ node_modules/
 !.env.example
 !.env.*.example
 dist/
+!web/admin/dist/
+!web/admin/dist/**
 coverage/
 .expo/
 .gradle/
@@ -21,3 +23,8 @@ mobile/builds/
 artifacts/
 .local/
 *.tgz
+
+# Preserve design previews and hosting workspace metadata locally.
+web/*.png
+web/design/
+web/admin/.openai/
