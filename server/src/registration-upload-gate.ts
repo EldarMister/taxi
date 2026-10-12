@@ -2,6 +2,7 @@ import { BadRequestException, CallHandler, ExecutionContext, HttpException, Http
 import { Observable, finalize } from 'rxjs';
 import { RateLimits } from './auth';
 import { REGISTRATION_CONFIG } from './registration-domain';
+import {requestClientIp} from './request-client-ip';
 
 const MULTIPART_OVERHEAD_BYTES=512*1024;
 export const REGISTRATION_UPLOADS_PER_USER_HOUR=REGISTRATION_CONFIG.upload.maxFiles*2;
@@ -26,7 +27,7 @@ export class RegistrationUploadGate implements NestInterceptor {
     }
     const userId=request.actor?.id;
     if(!userId)throw new HttpException('Необходима авторизация',HttpStatus.UNAUTHORIZED);
-    const ip=request.ip??'unknown',ipCount=this.activeByIp.get(ip)??0;
+    const ip=requestClientIp(request),ipCount=this.activeByIp.get(ip)??0;
     if(this.activeUsers.has(userId))throw new HttpException('Дождитесь завершения предыдущей загрузки',HttpStatus.TOO_MANY_REQUESTS);
     if(this.activeCount>=REGISTRATION_UPLOAD_GLOBAL_CONCURRENCY||ipCount>=REGISTRATION_UPLOAD_IP_CONCURRENCY)throw new HttpException('Сервер обрабатывает другие загрузки. Попробуйте ещё раз через несколько секунд',HttpStatus.TOO_MANY_REQUESTS);
     this.activeUsers.add(userId);

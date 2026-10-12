@@ -1,4 +1,5 @@
 import 'dotenv/config';
+import {trustedProxyPeers} from './request-client-ip';
 import { Injectable } from '@nestjs/common';
 import { existsSync } from 'node:fs';
 
@@ -41,6 +42,7 @@ export class AppConfig {
   readonly expoAccessToken = process.env.EXPO_ACCESS_TOKEN?.trim() || undefined;
   readonly origins = (process.env.CORS_ORIGINS ?? 'http://localhost:8081').split(',').map(v => v.trim()).filter(Boolean);
   constructor() {
+    trustedProxyPeers(process.env.TRUSTED_PROXY_CIDRS??'');
     for (const [key, value] of [['JWT_SECRET', this.jwtSecret], ['OTP_SECRET', this.otpSecret]]) {
       if (value.length < 32) throw new Error(`${key} must contain at least 32 characters`);
       if (!this.development && value.startsWith('replace-')) throw new Error(`${key}: replace example secret`);

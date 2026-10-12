@@ -2,7 +2,7 @@ import 'reflect-metadata';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { BadRequestException, ServiceUnavailableException } from '@nestjs/common';
-import { localizedRoadName, parseOsrmRoute, RoutingService } from '../src/routing';
+import { localizedRoadName, parseOsrmMatch, parseOsrmRoute, RoutingService } from '../src/routing';
 import { PlacesService, parseNominatimPlace } from '../src/places';
 import { AppConfig } from '../src/config';
 import { PhotonSearch, parsePhotonPlace } from '../src/photon';
@@ -14,8 +14,33 @@ const photonFeature = {type:'Feature',geometry:{type:'Point',coordinates:[72.179
 
 test('Photon preserves coordinates and OSM identity, deduplicates labels and never invents house numbers',()=>{
   const result=parsePhotonPlace(photonFeature);
-  assert.deepEqual(result,{id:'osm-way-27339503',address:'улица Ленина, Шамалды-Сай, Кыргызстан',latitude:41.2033565,longitude:72.1795757});
+  assert.deepEqual(result,{id:'osm-way-27339503',address:'улица Ленина, Шамалды-Сай',latitude:41.2033565,longitude:72.1795757});
+  assert.equal(parsePhotonPlace({...photonFeature,properties:{...photonFeature.properties,housenumber:'25',postcode:'720001',district:'Ноокатский район',state:'Ошская область',unit:'кв. 7'}}).address,'улица Ленина, 25, кв. 7, Шамалды-Сай');
   for(const value of [null,{...photonFeature,geometry:{type:'Point',coordinates:[181,41]}},{...photonFeature,properties:{osm_type:'X',osm_id:2,name:'Test'}}])assert.throws(()=>parsePhotonPlace(value));
+});
+
+test('Photon keeps real venue and bus-stop names before their street address', () => {
+  const venue = {...photonFeature, properties: {...photonFeature.properties, type:'house', osm_key:'shop', osm_value:'mall', name:'Азия Молл', street:'проспект Чынгыза Айтматова', housenumber:'3', city:'Бишкек'}};
+  const result = parsePhotonPlace(venue);
+  assert.equal(result.address, 'Азия Молл · проспект Чынгыза Айтматова, 3, Бишкек');
+  assert.equal(result.id, 'osm-way-27339503');
+  assert.equal(result.latitude, 41.2033565);
+  assert.equal(result.longitude, 72.1795757);
+  assert.equal(parsePhotonPlace({...venue, properties:{...venue.properties, osm_key:'highway', osm_value:'bus_stop'}}).address, 'Азия Молл · проспект Чынгыза Айтматова, 3, Бишкек');
+  assert.equal(parsePhotonPlace({...venue, properties:{...venue.properties, name:'3'}}).address, 'проспект Чынгыза Айтматова, 3, Бишкек');
+  assert.equal(parsePhotonPlace({...venue, properties:{...venue.properties, name:'проспект Чынгыза Айтматова'}}).address, 'проспект Чынгыза Айтматова, 3, Бишкек');
+  assert.equal(parsePhotonPlace({...venue, properties:{...venue.properties, name:undefined}}).address, 'проспект Чынгыза Айтматова, 3, Бишкек');
+  assert.equal(parsePhotonPlace({...venue, properties:{...venue.properties, name:'пр-т Чынгыза Айтматова', osm_key:'highway', osm_value:'primary', type:'street'}}).address, 'проспект Чынгыза Айтматова, 3, Бишкек');
+});
+
+test('Nominatim search and reverse formatting retain top-level or structured POI names', () => {
+  const raw = {...place, name:'Бишкек Парк', category:'shop', type:'mall', address:{road:'улица Керимбекова Кульчоро',house_number:'148',city:'Бишкек',country:'Кыргызстан'}};
+  assert.equal(parseNominatimPlace(raw).address, 'Бишкек Парк · улица Керимбекова Кульчоро, 148, Бишкек');
+  assert.equal(parseNominatimPlace({...raw, name:'', address:{...raw.address, shop:'Бишкек Парк'}}).address, 'Бишкек Парк · улица Керимбекова Кульчоро, 148, Бишкек');
+  assert.equal(parseNominatimPlace({...raw, name:'Бишкек'}).address, 'улица Керимбекова Кульчоро, 148, Бишкек');
+  assert.equal(parseNominatimPlace({...raw, name:'148'}).address, 'улица Керимбекова Кульчоро, 148, Бишкек');
+  assert.equal(parseNominatimPlace({...raw, name:'Остановка Парк', category:'highway', type:'bus_stop'}).address, 'Остановка Парк · улица Керимбекова Кульчоро, 148, Бишкек');
+  assert.equal(parseNominatimPlace({...raw, name:'Керимбекова', category:'highway', type:'residential'}).address, 'улица Керимбекова Кульчоро, 148, Бишкек');
 });
 
 test('Photon autocomplete shares parallel local/global work and caches normalized queries',async(t)=>{
@@ -77,7 +102,7 @@ test('Photon missing local house falls back to the real street without manufactu
     return Response.json({type:'FeatureCollection',features:u.searchParams.get('q')==='ленина'?[{...photonFeature,properties:{...photonFeature.properties,type:'street'}}]:[]});
   });
   const result=await new PhotonSearch('http://photon.example.test').search('Ленина 10',{latitude:41.199,longitude:72.180});
-  assert.equal(calls.length,3);assert.equal(result[0].address,'улица Ленина, Шамалды-Сай, Кыргызстан');
+  assert.equal(calls.length,3);assert.equal(result[0].address,'улица Ленина, Шамалды-Сай');
 });
 
 test('OSRM GeoJSON and maneuver locations keep longitude/latitude order and instructions',()=>{
@@ -118,6 +143,34 @@ test('routing requests driving steps with full GeoJSON; outages remain 503',asyn
   fetchMock.mock.mockImplementation(async()=>{throw new DOMException('aborted','TimeoutError');});
   await assert.rejects(()=>routing.route(pickup,dropoff),ServiceUnavailableException);
   await assert.rejects(()=>routing.route({...pickup,latitude:NaN},dropoff),BadRequestException);
+});
+
+test('OSRM match accepts a confident multi-fix road and rejects weak or distant matches',()=>{
+  const fixes=[{latitude:42,longitude:74,accuracy:8},{latitude:42.0001,longitude:74,accuracy:8},
+    {latitude:42.0002,longitude:74,accuracy:8}];
+  const tracepoints=fixes.map(fix=>({matchings_index:0,location:[fix.longitude,fix.latitude]}));
+  const result=parseOsrmMatch({code:'Ok',tracepoints,matchings:[{confidence:.9}]},fixes);
+  assert.ok(result);
+  assert.ok(result.bearing!<1||result.bearing!>359);
+  assert.equal(parseOsrmMatch({code:'Ok',tracepoints,matchings:[{confidence:.2}]},fixes),null);
+  assert.equal(parseOsrmMatch({code:'Ok',tracepoints:[...tracepoints.slice(0,2),{matchings_index:0,location:[74.01,42]}],matchings:[{confidence:.9}]},fixes),null);
+});
+
+test('fast reroute constrains start bearing and skips slow road-name lookups',async(t)=>{
+  let reverseCalls=0;
+  t.mock.method(globalThis,'fetch',async(input:any)=>{
+    const url=new URL(input.toString());
+    if(url.pathname.includes('/route/v1/driving/')){
+      assert.equal(url.searchParams.get('bearings'),'90,45;');
+      return Response.json(osrmFixture());
+    }
+    reverseCalls++;
+    return Response.json({});
+  });
+  const route=await new RoutingService(config).route(pickup,dropoff,12000,'ru',{bearing:90,fast:true});
+  assert.equal(route.provider,'osrm');
+  assert.equal(reverseCalls,0);
+  assert.ok(route.steps.every(step=>step.name===''));
 });
 
 test('route names use explicit OSM language tags, never the stale OSRM name',async(t)=>{
@@ -169,7 +222,8 @@ test('reverse geocoder cannot substitute a different road for the routed segment
 });
 
 test('Nominatim parser validates coordinates and preserves an OSM identity',()=>{
-  assert.deepEqual(parseNominatimPlace(place),{id:'osm-way-123',latitude:42.8756,longitude:74.604,address:place.display_name});
+  assert.deepEqual(parseNominatimPlace(place),{id:'osm-way-123',latitude:42.8756,longitude:74.604,address:'Площадь Ала-Тоо, Бишкек'});
+  assert.equal(parseNominatimPlace({...place,display_name:'25, улица Ленина, Ош, Ошская область, 723500, Кыргызстан',address:{road:'улица Ленина',house_number:'25',flat:'кв. 7',city:'Ош',postcode:'723500',state:'Ошская область',country:'Кыргызстан'}}).address,'улица Ленина, 25, кв. 7, Ош');
   for(const value of [null,{...place,lat:null},{...place,lat:''},{...place,lon:'181'},{...place,display_name:''}])assert.throws(()=>parseNominatimPlace(value));
 });
 
@@ -186,7 +240,7 @@ test('Nominatim shares one paced queue, identifies application, caches and dedup
   const [first,duplicate,reverse] = await Promise.all([service.search(' Ала-Тоо '),service.search('Ала-Тоо'),service.reverse(pickup)]);
   assert.deepEqual(first,duplicate);assert.equal(starts.length,2);assert.ok(starts[1]-starts[0]>=990);
   assert.equal(reverse.latitude,pickup.latitude);assert.equal(reverse.longitude,pickup.longitude);
-  first[0].address='mutated';assert.equal((await service.search('Ала-Тоо'))[0].address,place.display_name);
+  first[0].address='mutated';assert.equal((await service.search('Ала-Тоо'))[0].address,'Площадь Ала-Тоо, Бишкек');
   assert.equal(starts.length,2);
 });
 

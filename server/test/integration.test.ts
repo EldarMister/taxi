@@ -1,6 +1,8 @@
+import { requireTestDatabase } from './test-database';
+requireTestDatabase();
 import 'reflect-metadata';
 import assert from 'node:assert/strict';
-import { after, before, test } from 'node:test';
+import { after, before, beforeEach, test } from 'node:test';
 import { createHash, createHmac, randomUUID } from 'node:crypto';
 import request from 'supertest';
 import { io, Socket } from 'socket.io-client';
@@ -52,11 +54,15 @@ async function socket(session:Session) {
   await new Promise<void>((resolve,reject)=>{connection.once('session:ready',()=>resolve());connection.once('connect_error',reject);setTimeout(()=>reject(new Error('Socket timeout')),5000).unref();});
   return connection;
 }
-function once(connection:Socket,event:string) {
-  return new Promise<any>((resolve,reject)=>{const timer=setTimeout(()=>reject(new Error(`${event} timeout`)),5000);connection.once(event,value=>{clearTimeout(timer);resolve(value);});});
+function once(connection:Socket,event:string,matches:(value:any)=>boolean=()=>true) {
+  return new Promise<any>((resolve,reject)=>{
+    const listener=(value:any)=>{if(matches(value)){clearTimeout(timer);connection.off(event,listener);resolve(value);}};
+    const timer=setTimeout(()=>{connection.off(event,listener);reject(new Error(event+' timeout'));},5000);
+    connection.on(event,listener);
+  });
 }
+
 before(async()=>{
-  if(process.env.TEST_DATABASE_RESET!=='true'||!process.env.DATABASE_URL?.includes('taxi_test'))throw new Error('Use a disposable taxi_test database and TEST_DATABASE_RESET=true');
   await db.$executeRawUnsafe('TRUNCATE TABLE "AdminAudit", "AdminCredential", "Banner", "MediaAsset", "FoodStatusHistory", "FoodOrder", "FoodRestaurant", "PushJob", "PushToken", "RateLimit", "SmsChallenge", "RefreshSession", "Rating", "Message", "StatusHistory", "OrderOffer", "LedgerEntry", "Order", "Quote", "Vehicle", "DriverProfile", "Tariff", "User" CASCADE');
   for(const [sortOrder,restaurant] of DEMO_FOOD_RESTAURANTS.entries())await db.foodRestaurant.create({data:{id:restaurant.id,catalog:JSON.parse(JSON.stringify(restaurant)),active:true,isDemo:true,sortOrder}});
   await db.tariff.create({data:{id:'economy',name:'Эконом',description:'Тестовый тариф',basePrice:60,pricePerKm:14,pricePerMinute:2,minimumPrice:100,commissionBps:1000}});
@@ -77,6 +83,14 @@ before(async()=>{
   await setOnline(driver1);await setOnline(driver2);
 });
 after(async()=>{for(const connection of sockets)connection.disconnect();await app?.close();await db.$disconnect();});
+
+beforeEach(async()=>{
+  // These independent scenarios reuse the same synthetic accounts in seconds.
+  // Reset their windows between scenarios; production limits and all repeated
+  // requests inside each scenario (including the explicit OTP429) stay intact.
+  const ids=[client?.user.id,client2?.user.id,driver1?.user.id,driver2?.user.id,admin?.user.id].filter(Boolean);
+  await db.rateLimit.deleteMany({where:{OR:[...ids.map(id=>({key:{endsWith:`:${id}`}})),{key:{contains:'+996700'}},{key:{in:['sms:ip:127.0.0.1','verify:ip:127.0.0.1','refresh:127.0.0.1']}}]}});
+});
 
 test('DTOs reject client price, role escalation and malformed nested route',async()=>{
   await api.patch('/api/users/me').set(headers(client)).send({role:'ADMIN'}).expect(400);
@@ -133,6 +147,21 @@ test('avatar upload is driver-only, validates bytes and serves versioned public 
   const replaced=await api.post('/api/users/me/avatar').set(headers(driver1)).attach('avatar',pngAvatar,{filename:'avatar.png',contentType:'image/png'}).expect(201);
   assert.notEqual(replaced.body.photoUrl,uploaded.body.photoUrl);
 });
+test('a refreshed push token replaces the oldest device when the account has reached its limit',async()=>{
+  const tokens=Array.from({length:10},(_,index)=>`ExponentPushToken[old-device-${index}]`);
+  for(const [index,token] of tokens.entries()) {
+    await db.pushToken.create({data:{userId:driver1.user.id,token,platform:'android'}});
+    await db.pushToken.update({where:{token},data:{updatedAt:new Date(Date.now()-(10-index)*60000)}});
+  }
+  const replacement='ExponentPushToken[current-device]';
+  await api.post('/api/users/me/push-token').set(headers(driver1)).send({token:replacement,platform:'android'}).expect(201);
+  const registered=await db.pushToken.findMany({where:{userId:driver1.user.id},select:{token:true}});
+  assert.equal(registered.length,10);
+  assert.equal(registered.some(item=>item.token===tokens[0]),false);
+  assert.equal(registered.some(item=>item.token===replacement),true);
+  await api.post('/api/users/me/push-token').set(headers(driver1)).send({token:replacement,platform:'android'}).expect(201);
+  assert.equal(await db.pushToken.count({where:{userId:driver1.user.id}}),10);
+});
 test('legacy self-registration is closed; an approved truck driver receives only truck deliveries',async()=>{
   const legacyApplicant=await login('+996700444444');
   await api.post('/api/driver/register').set(headers(legacyApplicant)).expect(410);
@@ -188,16 +217,22 @@ test('an operational approved role can be activated while another role remains u
   assert.equal(activationPush.orderId,null);
   assert.deepEqual(activationPush.payload,{applicationId:activated.application.id});
 });
-test('additional vehicle slots survive correction replacement, expiry patch and resubmit',async()=>{
+test('legacy taxi/courier additional vehicle slots survive correction replacement, expiry patch and resubmit',async()=>{
   const applicant=client;
+  const configuration=(await api.get('/api/driver/registration/config').set(headers(applicant)).expect(200)).body;
+  assert.ok(configuration.cities.length,'the fixture requires an advertised active work city');
   const vehicle={ownership:'OWN',brand:'Toyota',model:'Prius',year:'2022',color:'Белый',plateNumber:'01 556 ABC',tariffs:['ECONOMY']};
   const extra={...vehicle,clientId:'v-second',usage:'TAXI',plateNumber:'01 557 ABC',equipment:{loadingTypes:[]}};
   const data={
-    personal:{firstName:'Асан',lastName:'Ибраев',birthDate:'10.03.1990',city:'Бишкек'},
+    personal:{firstName:'Асан',lastName:'Ибраев',birthDate:'10.03.1990',city:configuration.cities[0]},
     identity:{number:'ID-556',issuedAt:'01.01.2020',expiresAt:'01.01.2030',issuedBy:'МКК'},
-    driverLicense:{number:'DL-556',categories:['B'],expiresAt:'01.01.2030'},taxiVehicle:vehicle,vehicles:[extra],documentExpiries:{},
+    driverLicense:{number:'DL-556',categories:['B'],expiresAt:'01.01.2030'},taxiVehicle:vehicle,vehicles:[extra],documentExpiries:{},courier:{transportModes:['BICYCLE']},
   };
-  const patched=(await api.patch('/api/driver/registration').set(headers(applicant)).send({version:0,roles:['TAXI_DRIVER'],data}).expect(200)).body.application;
+  // Current taxi-only onboarding requires photos. The retained legacy courier
+  // contract exercises insurance expiry/correction without reviving that
+  // requirement for new taxi-only applicants.
+  const roles=['TAXI_DRIVER','COURIER'] as const;
+  const patched=(await api.patch('/api/driver/registration').set(headers(applicant)).send({version:0,roles,data}).expect(200)).body.application;
   assert.equal(patched.data.vehicles[0].clientId,'v-second');
   assert.equal(patched.config,undefined);
   assert.equal((await api.get('/api/driver/registration/config').set(headers(applicant)).expect(200)).body.upload.maxFiles,128);
@@ -219,7 +254,7 @@ test('additional vehicle slots survive correction replacement, expiry patch and 
   const withExpiry=(await api.patch('/api/driver/registration').set(headers(applicant)).send({version:patched.version,data:{documentExpiries:{[slot]:'01.01.2031'}}}).expect(200)).body.application;
   assert.equal(withExpiry.data.documentExpiries[slot],'01.01.2031');
 
-  for(const spec of registrationUploadSlotSpecs(['TAXI_DRIVER'],data)) {
+  for(const spec of registrationUploadSlotSpecs(roles,data)) {
     if(spec.slotKey===slot)continue;
     const bytes=spec.kind==='PROFILE_PHOTO'||spec.kind==='VEHICLE_PHOTO'?pngAvatar:Buffer.from(`%PDF-1.4 ${spec.slotKey}`),mimeType=spec.kind==='PROFILE_PHOTO'||spec.kind==='VEHICLE_PHOTO'?'image/png':'application/pdf';
     await db.performerUpload.upsert({where:{applicationId_slotKey:{applicationId:stored.id,slotKey:spec.slotKey}},create:{applicationId:stored.id,slotKey:spec.slotKey,kind:spec.kind,role:spec.role,status:'APPROVED',mimeType,byteSize:bytes.length,checksum:createHash('sha256').update(bytes).digest('hex'),data:bytes,...(registrationUploadRequiresExpiry(spec.slotKey)?{expiresAt:new Date('2030-01-01T23:59:59.999Z')}:{})},update:{status:'APPROVED'}});
@@ -290,7 +325,8 @@ test('driver tracking is scoped to the assigned passenger, rejects replay and en
   const cancelled=await create(); await api.post(`/api/orders/${cancelled.id}/accept`).set(headers(driver1)).expect(201);
   await api.patch(`/api/orders/${cancelled.id}/driver-location`).set(headers(driver1)).send({...fix,timestamp:Date.now()}).expect(200);
   await api.post(`/api/orders/${cancelled.id}/cancel`).set(headers(driver1)).expect(201);
-  await api.post(`/api/orders/${cancelled.id}/accept`).set(headers(driver2)).expect(201);
+  await api.post(`/api/orders/${cancelled.id}/accept`).set(headers(driver2)).expect(409);
+  assert.equal((await db.order.findUniqueOrThrow({where:{id:cancelled.id}})).status,'CANCELLED');
   assert.equal((await api.get(`/api/orders/${cancelled.id}/driver-location`).set(headers(client)).expect(200)).body.location,null);
   await api.patch(`/api/orders/${cancelled.id}/driver-location`).set(headers(driver1)).send({...fix,timestamp:Date.now()}).expect(403);
   await api.post(`/api/orders/${cancelled.id}/cancel`).set(headers(client)).expect(201);
@@ -302,24 +338,27 @@ test('concurrent creation offers only the nearest driver and accepts only that d
   requests.forEach(response=>assert.equal(response.status,201));
   assert.equal(new Set(requests.map(response=>response.body.id)).size,1);
   const order=requests[0].body;
+  try{
   const secondQuote=await quoted(client);
   await api.post('/api/orders').set(headers(client)).send({quoteId:secondQuote.id,idempotencyKey:randomUUID()}).expect(409);
   const offers=(await api.get('/api/driver/offers').set(headers(driver1)).expect(200)).body;
   assert.equal(offers[0].id,order.id);assert.equal(offers[0].client,undefined);
   assert.equal((await api.get('/api/driver/offers').set(headers(driver2)).expect(200)).body.length,0);
   const accepted=await Promise.all([driver1,driver2].map(driver=>api.post(`/api/orders/${order.id}/accept`).set(headers(driver))));
-  assert.deepEqual(accepted.map(response=>response.status).sort(),[201,409]);
-  const acceptedOrder=accepted.find(response=>response.status===201)!.body;
+  assert.equal(accepted[0].status,201,'only the offered nearest driver can accept');
+  assert.ok([403,409].includes(accepted[1].status),'unoffered driver is forbidden before assignment or conflicts after it');
+  assert.equal(accepted[1].body.message,accepted[1].status===403?'Предложение истекло или заказ не был предложен вам':'Этот заказ уже недоступен');
+  const acceptedOrder=accepted[0].body;
   assert.equal(acceptedOrder.price,quote.price);
-  const winner=accepted[0].status===201?driver1:driver2;
-  assert.equal((await db.order.findUniqueOrThrow({where:{id:order.id}})).driverId,winner.user.id);
+  assert.equal((await db.order.findUniqueOrThrow({where:{id:order.id}})).driverId,driver1.user.id);
   const pushJobs=await db.pushJob.findMany({where:{orderId:order.id},select:{userId:true,event:true}});
-  assert.equal(pushJobs.filter(job=>job.userId===client.user.id&&job.event==='order:created').length,1);
+  assert.equal(pushJobs.filter(job=>job.userId===client.user.id&&job.event==='order:created').length,0);
+  assert.equal(pushJobs.some(job=>job.event==='order:updated'),false);
   assert.deepEqual(pushJobs.filter(job=>job.event==='order:offer').map(job=>job.userId),[driver1.user.id]);
   assert.deepEqual(pushJobs.filter(job=>job.event==='order:assigned'),[{userId:client.user.id,event:'order:assigned'}]);
   await api.get(`/api/orders/${order.id}`).set(headers(client2)).expect(403);
   await api.get(`/api/orders/${order.id}/messages`).set(headers(client2)).expect(403);
-  await api.post(`/api/orders/${order.id}/cancel`).set(headers(client)).expect(201);
+  }finally{await api.post(`/api/orders/${order.id}/cancel`).set(headers(client)).expect(201);}
 });
 test('skip and 30-second expiry hand the order to the next driver without reoffering',async()=>{
   await setOnline(driver1);await setOnline(driver2);
@@ -366,23 +405,146 @@ test('higher-rated driver wins when both online drivers are within 250 metres of
 test('one driver cannot accept two different client orders concurrently',async()=>{
   await setOnline(driver1);
   const [one,two]=await Promise.all([create(client),create(client2)]);
+  // Preserve the assignment race for historical duplicate offers. New dispatch
+  // must never create this state, but old outstanding offers can still exist.
+  for(const order of [one,two])await db.orderOffer.upsert({where:{orderId_driverId:{orderId:order.id,driverId:driver1.user.id}},update:{skipped:false,expiresAt:new Date(Date.now()+30000)},create:{orderId:order.id,driverId:driver1.user.id,expiresAt:new Date(Date.now()+30000)}});
   const results=await Promise.all([one,two].map(order=>api.post(`/api/orders/${order.id}/accept`).set(headers(driver1))));
   assert.deepEqual(results.map(response=>response.status).sort(),[201,409]);
   await api.post(`/api/orders/${one.id}/cancel`).set(headers(client)).expect(201);
   await api.post(`/api/orders/${two.id}/cancel`).set(headers(client2)).expect(201);
 });
-test('driver cancellation returns to search; client cancellation is permanent',async()=>{
+
+test('concurrent different orders and dispatch ticks reserve distinct drivers; completed historical offers release them',async()=>{
+  await setOnline(driver1);await setOnline(driver2);
+  const [one,two]=await Promise.all([create(client),create(client2)]),orders=app.get(OrdersService);
+  await Promise.all(Array.from({length:6},(_,index)=>orders.dispatchOrder(index%2?one.id:two.id)));
+  const live=await db.orderOffer.findMany({where:{orderId:{in:[one.id,two.id]},skipped:false,expiresAt:{gt:new Date()},order:{status:'SEARCHING'}},orderBy:{createdAt:'asc'}});
+  assert.equal(live.length,2);assert.equal(new Set(live.map(offer=>offer.driverId)).size,2);
+  assert.equal(live[0].driverId,driver1.user.id,'first free candidate retains nearest-driver ranking');
+  const near=live.find(offer=>offer.driverId===driver1.user.id)!,far=live.find(offer=>offer.driverId===driver2.user.id)!;
+  const owner=near.orderId===one.id?client:client2,otherOwner=far.orderId===one.id?client:client2;
+  const racing=await Promise.all([api.post(`/api/orders/${near.orderId}/accept`).set(headers(driver1)),orders.dispatchOrder(far.orderId),orders.dispatchOrder(near.orderId)]);
+  assert.equal(racing[0].status,201);
+  for(const stage of ['arrive','start','complete'])await api.post(`/api/orders/${near.orderId}/${stage}`).set(headers(driver1)).expect(201);
+  const historical=await db.orderOffer.findUniqueOrThrow({where:{id:near.id}});
+  assert.equal(historical.skipped,false);assert.ok(historical.expiresAt.getTime()>Date.now());
+  const next=await create(owner);
+  assert.equal((await db.orderOffer.findMany({where:{orderId:next.id,skipped:false}}))[0].driverId,driver1.user.id,'a completed order cannot keep reserving its driver');
+  assert.equal(await db.orderOffer.count({where:{driverId:driver1.user.id,skipped:false,expiresAt:{gt:new Date()},order:{status:'SEARCHING'}}}),1);
+  await api.post(`/api/orders/${next.id}/cancel`).set(headers(owner)).expect(201);
+  await api.post(`/api/orders/${far.orderId}/cancel`).set(headers(otherOwner)).expect(201);
+});
+
+test('foreign reservations wait only to own deadline; skip and expiry release supply without renewal',async()=>{
+  await setOnline(driver1);await setOnline(driver2);
+  const passenger=await login('+996700123479'),orders=app.get(OrdersService);
+  const [one,two]=await Promise.all([create(client),create(client2)]);
+  await Promise.all([orders.dispatchOrder(one.id),orders.dispatchOrder(two.id)]);
+  const live=await db.orderOffer.findMany({where:{orderId:{in:[one.id,two.id]},skipped:false,expiresAt:{gt:new Date()}}});
+  assert.equal(live.length,2);assert.equal(new Set(live.map(offer=>offer.driverId)).size,2);
+  const waiting=await create(passenger),before=await db.order.findUniqueOrThrow({where:{id:waiting.id}});
+  await orders.dispatchOrder(waiting.id);
+  assert.equal((await db.order.findUniqueOrThrow({where:{id:waiting.id}})).status,'SEARCHING');
+  assert.equal(await db.orderOffer.count({where:{orderId:waiting.id}}),0);
+  const deadline=new Date(Date.now()-1000);
+  await db.order.update({where:{id:waiting.id},data:{searchExpiresAt:deadline}});
+  for(let attempt=0;attempt<3;attempt++){
+    await db.orderOffer.updateMany({where:{orderId:{in:[one.id,two.id]}},data:{expiresAt:new Date(Date.now()+60000*(attempt+1))}});
+    await orders.dispatchOrder(waiting.id);
+    const row=await db.order.findUniqueOrThrow({where:{id:waiting.id}});
+    assert.equal(row.status,'NO_DRIVER');assert.equal(row.searchExpiresAt.getTime(),deadline.getTime(),'foreign renewal cannot reset an expired own deadline');
+  }
+  assert.ok(before.searchExpiresAt.getTime()>deadline.getTime());
+  assert.equal(await db.statusHistory.count({where:{orderId:waiting.id,status:'NO_DRIVER'}}),1);
+  const next=await create(passenger),near=live.find(offer=>offer.driverId===driver1.user.id)!,far=live.find(offer=>offer.driverId===driver2.user.id)!;
+  const nearOwner=near.orderId===one.id?client:client2,farOwner=far.orderId===one.id?client:client2;
+  await api.post(`/api/orders/${near.orderId}/skip`).set(headers(driver1)).expect(201);
+  await orders.dispatchOrder(next.id);
+  assert.equal((await db.orderOffer.findMany({where:{orderId:next.id,skipped:false}}))[0].driverId,driver1.user.id,'skipped foreign offer releases the nearest driver');
+  await api.post(`/api/orders/${near.orderId}/cancel`).set(headers(nearOwner)).expect(201);
+  await db.orderOffer.update({where:{id:far.id},data:{expiresAt:new Date(Date.now()-1000)}});
+  const fourth=await create(nearOwner);
+  assert.equal((await db.orderOffer.findMany({where:{orderId:fourth.id,skipped:false}}))[0].driverId,driver2.user.id,'expired foreign offer releases the other driver');
+  await api.post(`/api/orders/${next.id}/cancel`).set(headers(passenger)).expect(201);
+  await api.post(`/api/orders/${far.orderId}/cancel`).set(headers(farOwner)).expect(201);
+  await api.post(`/api/orders/${fourth.id}/cancel`).set(headers(nearOwner)).expect(201);
+});
+
+test('expired previous offer skips a contended nearest profile and still reserves another eligible driver',async()=>{
+  await setOnline(driver1);await setOnline(driver2);
+  const order=await create(),orders=app.get(OrdersService),past=new Date(Date.now()-1000);
+  await db.orderOffer.updateMany({where:{orderId:order.id},data:{expiresAt:past}});
+  await db.order.update({where:{id:order.id},data:{searchExpiresAt:past}});
+  const third=await db.user.create({data:{phone:'+996700333339',name:'Dispatch lock fixture',role:'DRIVER'}});
+  await db.driverProfile.create({data:{userId:third.id,verified:true,online:true,deposit:1000,locationLatitude:pickup.latitude,locationLongitude:74.6300,locationAccuracyM:8,locationMeasuredAt:new Date(),vehicle:{create:{make:'Fixture Toyota',color:'White',plate:third.id}}}});
+  let release!:()=>void,acquired!:()=>void;
+  const unlocked=new Promise<void>(resolve=>{release=resolve;}),ready=new Promise<void>(resolve=>{acquired=resolve;});
+  const holder=db.$transaction(async tx=>{await tx.$queryRaw`SELECT "userId" FROM "DriverProfile" WHERE "userId"=${driver2.user.id}::uuid FOR UPDATE`;acquired();await unlocked;},{timeout:10000});
+  await ready;
+  try{
+    const beforeDispatch=Date.now();
+    await orders.dispatchOrder(order.id);
+    const afterDispatch=Date.now();
+    const current=await db.order.findUniqueOrThrow({where:{id:order.id}});assert.equal(current.status,'SEARCHING');
+    const live=await db.orderOffer.findMany({where:{orderId:order.id,skipped:false,expiresAt:{gt:new Date()}}});
+    assert.equal(live.length,1);assert.equal(live[0].driverId,third.id);
+    assert.ok(live[0].expiresAt.getTime()>=beforeDispatch+30000&&live[0].expiresAt.getTime()<=afterDispatch+30000);
+  }finally{release();await holder;await api.post(`/api/orders/${order.id}/cancel`).set(headers(client)).expect(201);await db.driverProfile.update({where:{userId:third.id},data:{online:false}});}
+});
+
+test('leftover verified profiles do not reserve offers after their user changes role or is deleted',async()=>{
+  await setOnline(driver1);await setOnline(driver2);
+  for(const revoked of [{role:'CLIENT' as const},{deletedAt:new Date()}]){
+    await db.user.update({where:{id:driver1.user.id},data:revoked});
+    let order:any;
+    try{
+      order=await create();
+      const offers=await db.orderOffer.findMany({where:{orderId:order.id,skipped:false}});
+      assert.equal(offers.length,1);assert.equal(offers[0].driverId,driver2.user.id);
+    }finally{await db.user.update({where:{id:driver1.user.id},data:{role:'DRIVER',deletedAt:null}});if(order)await api.post(`/api/orders/${order.id}/cancel`).set(headers(client)).expect(201);}
+  }
+});
+test('driver cancellation is permanent and releases the assignment without redispatch',async()=>{
   await setOnline(driver1);await setOnline(driver2);const order=await create();
   await api.post(`/api/orders/${order.id}/accept`).set(headers(driver1)).expect(201);
   await api.post(`/api/orders/${order.id}/messages`).set(headers(driver1)).send({text:'Сообщение предыдущего водителя',clientMessageId:randomUUID()}).expect(201);
   const cancelled=(await api.post(`/api/orders/${order.id}/cancel`).set(headers(driver1)).expect(201)).body;
-  assert.equal(cancelled.status,'SEARCHING');assert.equal(cancelled.driver,null);
-  await api.post(`/api/orders/${order.id}/accept`).set(headers(driver1)).expect(403);
-  await api.post(`/api/orders/${order.id}/accept`).set(headers(driver2)).expect(201);
-  await api.get(`/api/orders/${order.id}/messages`).set(headers(driver1)).expect(403);
-  assert.equal((await api.get(`/api/orders/${order.id}/messages`).set(headers(driver2))).body.length,0);
-  await api.post(`/api/orders/${order.id}/cancel`).set(headers(client)).expect(201);
+  assert.equal(cancelled.status,'CANCELLED');assert.equal(cancelled.driver.id,driver1.user.id);
+  assert.equal((await api.get(`/api/orders/${order.id}`).set(headers(client)).expect(200)).body.status,'CANCELLED');
+  await api.post(`/api/orders/${order.id}/accept`).set(headers(driver2)).expect(409);
+  await api.get(`/api/orders/${order.id}/messages`).set(headers(driver2)).expect(403);
+  for(const session of [client,driver1]) {
+    assert.equal((await api.get('/api/orders/active').set(headers(session)).expect(200)).body,null);
+    assert.equal((await api.post(`/api/orders/${order.id}/cancel`).set(headers(session)).expect(201)).body.status,'CANCELLED');
+  }
+  await app.get(OrdersService).dispatchOrder(order.id);
+  assert.equal((await db.order.findUniqueOrThrow({where:{id:order.id}})).status,'CANCELLED');
+  assert.equal(await db.statusHistory.count({where:{orderId:order.id,status:'CANCELLED'}}),1);
+  assert.equal(await db.orderOffer.count({where:{orderId:order.id,skipped:false}}),0);
+  assert.equal((await api.get('/api/driver/offers').set(headers(driver2)).expect(200)).body.some((offer:any)=>offer.id===order.id),false);
   await api.post(`/api/orders/${order.id}/accept`).set(headers(driver1)).expect(409);
+});
+test('started trip cancellation is driver-only, notifies the client and charges no commission',async()=>{
+  await setOnline(driver1);await setOnline(driver2);
+  const order=await create();
+  await api.post(`/api/orders/${order.id}/accept`).set(headers(driver1)).expect(201);
+  await api.post(`/api/orders/${order.id}/arrive`).set(headers(driver1)).expect(201);
+  await api.post(`/api/orders/${order.id}/start`).set(headers(driver1)).expect(201);
+  await api.post(`/api/orders/${order.id}/cancel`).set(headers(client)).expect(400);
+  await api.post(`/api/orders/${order.id}/cancel`).set(headers(driver2)).expect(403);
+  const before=await db.driverProfile.findUniqueOrThrow({where:{userId:driver1.user.id}});
+  const riderSocket=await socket(client),driverSocket=await socket(driver1);
+  const riderUpdate=once(riderSocket,'order:updated',value=>value.id===order.id&&value.status==='CANCELLED'),driverUpdate=once(driverSocket,'order:updated',value=>value.id===order.id&&value.status==='CANCELLED');
+  const results=await Promise.all(Array.from({length:3},()=>api.post(`/api/orders/${order.id}/cancel`).set(headers(driver1))));
+  results.forEach(response=>{assert.equal(response.status,201);assert.equal(response.body.status,'CANCELLED');});
+  assert.equal((await riderUpdate).status,'CANCELLED');assert.equal((await driverUpdate).status,'CANCELLED');
+  assert.equal(await db.statusHistory.count({where:{orderId:order.id,status:'CANCELLED',actorId:driver1.user.id,reason:'DRIVER_CANCELLED'}}),1);
+  assert.equal(await db.ledgerEntry.count({where:{orderId:order.id,kind:'COMMISSION'}}),0);
+  assert.equal((await db.driverProfile.findUniqueOrThrow({where:{userId:driver1.user.id}})).deposit,before.deposit);
+  await api.post(`/api/orders/${order.id}/complete`).set(headers(driver1)).expect(400);
+  const next=await create();
+  await api.post(`/api/orders/${next.id}/accept`).set(headers(driver1)).expect(201);
+  await api.post(`/api/orders/${next.id}/cancel`).set(headers(client)).expect(201);
 });
 test('arrival, coming, chat, restoration, cash income and idempotent commission',async()=>{
   await setOnline(driver1);const order=await create();await api.post(`/api/orders/${order.id}/accept`).set(headers(driver1)).expect(201);
@@ -401,19 +563,44 @@ test('arrival, coming, chat, restoration, cash income and idempotent commission'
   assert.equal((await messageEvent).text,'Сейчас выйду');
   await api.post(`/api/orders/${order.id}/messages`).set(headers(client)).send({text:'Сейчас выйду',clientMessageId:chatId}).expect(201);
   assert.equal(await db.message.count({where:{orderId:order.id}}),1);
-  const replyEvent=once(riderSocket,'chat:message');
-  await api.post(`/api/orders/${order.id}/messages`).set(headers(driver1)).send({text:'Жду у входа',clientMessageId:randomUUID()}).expect(201);
+  const replyId=randomUUID();
+  const replyEvent=once(riderSocket,'chat:message',message=>message.clientMessageId===replyId);
+  await api.post(`/api/orders/${order.id}/messages`).set(headers(driver1)).send({text:'Жду у входа',clientMessageId:replyId}).expect(201);
   assert.equal((await replyEvent).text,'Жду у входа');
   assert.deepEqual((await db.pushJob.findMany({where:{orderId:order.id,event:'chat:message'},select:{userId:true}})).map(job=>job.userId).sort(),[client.user.id,driver1.user.id].sort());
+  const chatPhoto=await sharp({create:{width:32,height:24,channels:3,background:'#2266bb'}}).png().toBuffer();
+  const photoId=randomUUID();const photoEvent=once(driverSocket,'chat:message',message=>message.clientMessageId===photoId);
+  const sentPhoto=await api.post(`/api/orders/${order.id}/messages/photo`).set(headers(client))
+    .field('clientMessageId',photoId).field('text','')
+    .attach('image',chatPhoto,{filename:'photo.png',contentType:'image/png'}).expect(201);
+  assert.equal(sentPhoto.body.text,'');
+  assert.match(sentPhoto.body.photoUrl,new RegExp(`^/orders/${order.id}/messages/[a-f0-9-]+/photo$`));
+  assert.equal((await photoEvent).photoUrl,sentPhoto.body.photoUrl);
+  assert.equal((await api.get(`/api/orders/${order.id}/messages`).set(headers(driver1)).expect(200)).body.at(-1).photoUrl,sentPhoto.body.photoUrl);
+  await api.get(`/api${sentPhoto.body.photoUrl}`).expect(401);
+  await api.get(`/api${sentPhoto.body.photoUrl}`).set(headers(client2)).expect(403);
+  const servedPhoto=await api.get(`/api${sentPhoto.body.photoUrl}`).set(headers(driver1)).expect(200).expect('Content-Type',/image\/webp/);
+  assert.equal((await sharp(servedPhoto.body).metadata()).format,'webp');
+  const duplicatePhoto=await api.post(`/api/orders/${order.id}/messages/photo`).set(headers(client))
+    .field('clientMessageId',photoId).field('text','')
+    .attach('image',chatPhoto,{filename:'photo.png',contentType:'image/png'}).expect(201);
+  assert.equal(duplicatePhoto.body.id,sentPhoto.body.id);
+  assert.equal(await db.message.count({where:{orderId:order.id}}),3);
   riderSocket.disconnect();const reconnected=await socket(client);
   assert.equal((await api.get('/api/orders/active').set(headers(client))).body.id,order.id);
   await api.post(`/api/orders/${order.id}/start`).set(headers(driver1)).expect(201);
+  await db.statusHistory.updateMany({where:{orderId:order.id,status:'IN_PROGRESS'},data:{createdAt:new Date(Date.now()-7*60_000)}});
   await api.post(`/api/orders/${order.id}/cancel`).set(headers(client)).expect(400);
   const before=(await api.get('/api/driver/balance').set(headers(driver1))).body;
   const completions=await Promise.all(Array.from({length:5},()=>api.post(`/api/orders/${order.id}/complete`).set(headers(driver1))));
   completions.forEach(response=>assert.equal(response.status,201));
   const after=(await api.get('/api/driver/balance').set(headers(driver1))).body;
   const stored=await db.order.findUniqueOrThrow({where:{id:order.id}});
+  const completed=(await api.get(`/api/orders/${order.id}`).set(headers(client)).expect(200)).body;
+  assert.ok(Math.abs(completed.actualDurationSeconds-420)<=2,'completed trip reports elapsed time since start');
+  assert.equal(completed.durationSeconds,order.durationSeconds,'quoted duration remains available separately');
+  const history=(await api.get('/api/orders/history?period=all').set(headers(driver1)).expect(200)).body;
+  assert.equal(history.find((entry:any)=>entry.id===order.id)?.actualDurationSeconds,completed.actualDurationSeconds);
   assert.equal(after.deposit,before.deposit-stored.commission);assert.equal(after.cashIncome,before.cashIncome+stored.price);
   assert.equal(await db.ledgerEntry.count({where:{orderId:order.id,kind:'COMMISSION'}}),1);
   assert.deepEqual((await db.pushJob.findMany({where:{orderId:order.id,event:'trip:completed'},select:{userId:true}})).map(job=>job.userId).sort(),[client.user.id,driver1.user.id].sort());
@@ -423,6 +610,50 @@ test('arrival, coming, chat, restoration, cash income and idempotent commission'
   assert.equal(await db.rating.count({where:{orderId:order.id}}),1);
   assert.equal((await api.get('/api/orders/active').set(headers(client))).body,null);
   reconnected.disconnect();driverSocket.disconnect();otherSocket.disconnect();
+});
+
+test('taxi and truck waiting policies are snapshotted and charged when the trip starts',async()=>{
+  const truck=await login('+996700444445');
+  for(const scenario of [
+    {tariffId:'economy',customer:client,driver:driver1,rate:7,delivery:false},
+    {tariffId:'delivery-truck',customer:client2,driver:truck,rate:9,delivery:true},
+  ]) {
+    const tariff=await db.tariff.findUniqueOrThrow({where:{id:scenario.tariffId}});
+    await api.patch(`/api/admin/tariffs/${scenario.tariffId}`).set(headers(admin)).send({waitingGraceMinutes:1,freeWaitingMinutes:5,waitingPricePerMinute:scenario.rate}).expect(200);
+    try {
+      await setOnline(scenario.driver);
+      const quote=(await api.post('/api/orders/quote').set(headers(scenario.customer)).send({pickup,dropoff,tariffId:scenario.tariffId}).expect(201)).body;
+      const created=(await api.post('/api/orders').set(headers(scenario.customer)).send({quoteId:quote.id,idempotencyKey:randomUUID(),...(scenario.delivery?{delivery:{goodsDescription:'Шкаф',doorToDoor:true}}:{})}).expect(201)).body;
+      assert.equal((await db.order.findUniqueOrThrow({where:{id:created.id}})).waitingPricePerMinute,scenario.rate);
+      await api.patch(`/api/admin/tariffs/${scenario.tariffId}`).set(headers(admin)).send({waitingPricePerMinute:scenario.rate+2}).expect(200);
+      await api.post(`/api/orders/${created.id}/accept`).set(headers(scenario.driver)).expect(201);
+      const arrived=(await api.post(`/api/orders/${created.id}/arrive`).set(headers(scenario.driver)).expect(201)).body;
+      assert.equal(arrived.waiting.pricePerMinute,scenario.rate);
+      await db.order.update({where:{id:created.id},data:{arrivedAt:new Date(Date.now()-7*60000-10000)}});
+      const waiting=(await api.get(`/api/orders/${created.id}`).set(headers(scenario.customer)).expect(200)).body;
+      assert.equal(waiting.waiting.phase,'PAID');
+      assert.equal(waiting.waiting.billedMinutes,2);
+      assert.equal(waiting.waiting.totalPrice,created.price+scenario.rate*2);
+      const started=(await api.post(`/api/orders/${created.id}/start`).set(headers(scenario.driver)).expect(201)).body;
+      assert.equal(started.price,created.price+scenario.rate*2);
+      assert.equal(started.waiting.charge,scenario.rate*2);
+      await api.post(`/api/orders/${created.id}/complete`).set(headers(scenario.driver)).expect(201);
+    } finally {
+      await api.patch(`/api/admin/tariffs/${scenario.tariffId}`).set(headers(admin)).send({waitingGraceMinutes:tariff.waitingGraceMinutes,freeWaitingMinutes:tariff.freeWaitingMinutes,waitingPricePerMinute:tariff.waitingPricePerMinute}).expect(200);
+      if(scenario.delivery) await setOnline(scenario.driver,false);
+    }
+  }
+});
+
+test('cancelling during paid waiting does not add a cash charge',async()=>{
+  await setOnline(driver1);
+  const created=await create();
+  await api.post(`/api/orders/${created.id}/accept`).set(headers(driver1)).expect(201);
+  await api.post(`/api/orders/${created.id}/arrive`).set(headers(driver1)).expect(201);
+  await db.order.update({where:{id:created.id},data:{arrivedAt:new Date(Date.now()-10*60000)}});
+  const cancelled=(await api.post(`/api/orders/${created.id}/cancel`).set(headers(client)).expect(201)).body;
+  assert.equal(cancelled.price,created.price);
+  assert.equal((await db.order.findUniqueOrThrow({where:{id:created.id}})).waitingCharge,0);
 });
 
 test('another passenger is saved separately from the booking client and shown to the assigned driver',async()=>{
@@ -576,6 +807,40 @@ test('food pickup has no delivery charge or courier stage; early cancellation fr
   assert.equal((await api.get('/api/food/orders/active').set(headers(client)).expect(200)).body,null);
 });
 
+test('multi-restaurant food checkout validates all carts, persists atomically and restores every active order',async()=>{
+  const data={orders:[foodBody(),{...foodBody(),restaurantId:'kfc',items:[{dishId:'chicken-burger',quantity:1,optionIds:[]}]}]};
+  const countBefore=await db.foodOrder.count();
+  await api.post('/api/food/orders/batch').send(data).expect(401);
+  await api.get('/api/food/orders/active-all').expect(401);
+  await api.post('/api/food/orders/batch').set(headers(driver1)).send(data).expect(403);
+  await api.post('/api/food/orders/batch').set(headers(client2)).send({orders:[]}).expect(400);
+  await api.post('/api/food/orders/batch').set(headers(client2)).send({orders:[{...data.orders[0],items:[{...data.orders[0].items[0],quantity:1.5}]}]}).expect(400);
+  await api.post('/api/food/orders/batch').set(headers(client2)).send({orders:[data.orders[0],{...data.orders[1],paymentMethod:'CARD'}]}).expect(400);
+  await api.post('/api/food/orders/batch').set(headers(client2)).send({orders:[data.orders[0],{...data.orders[1],items:[{dishId:'missing',quantity:1,optionIds:[]}]}]}).expect(400);
+  await api.post('/api/food/orders/batch').set(headers(client2)).send({orders:[data.orders[0],{...data.orders[1],restaurantId:'missing'}]}).expect(404);
+  await api.post('/api/food/orders/batch').set(headers(client2)).send({orders:[data.orders[0],{...data.orders[0],requestId:randomUUID()}]}).expect(400);
+  assert.equal(await db.foodOrder.count(),countBefore);
+  const responses=await Promise.all(Array.from({length:5},()=>api.post('/api/food/orders/batch').set(headers(client2)).send(data)));
+  assert.ok(responses.every(response=>response.status===201),JSON.stringify(responses.map(response=>response.body)));
+  const created=responses[0].body;
+  assert.equal(created.orders.length,2);assert.equal(created.total,1430);assert.equal(created.currency,'KGS');
+  for(const response of responses)assert.deepEqual(response.body.orders.map((item:any)=>item.id),created.orders.map((item:any)=>item.id));
+  assert.equal(await db.foodOrder.count(),countBefore+2);
+  for(const order of created.orders)assert.equal(await db.foodStatusHistory.count({where:{orderId:order.id}}),1);
+  const active=(await api.get('/api/food/orders/active-all').set(headers(client2)).expect(200)).body;
+  assert.deepEqual(active.map((item:any)=>item.id).sort(),created.orders.map((item:any)=>item.id).sort());
+  assert.deepEqual((await api.get('/api/food/orders/active-all').set(headers(client)).expect(200)).body,[]);
+  await api.post('/api/food/orders/batch').set(headers(client2)).send({orders:[data.orders[0]]}).expect(409);
+  await api.post('/api/food/orders/batch').set(headers(client2)).send({orders:[data.orders[0],{...data.orders[1],address:'ул. Киевская, 125'}]}).expect(409);
+  await api.post('/api/food/orders/batch').set(headers(client2)).send({orders:data.orders.map(item=>({...item,requestId:randomUUID()}))}).expect(409);
+  await api.post(`/api/food/orders/${created.orders[0].id}/cancel`).set(headers(client2)).expect(201);
+  assert.equal((await api.get('/api/food/orders/active-all').set(headers(client2)).expect(200)).body.length,1);
+  await api.post(`/api/food/orders/${created.orders[1].id}/cancel`).set(headers(client2)).expect(201);
+  assert.deepEqual((await api.get('/api/food/orders/active-all').set(headers(client2)).expect(200)).body,[]);
+  const retried=(await api.post('/api/food/orders/batch').set(headers(client2)).send({orders:data.orders.toReversed()}).expect(201)).body;
+  assert.deepEqual(retried.orders.map((item:any)=>item.id),created.orders.map((item:any)=>item.id).reverse());
+});
+
 test('admin reads and mutations reject clients/drivers; SMS cannot authenticate any ADMIN account',async()=>{
   for(const path of ['/api/admin/me','/api/admin/dashboard','/api/admin/orders','/api/admin/tariffs','/api/admin/drivers','/api/admin/audit','/api/admin/restaurants','/api/admin/banners']) {
     await api.get(path).expect(401);
@@ -604,8 +869,10 @@ test('in-flight taxi and food requests recheck client role after acquiring the u
 test('admin tariff changes alter new quotes, retain prior fare and broadcast to authorized sockets',async()=>{
   const before=await quoted(client),stored=await db.tariff.findUniqueOrThrow({where:{id:'economy'}});
   const adminSocket=await socket(admin),riderSocket=await socket(client);
+  try{
   let leaked=0;riderSocket.on('admin:changed',()=>{leaked++;});
-  const adminUpdate=once(adminSocket,'admin:changed'),contentUpdate=once(riderSocket,'content:changed');
+  const tariffEvent=(value:any)=>value.resource==='tariffs'&&(value.id===undefined||value.id==='economy');
+  const adminUpdate=once(adminSocket,'admin:changed',tariffEvent),contentUpdate=once(riderSocket,'content:changed',tariffEvent);
   const response=await api.patch('/api/admin/tariffs/economy').set(headers(admin)).send({basePrice:stored.basePrice+100,pricePerKm:stored.pricePerKm+10}).expect(200);
   assert.equal(response.body.basePrice,stored.basePrice+100);
   assert.equal((await adminUpdate).resource,'tariffs');assert.equal((await contentUpdate).resource,'tariffs');
@@ -614,10 +881,9 @@ test('admin tariff changes alter new quotes, retain prior fare and broadcast to 
   await api.patch('/api/admin/tariffs/economy').set(headers(client)).send({pricePerKm:0}).expect(403);
   await api.patch('/api/admin/tariffs/economy').set(headers(admin)).send({pricePerKm:-1}).expect(400);
   await api.patch('/api/admin/tariffs/economy').set(headers(admin)).send({commissionBps:10001}).expect(400);
-  await api.patch('/api/admin/tariffs/economy').set(headers(admin)).send({basePrice:stored.basePrice,pricePerKm:stored.pricePerKm}).expect(200);
   assert.equal(leaked,0);
   assert.ok(await db.adminAudit.findFirst({where:{actorId:admin.user.id,action:'tariff.update',entityId:'economy'}}));
-  adminSocket.disconnect();riderSocket.disconnect();
+  }finally{try{await api.patch('/api/admin/tariffs/economy').set(headers(admin)).send({basePrice:stored.basePrice,pricePerKm:stored.pricePerKm}).expect(200);}finally{adminSocket.disconnect();riderSocket.disconnect();}}
 });
 
 test('admin registers and edits drivers while protecting active trips and immutable deposit ledger',async()=>{

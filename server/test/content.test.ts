@@ -3,12 +3,51 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { BadRequestException, ConflictException } from '@nestjs/common';
 import sharp from 'sharp';
-import { assertBannerCapacity, contentImageUrl, detectMediaMime, MAX_MEDIA_BYTES, normalizeContentImage, validateBanner, validateRestaurantCatalog } from '../src/content-domain';
-import { DEMO_FOOD_RESTAURANTS } from '../src/food-catalog';
+import { assertBannerCapacity, contentImageUrl, detectMediaMime, MAX_MEDIA_BYTES, normalizeContentImage, validateBanner, validateBannerSelection, validateRestaurantCatalog } from '../src/content-domain';
+import { ContentService } from '../src/content';
+import { DEMO_FOOD_RESTAURANTS, upgradeLegacyDemoCatalog } from '../src/food-catalog';
 import { priceFoodOrder } from '../src/food-domain';
+import { FoodService } from '../src/food';
 
 const restaurant=()=>structuredClone(DEMO_FOOD_RESTAURANTS[0]);
 const media='/api/content/media/346aef41-b109-4a80-a2f1-b8e888173744';
+
+test('current demo menus have twenty orderable dishes with modifiers and preserve existing identities and prices',()=>{
+  const originalPrices:Record<string,number>={philadelphia:520,california:460,tempura:480,salmon:450,'chicken-burger':290,'chicken-bucket':650,plov:380,samsa:180,'ali-cheeseburger':320,'ali-combo':490};
+  for(const source of DEMO_FOOD_RESTAURANTS){
+    const catalog=validateRestaurantCatalog(source,source.id,true);
+    assert.equal(catalog.dishes.length,20);assert.equal(catalog.isDemo,true);
+    assert.equal(catalog.reviews?.length,4);
+    for(const dish of catalog.dishes){
+      if(dish.id in originalPrices)assert.equal(dish.price,originalPrices[dish.id]);
+      assert.ok(catalog.menuCategories.includes(dish.category));assert.ok(dish.imageKey);
+      assert.equal(dish.imageUrl,undefined,'bundled image keys replace remote demo photographs');
+      assert.ok(dish.optionGroups?.length);assert.ok(dish.defaultOptionIds?.length);
+      assert.doesNotThrow(()=>priceFoodOrder(catalog,[{dishId:dish.id,quantity:1,optionIds:dish.defaultOptionIds??[]}],'DELIVERY'));
+    }
+  }
+});
+test('demo seed upgrades only unchanged legacy menus and leaves real or customized restaurants intact',()=>{
+  const categories=[['Акции','Сеты','Роллы','Суши','Закуски'],['Бургеры','Курица','Закуски'],['Горячее','Выпечка'],['Бургеры','Комбо']];
+  for(const [index,source] of DEMO_FOOD_RESTAURANTS.entries()){
+    const legacy=structuredClone(source);legacy.dishes=legacy.dishes.slice(0,index===0?4:2);legacy.options=legacy.options.slice(0,index===0?3:0);legacy.menuCategories=categories[index];
+    delete legacy.reviews;
+    for(const dish of legacy.dishes){delete dish.optionGroups;delete dish.defaultOptionIds;dish.optionIds=index===0?['soy','ginger','wasabi']:[];}
+    if(index===1)legacy.dishes[0].imageKey='burger';
+    if(index===3)legacy.dishes[1].imageKey='burger';
+    const stored={id:legacy.id,isDemo:true,catalog:legacy};
+    const upgraded=upgradeLegacyDemoCatalog(stored);
+    assert.equal(upgraded?.dishes.length,20);assert.notEqual(upgraded,source);assert.equal(legacy.dishes.length,index===0?4:2);
+    assert.equal(upgradeLegacyDemoCatalog({...stored,isDemo:false}),null);
+    assert.equal(upgradeLegacyDemoCatalog({...stored,catalog:source}),null,'current menus do not need another migration');
+    const edited=structuredClone(legacy);edited.dishes[0].price++;
+    assert.equal(upgradeLegacyDemoCatalog({...stored,catalog:edited}),null,'merchant price changes are preserved');
+    const customPhoto=structuredClone(legacy);customPhoto.imageUrl='https://restaurant.example/owned-photo.jpg';
+    assert.equal(upgradeLegacyDemoCatalog({...stored,catalog:customPhoto}),null,'custom imagery is never overwritten');
+    const normalized=validateRestaurantCatalog(legacy,legacy.id,true);
+    assert.equal(upgradeLegacyDemoCatalog({...stored,catalog:normalized})?.dishes.length,20,'validation-added empty image/default fields are harmless');
+  }
+});
 
 test('catalog validation accepts full menus and reconstructs bounded values with real photos',()=>{
   const source=restaurant();source.imageUrl=media;source.heroImageUrl='https://images.example.org/restaurant.jpg';
@@ -16,16 +55,67 @@ test('catalog validation accepts full menus and reconstructs bounded values with
   const catalog=validateRestaurantCatalog(source,source.id,false);
   assert.equal(catalog.isDemo,false);assert.equal(catalog.imageUrl,media);assert.equal(catalog.dishes[0].imageUrl,media);assert.equal(catalog.options[0].imageUrl,media);
   assert.notEqual(catalog,source);assert.notEqual(catalog.options,source.options);
+  assert.equal(catalog.isOpen,true,'existing published menus remain open by default');
+  assert.equal(validateRestaurantCatalog({...source,isOpen:false},source.id,false).isOpen,false,'a closed restaurant keeps its complete published menu');
+  assert.throws(()=>validateRestaurantCatalog({...source,isOpen:'false'},source.id,false),BadRequestException);
 });
 test('catalog edits reject invalid pricing, duplicate identities, orphan categories and foreign options',()=>{
   const changes:((source:ReturnType<typeof restaurant>)=>void)[]=[
-    s=>{s.dishes[0].price=-1;},s=>{s.dishes[0].price=0.5;},s=>{s.deliveryFee=Infinity;},s=>{s.rating=7;},s=>{s.etaMin=100;s.etaMax=10;},
+    s=>{s.dishes[0].price=-1;},s=>{s.dishes[0].price=0.5;},s=>{s.deliveryFee=Infinity;},s=>{s.freeDeliveryThreshold=-1;},s=>{s.rating=7;},s=>{s.etaMin=100;s.etaMax=10;},
     s=>{s.dishes[1].id=s.dishes[0].id;},s=>{s.options[1].id=s.options[0].id;},s=>{s.dishes[0].category='Нет категории';},s=>{s.options=[];},
     s=>{s.dishes[0].optionIds=['soy','soy'];},s=>{s.menuCategories.push(s.menuCategories[0]);},s=>{s.dishes[0].name='';},
   ];
   for(const change of changes){const source=restaurant();change(source);assert.throws(()=>validateRestaurantCatalog(source,source.id,false),BadRequestException);}
   const source=restaurant();assert.throws(()=>validateRestaurantCatalog({...source,role:'ADMIN'},source.id,false),BadRequestException);
   assert.throws(()=>validateRestaurantCatalog(source,'another-id',false),BadRequestException);
+});
+test('merchant dish details and variant rules survive validation and enforce scoped option pricing',()=>{
+  const source=restaurant(),dish=source.dishes[0];
+  Object.assign(dish,{originalPrice:600,ingredients:'  Рис, лосось, сливочный сыр  ',calories:720,badge:'  Запечённое  ',ratingPercent:94,reviewCount:18,
+    nutritionPer100g:{calories:218,protein:9.5,fat:11,carbohydrates:22,estimated:false},
+    optionGroups:[{id:'sauce',name:'Выберите соус',optionIds:['soy','ginger'],minSelected:1,maxSelected:1}],defaultOptionIds:['soy']});
+  Object.assign(source.options[0],{price:5,priceScope:'PER_PORTION'});
+  Object.assign(source.options[2],{price:20,priceScope:'PER_ITEM'});
+  const catalog=validateRestaurantCatalog(source,source.id,false),validated=catalog.dishes[0];
+  assert.equal(validated.ingredients,'Рис, лосось, сливочный сыр');assert.equal(validated.badge,'Запечённое');
+  assert.equal(validated.originalPrice,600);assert.equal(validated.calories,720);assert.equal(validated.ratingPercent,94);assert.equal(validated.reviewCount,18);
+  assert.deepEqual(validated.nutritionPer100g,dish.nutritionPer100g);assert.notEqual(validated.nutritionPer100g,dish.nutritionPer100g);
+  assert.deepEqual(validated.optionGroups,dish.optionGroups);assert.notEqual(validated.optionGroups![0].optionIds,dish.optionGroups![0].optionIds);
+  assert.deepEqual(validated.defaultOptionIds,['soy']);assert.equal(catalog.options[2].priceScope,'PER_ITEM');
+  assert.throws(()=>priceFoodOrder(catalog,[{dishId:dish.id,quantity:2,optionIds:[]}],'DELIVERY'),BadRequestException);
+  assert.throws(()=>priceFoodOrder(catalog,[{dishId:dish.id,quantity:2,optionIds:['soy','ginger']}],'DELIVERY'),BadRequestException);
+  assert.equal(priceFoodOrder(catalog,[{dishId:dish.id,quantity:2,optionIds:['soy','wasabi']}],'DELIVERY').total,1070);
+  dish.defaultOptionIds=[];
+  assert.deepEqual(validateRestaurantCatalog(source,source.id,false).dishes[0].defaultOptionIds,[],'required variants can ask the customer to choose without preselection');
+  const plainSource=restaurant();delete plainSource.dishes[0].optionGroups;delete plainSource.dishes[0].defaultOptionIds;
+  const plain=validateRestaurantCatalog(plainSource,source.id,false);
+  assert.equal('nutritionPer100g' in plain.dishes[0],false);assert.equal('originalPrice' in plain.dishes[0],false);
+  assert.equal('optionGroups' in plain.dishes[0],false);assert.equal('priceScope' in plain.options[0],false);
+});
+test('merchant variant definitions reject foreign, repeated, contradictory and oversized selections',()=>{
+  const group={id:'sauce',name:'Соус',optionIds:['soy','ginger'],minSelected:1,maxSelected:1};
+  const invalid:Record<string,unknown>[]=[
+    {optionGroups:[{...group,optionIds:['unknown']}]},{optionGroups:[{...group,optionIds:['soy','soy']}]},{optionGroups:[{...group,optionIds:[]}]},
+    {optionGroups:[group,group]},{optionGroups:[group,{...group,id:'another'}]},
+    {optionGroups:[{...group,minSelected:2,maxSelected:1}]},{optionGroups:[{...group,maxSelected:3}]},{optionGroups:[{...group,minSelected:-1}]},
+    {optionGroups:[{...group,maxSelected:.5}]},{optionGroups:[{...group,unexpected:true}]},{optionGroups:Array(11).fill(group)},
+    {defaultOptionIds:['unknown']},{defaultOptionIds:['soy','soy']},{optionGroups:[group],defaultOptionIds:['soy','ginger']},
+  ];
+  for(const fields of invalid){const source=restaurant();Object.assign(source.dishes[0],fields);assert.throws(()=>validateRestaurantCatalog(source,source.id,false),BadRequestException);}
+  const source=restaurant();Object.assign(source.options[0],{priceScope:'PER_ORDER'});
+  assert.throws(()=>validateRestaurantCatalog(source,source.id,false),BadRequestException);
+});
+test('merchant dish metadata stays bounded and rejects invalid nutrition or invented nested properties',()=>{
+  const nutrition={calories:218,protein:9,fat:11,carbohydrates:22};
+  const invalid:Record<string,unknown>[]=[
+    {originalPrice:100},{originalPrice:1_000_001},{originalPrice:600.5},{ingredients:'x'.repeat(3001)},{badge:'x'.repeat(61)},
+    {calories:-1},{calories:100_001},{ratingPercent:101},{ratingPercent:2.5},{reviewCount:-1},{reviewCount:10_000_001},
+    {nutritionPer100g:{...nutrition,calories:Infinity}},{nutritionPer100g:{...nutrition,protein:101}},
+    {nutritionPer100g:{...nutrition,fat:-1}},{nutritionPer100g:{...nutrition,carbohydrates:NaN}},
+    {nutritionPer100g:{...nutrition,estimated:'yes'}},{nutritionPer100g:{...nutrition,unverified:true}},
+    {nutritionPer100g:{calories:218,protein:9,fat:11}},
+  ];
+  for(const fields of invalid){const source=restaurant();Object.assign(source.dishes[0],fields);assert.throws(()=>validateRestaurantCatalog(source,source.id,false),BadRequestException);}
 });
 test('existing price and photo snapshots remain intact after later menu revisions',()=>{
   const source=restaurant();source.dishes[0].imageUrl=media;source.options[0].price=10;source.options[0].imageUrl=media;
@@ -36,6 +126,80 @@ test('existing price and photo snapshots remain intact after later menu revision
   source.dishes[0].available=false;
   assert.throws(()=>priceFoodOrder(validateRestaurantCatalog(source,source.id,false),[{dishId:'philadelphia',quantity:1,optionIds:[]}],'DELIVERY'),BadRequestException);
 });
+test('admin edits and the public catalog share current photos, complete dish rules, and publication state',async()=>{
+  const current=restaurant();current.isDemo=false;
+  const rows=[
+    {id:current.id,catalog:current,isDemo:false,active:true,sortOrder:0,updatedAt:new Date('2026-10-04T10:00:00Z')},
+    {id:'draft',catalog:{...restaurant(),id:'draft',isDemo:false},isDemo:false,active:false,sortOrder:1,updatedAt:new Date('2026-10-04T10:00:00Z')},
+    {id:'demo',catalog:{...restaurant(),id:'demo'},isDemo:true,active:true,sortOrder:2,updatedAt:new Date('2026-10-04T10:00:00Z')},
+  ];
+  const foodRestaurant={
+    findMany:async({where={}}:any)=>rows.filter(row=>(where.active===undefined||row.active===where.active)&&(where.isDemo===undefined||row.isDemo===where.isDemo)),
+    findUnique:async({where}:any)=>rows.find(row=>row.id===where.id),
+    update:async({where,data}:any)=>{const row=rows.find(row=>row.id===where.id)!;Object.assign(row,data,{updatedAt:new Date(row.updatedAt.getTime()+1)});return row;},
+  };
+  const tx={foodRestaurant,$executeRaw:async()=>{}};
+  const db={foodRestaurant,$transaction:async(fn:any)=>fn(tx)};
+  const notices:string[]=[];
+  const events={adminChanged:(resource:string)=>notices.push(resource),contentChanged:(resource:string)=>notices.push(resource)};
+  const content=new ContentService(db as any,{record:async()=>{}} as any,events as any,{} as any);
+  const food=new FoodService(db as any,{development:false} as any,{} as any,{} as any,events as any);
+  const actor={id:'admin',role:'ADMIN'} as any;
+  const edited=structuredClone(current);
+  edited.name='Актуальное название';edited.imageUrl=media;edited.heroImageUrl='https://images.example.org/cover.webp';
+  Object.assign(edited.dishes[0],{price:680,imageUrl:media,heroImageUrl:'https://images.example.org/dish.webp',ingredients:'Рис, лосось',calories:700,badge:'Новинка',ratingPercent:96,reviewCount:27,
+    nutritionPer100g:{calories:215,protein:9,fat:11,carbohydrates:21,estimated:false}});
+  edited.options[0].priceScope='PER_ITEM';edited.options[0].imageUrl=media;
+  const saved=await content.saveRestaurant(actor,{catalog:edited,updatedAt:rows[0].updatedAt.toISOString()},current.id);
+  const adminRows=(await content.restaurants(actor)).items;
+  const publicCatalog=await food.catalog();
+  assert.equal(adminRows.length,3,'admin retains editable drafts and demo rows');
+  assert.deepEqual(publicCatalog.restaurants.map(item=>item.id),[current.id],'production publishes only active real restaurants');
+  const published=publicCatalog.restaurants[0];
+  assert.deepEqual(published,saved.catalog,'both views use the saved complete catalog without a separate stale copy');
+  assert.equal(published.dishes[0].price,680);assert.equal(published.dishes[0].imageUrl,media);
+  assert.deepEqual(published.dishes[0].optionGroups,edited.dishes[0].optionGroups);
+  assert.deepEqual(published.dishes[0].defaultOptionIds,edited.dishes[0].defaultOptionIds);
+  assert.equal(published.options[0].priceScope,'PER_ITEM');assert.equal(published.options[0].imageUrl,media);
+  edited.name='Unsaved draft';edited.dishes[0].price=999;
+  assert.equal((await food.catalog()).restaurants[0].name,'Актуальное название','unsaved editor changes do not mutate persisted content');
+  await content.saveRestaurant(actor,{active:false,updatedAt:saved.updatedAt.toISOString()},current.id);
+  assert.equal((await food.catalog()).restaurants.length,0);
+  assert.equal((await content.restaurants(actor)).items[0].catalog.dishes[0].price,680,'hiding keeps the current menu available to edit');
+  assert.equal(notices.length,4);
+});
+
+test('banner edits reject stale versions after another edit or display selection and accept current versions',async()=>{
+  let row={id:'ca4c35d5-2ba9-45c5-8ff1-194d3930b24a',title:'Актуальный баннер',subtitle:'Текст',imageUrl:media,imageKey:null,actionType:'FOOD',restaurantId:null,sortOrder:0,active:true,updatedAt:new Date('2026-10-04T10:00:00Z')};
+  let writes=0,audits=0,notices=0;
+  const calls:string[]=[];
+  const tx={
+    $executeRaw:async()=>{calls.push('lock');},
+    banner:{
+      findUnique:async()=>{calls.push('read');return row;},
+      count:async()=>0,
+      update:async({data}:any)=>{calls.push('write');writes++;row={...row,...data,updatedAt:new Date(row.updatedAt.getTime()+1)};return row;},
+    },
+  };
+  const service=new ContentService({$transaction:async(fn:any)=>fn(tx)} as any,{record:async()=>{audits++;}} as any,
+    {adminChanged:()=>{notices++;},contentChanged:()=>{notices++;}} as any,{} as any);
+  const actor={id:'admin',role:'ADMIN'} as any;
+  await assert.rejects(()=>service.saveBanner(actor,{title:'Устаревший текст',updatedAt:'2026-10-04T09:00:00.000Z'},row.id),ConflictException);
+  assert.deepEqual(calls,['lock','read']);assert.equal(writes,0);assert.equal(audits,0);assert.equal(notices,0);
+  const version=row.updatedAt.toISOString();
+  const saved=await service.saveBanner(actor,{title:'Новое название',updatedAt:version},row.id);
+  assert.equal(saved.title,'Новое название');assert.equal(saved.imageUrl,media);assert.equal(saved.active,true);
+  assert.equal('updatedAt' in saved,true);assert.equal(writes,1);assert.equal(audits,1);assert.equal(notices,2);
+  await assert.rejects(()=>service.saveBanner(actor,{imageUrl:'https://images.example.org/stale.webp',updatedAt:version},row.id),ConflictException);
+  const openEditorVersion=row.updatedAt.toISOString();
+  row={...row,active:false,updatedAt:new Date(row.updatedAt.getTime()+1)};
+  await assert.rejects(()=>service.saveBanner(actor,{active:true,updatedAt:openEditorVersion},row.id),ConflictException);
+  assert.equal(row.active,false,'an old editor cannot restore a banner removed from the display set');
+  assert.equal(writes,1);
+  await service.saveBanner(actor,{subtitle:'Совместимое частичное обновление'},row.id);
+  assert.equal(row.active,false,'older clients can still make partial edits without changing publication');assert.equal(writes,2);
+});
+
 test('only safe image URLs and actions can be persisted for banners',()=>{
   for(const url of ['javascript:alert(1)','data:image/svg+xml;base64,AA','//evil.example/photo.png','http://images.example.org/image.jpg','/api/users/me','https://user:pass@example.org/a'])assert.throws(()=>contentImageUrl(url),BadRequestException);
   assert.equal(contentImageUrl(media),media);assert.equal(contentImageUrl('https://images.example.org/a.webp'),'https://images.example.org/a.webp');
@@ -49,6 +213,39 @@ test('banner activation capacity allows edits and drafts while rejecting fourth 
   assert.doesNotThrow(()=>assertBannerCapacity(3,false));
   assert.throws(()=>assertBannerCapacity(3,true),ConflictException);
   assert.throws(()=>assertBannerCapacity(5,true),ConflictException);
+});
+test('banner display sets allow one wide creative, three square creatives, or hiding all banners',()=>{
+  const ids=['ca4c35d5-2ba9-45c5-8ff1-194d3930b24a','22a28d8e-3e4f-41db-aa65-ebd477e96a91','f677ec17-1e1e-43be-ba3a-d465bc0fb985'];
+  assert.deepEqual(validateBannerSelection({ids:[]}),[]);
+  assert.deepEqual(validateBannerSelection({ids:ids.slice(0,1)}),ids.slice(0,1));
+  assert.deepEqual(validateBannerSelection({ids}),ids);
+  for(const invalid of [{ids:ids.slice(0,2)},{ids:[...ids,ids[0]]},{ids:[ids[0],ids[0],ids[2]]},{ids:['not-a-uuid']},{ids,extra:true}])assert.throws(()=>validateBannerSelection(invalid),BadRequestException);
+});
+test('display selection validates all creatives before replacing the set and retains selected order',async()=>{
+  const ids=['ca4c35d5-2ba9-45c5-8ff1-194d3930b24a','22a28d8e-3e4f-41db-aa65-ebd477e96a91','f677ec17-1e1e-43be-ba3a-d465bc0fb985'];
+  const rows=ids.map((id,sortOrder)=>({id,sortOrder,active:sortOrder===0,imageUrl:'https://images.example.org/banner.webp',imageKey:null}));
+  const notices:any[]=[],audits:any[]=[];let locks=0,writes=0;
+  const tx={
+    $executeRaw:async()=>{locks++;},
+    banner:{findMany:async({where}:any)=>where?rows.filter(row=>where.id.in.includes(row.id)):rows,
+      updateMany:async()=>{writes++;rows.forEach(row=>{row.active=false;});},
+      update:async({where,data}:any)=>{writes++;Object.assign(rows.find(row=>row.id===where.id)!,data);}},
+  };
+  const service=new ContentService({$transaction:async(fn:any)=>fn(tx)} as any,{record:async(...args:any[])=>audits.push(args)} as any,
+    {adminChanged:(...args:any[])=>notices.push(args),contentChanged:(...args:any[])=>notices.push(args)} as any,{} as any);
+  const actor={id:'admin',role:'ADMIN'} as any;
+  await assert.rejects(()=>service.setBannerDisplay(actor,{ids:ids.slice(0,2)}),BadRequestException);
+  assert.equal(writes,0);
+  rows[1].imageUrl='';
+  await assert.rejects(()=>service.setBannerDisplay(actor,{ids}),BadRequestException);
+  assert.equal(writes,0,'a missing uploaded creative keeps the current set intact');
+  rows[1].imageUrl='https://images.example.org/second.webp';
+  await service.setBannerDisplay(actor,{ids:[ids[2],ids[0],ids[1]]});
+  assert.equal(rows.filter(row=>row.active).length,3);
+  assert.deepEqual(rows.map(row=>row.sortOrder),[1,2,0]);
+  assert.equal(audits.length,1);assert.equal(notices.length,2);assert.equal(locks,2);
+  await service.setBannerDisplay(actor,{ids:[ids[1]]});
+  assert.deepEqual(rows.filter(row=>row.active).map(row=>row.id),[ids[1]]);
 });
 test('uploaded photos become bounded metadata-free WebP while SVG, MIME mismatch and corrupt bytes fail',async()=>{
   const original=await sharp({create:{width:2400,height:1200,channels:3,background:'#2e8767'}}).jpeg().withMetadata().toBuffer();

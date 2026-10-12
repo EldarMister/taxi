@@ -14,6 +14,9 @@ import { detectMediaMime, normalizeContentImage } from './content-domain';
 import { isRestaurantDelivery, ordinaryClientOrders, RESTAURANT_DELIVERY_KEY, syncRestaurantFoodStatus } from './restaurant-delivery-state';
 import { serializeFoodOrder } from './food';
 import { isPushNotificationEvent } from './pushPresentation';
+import {mapUserProfile,userProfileSelect} from './user-profile';
+type HydratedOrder=Prisma.OrderGetPayload<{include:{rating:true;clientRating:true;quote:{include:{tariff:true}}}}>;
+type HistoryReadContext={orders:Map<string,HydratedOrder>;users:Map<string,ReturnType<typeof mapUserProfile>>;ratings:Map<string,number>;history:Map<string,Array<{id:string;status:OrderStatus;actorId:string|null;createdAt:Date}>>};
 
 const chatMessageFields = {id:true,orderId:true,senderId:true,clientMessageId:true,text:true,createdAt:true,imageMime:true} as const;
 function chatMessageView(row:{id:string;orderId:string;senderId:string;clientMessageId:string;text:string;createdAt:Date;imageMime:string|null}) {
@@ -82,14 +85,23 @@ export class OrdersService {
       throw new BadRequestException('Укажите корректный период истории');
     }
     const driver = actor.role === 'DRIVER';
-    const orders = await this.db.order.findMany({where:{...(driver?{driverId:actor.id}:{clientId:actor.id,...ordinaryClientOrders}),createdAt:{gte:since,...(until?{lt:until}:{})}},orderBy:{createdAt:'desc'},...(!(driver&&since&&until)?{take:100}:{})});
+    const orders = await this.db.order.findMany({where:{...(driver?{driverId:actor.id}:{clientId:actor.id,...ordinaryClientOrders}),createdAt:{gte:since,...(until?{lt:until}:{})}},orderBy:{createdAt:'desc'},include:{rating:true,clientRating:true,quote:{include:{tariff:true}}},...(!(driver&&since&&until)?{take:100}:{})});
+    const ids=orders.map(order=>order.id),userIds=[...new Set(orders.flatMap(order=>[order.clientId,...(order.driverId?[order.driverId]:[])]))];
+    const profileRows=userIds.length?await this.db.user.findMany({where:{id:{in:userIds}},select:userProfileSelect}):[];
+    const driverIds=profileRows.filter(user=>user.role==='DRIVER').map(user=>user.id),clientIds=[...new Set(orders.map(order=>order.clientId))];
+    const driverRatings=driverIds.length?await this.db.$queryRaw<Array<{id:string;score:number}>>`SELECT o."driverId" AS id,AVG(r.score)::float AS score FROM "Rating" r JOIN "Order" o ON o.id=r."orderId" WHERE o."driverId" IN (${Prisma.join(driverIds.map(id=>Prisma.sql`${id}::uuid`))}) GROUP BY o."driverId"`:[];
+    const clientRatings=clientIds.length?await this.db.$queryRaw<Array<{id:string;score:number}>>`SELECT o."clientId" AS id,AVG(r.score)::float AS score FROM "ClientRating" r JOIN "Order" o ON o.id=r."orderId" WHERE o."passengerName" IS NULL AND o."clientId" IN (${Prisma.join(clientIds.map(id=>Prisma.sql`${id}::uuid`))}) GROUP BY o."clientId"`:[];
+    const history=ids.length?await this.db.statusHistory.findMany({where:{orderId:{in:ids},status:{in:['ASSIGNED','IN_PROGRESS']}},orderBy:{createdAt:'desc'},select:{id:true,orderId:true,status:true,actorId:true,createdAt:true}}):[];
+    const ratingByDriver=new Map(driverRatings.map(row=>[row.id,row.score]));
+    const context:HistoryReadContext={orders:new Map(orders.map(order=>[order.id,order])),users:new Map(profileRows.map(user=>[user.id,mapUserProfile(user,ratingByDriver.get(user.id)??null)])),ratings:new Map(clientRatings.map(row=>[row.id,row.score])),history:new Map()};
+    for(const entry of history){const rows=context.history.get(entry.orderId)??[];rows.push(entry);context.history.set(entry.orderId,rows);}
     // The receipt is charged separately from the cash fare. Read its original
     // signed amount rather than estimating a fee from today's tariff.
     const completedIds = driver ? orders.filter(order=>order.status==='COMPLETED').map(order=>order.id) : [];
     const entries = completedIds.length ? await this.db.ledgerEntry.findMany({where:{driverId:actor.id,orderId:{in:completedIds},kind:'COMMISSION'},select:{orderId:true,amount:true}}) : [];
     const commissions = new Map(entries.map(entry=>[entry.orderId,entry.amount]));
     return Promise.all(orders.map(async order=>{
-      const snapshot = await this.serialize(order.id,false,actor.id);
+      const snapshot = await this.serialize(order.id,false,actor.id,context);
       return driver ? {...snapshot,commissionAmount:order.status==='COMPLETED'?commissions.get(order.id)??0:0} : snapshot;
     }));
   }
@@ -99,20 +111,20 @@ export class OrdersService {
     if(!order) throw new NotFoundException('Заказ не найден');
     if(order.clientId !== actor.id && order.driverId !== actor.id) throw new ForbiddenException('Нет доступа к заказу'); return order;
   }
-  async serialize(id:string,offer=false,viewerId?:string) {
-    const order = await this.db.order.findUniqueOrThrow({where:{id},include:{rating:true,clientRating:true,quote:{include:{tariff:true}}}});
+  async serialize(id:string,offer=false,viewerId?:string,context?:HistoryReadContext) {
+    const order = context?.orders.get(id)??await this.db.order.findUniqueOrThrow({where:{id},include:{rating:true,clientRating:true,quote:{include:{tariff:true}}}});
     if(viewerId&&order.clientId!==viewerId&&order.driverId!==viewerId)throw new ForbiddenException('Нет доступа к заказу');
     const assignment = !offer&&order.driverId&&ASSIGNED_STATUSES.includes(order.status)
-      ? await this.db.statusHistory.findFirst({where:{orderId:id,status:'ASSIGNED',actorId:order.driverId},orderBy:{createdAt:'desc'},select:{id:true}})
+      ? context?context.history.get(id)?.find(entry=>entry.status==='ASSIGNED'&&entry.actorId===order.driverId)??null:await this.db.statusHistory.findFirst({where:{orderId:id,status:'ASSIGNED',actorId:order.driverId},orderBy:{createdAt:'desc'},select:{id:true}})
       : null;
     const tripStart = order.status==='COMPLETED'&&order.completedAt
-      ? await this.db.statusHistory.findFirst({where:{orderId:id,status:'IN_PROGRESS'},orderBy:{createdAt:'desc'},select:{createdAt:true}})
+      ? context?context.history.get(id)?.find(entry=>entry.status==='IN_PROGRESS')??null:await this.db.statusHistory.findFirst({where:{orderId:id,status:'IN_PROGRESS'},orderBy:{createdAt:'desc'},select:{createdAt:true}})
       : null;
     const actualDurationSeconds = tripStart&&order.completedAt
       ? Math.max(0,Math.round((order.completedAt.getTime()-tripStart.createdAt.getTime())/1000)) : null;
-    const driver = !offer&&order.driverId?await this.auth.user(order.driverId):null;
-    const client = offer?undefined:await this.auth.user(order.clientId);
-    const clientRating = await this.db.clientRating.aggregate({where:{order:{clientId:order.clientId,passengerName:null}},_avg:{score:true}});
+    const driver = !offer&&order.driverId?context?.users.get(order.driverId)??await this.auth.user(order.driverId):null;
+    const client = offer?undefined:context?.users.get(order.clientId)??await this.auth.user(order.clientId);
+    const clientRating = context?{_avg:{score:context.ratings.get(order.clientId)??null}}:await this.db.clientRating.aggregate({where:{order:{clientId:order.clientId,passengerName:null}},_avg:{score:true}});
     const safeClient = client?{id:client.id,name:client.name,phone:client.phone,photoUrl:client.photoUrl,role:client.role}:undefined;
     const waiting = order.arrivedAt ? order.status==='ARRIVED'
       ? calculateWaiting(order.arrivedAt,new Date(),order)
@@ -120,22 +132,31 @@ export class OrdersService {
       : null;
     return {foodOrderId:order.foodOrderId??null,restaurantDelivery:isRestaurantDelivery(order),driverLocation:offer?null:visibleDriverLocation(order),assignmentId:assignment?.id??null,id:order.id,kind:order.kind,deliveryDetails:order.deliveryDetails,dispatchAfter:order.dispatchAfter,status:order.status,pickup:order.pickup,dropoff:order.dropoff,geometry:order.geometry,distanceMeters:order.distanceMeters,durationSeconds:order.durationSeconds,actualDurationSeconds,price:order.price,basePrice:order.price-order.waitingCharge,waiting:waiting?{...waiting,arrivedAt:order.arrivedAt,graceMinutes:order.waitingGraceMinutes,freeMinutes:order.freeWaitingMinutes,pricePerMinute:order.waitingPricePerMinute,totalPrice:order.status==='ARRIVED'?order.price+waiting.charge:order.price}:null,currency:'KGS',paymentMethod:'CASH',comment:order.comment,passenger:order.passengerName?{name:order.passengerName,phone:offer?undefined:order.passengerPhone}:null,createdAt:order.createdAt,updatedAt:order.updatedAt,searchExpiresAt:order.searchExpiresAt,completedAt:order.completedAt,driver,client:safeClient,rating:order.rating?.score??null,clientRating:clientRating._avg.score??null,driverRating:order.clientRating?.score??null,tariff:order.quote.tariff,routeProvider:order.quote.routeProvider};
   }
-  async publish(id:string,additionalUsers:string[]=[]) {
+  async publish(id:string,additionalUsers:string[]=[],confirmed=false) {
     const snapshot=await this.serialize(id);
+    const publish=async(userIds:string[],name:string,payload:unknown)=>{if(confirmed)await this.events.dispatch({userIds:[...new Set(userIds)],name,payload});else this.events.publish(userIds,name,payload);};
     const users=[...(!snapshot.restaurantDelivery?[snapshot.client?.id]:[]),snapshot.driver?.id].filter((value):value is string=>Boolean(value));
-    this.events.publish(users,'order:updated',snapshot);
+    await publish(users,'order:updated',snapshot);
     if(snapshot.foodOrderId) {
       const food=await this.db.foodOrder.findUnique({where:{id:snapshot.foodOrderId}});
       if(food) {
-        this.events.publish([food.clientId],'food:order:updated',serializeFoodOrder(food));
+        await publish([food.clientId],'food:order:updated',serializeFoodOrder(food));
         this.events.adminChanged('food-orders',food.id);
       }
     }
-    if(additionalUsers.length)this.events.publish(additionalUsers.filter(userId=>!users.includes(userId)),'order:updated',{...snapshot,status:'SEARCHING',driver:null,client:undefined});
+    if(additionalUsers.length)await publish(additionalUsers.filter(userId=>!users.includes(userId)),'order:withdrawn',{orderId:snapshot.id});
     if(snapshot.status!=='SEARCHING') {
       const offered=await this.db.orderOffer.findMany({where:{orderId:id},select:{driverId:true}});
-      this.events.publish(offered.map(offer=>offer.driverId).filter(driverId=>driverId!==snapshot.driver?.id),'order:withdrawn',{orderId:id});
+      await publish(offered.map(offer=>offer.driverId).filter(driverId=>driverId!==snapshot.driver?.id),'order:withdrawn',{orderId:id});
+    }else if(confirmed){
+      const candidates=await this.db.orderOffer.findMany({where:{orderId:id,skipped:false,expiresAt:{gt:new Date()},driver:{user:{role:'DRIVER',deletedAt:null}}},select:{driverId:true}});
+      for(const candidate of candidates){
+        const available=await this.offers({id:candidate.driverId,role:'DRIVER',sessionId:'',familyId:'',expiresAt:0});
+        const offer=available.find(item=>item.id===id);
+        if(offer)await publish([candidate.driverId],'order:offer',offer);
+      }
     }
+    if(confirmed)await this.events.dispatch({userIds:[],audience:'admin',name:'admin:changed',payload:{resource:'taxi-orders',id}});
   }
   async dispatchOrder(id:string) {
     const dispatch = await this.db.$transaction(async tx=>{
@@ -148,11 +169,25 @@ export class OrdersService {
       if(active)return {offered:null,withdrawn:[],expired:false};
       const withdrawn=existing.filter(offer=>!offer.skipped&&offer.expiresAt.getTime()<=now).map(offer=>offer.driverId);
       if(withdrawn.length)await tx.orderOffer.updateMany({where:{orderId:id,driverId:{in:withdrawn}},data:{skipped:true}});
+      const expire=async()=>{
+        await tx.order.update({where:{id},data:{status:'NO_DRIVER',history:{create:{status:'NO_DRIVER',reason:'SEARCH_TIMEOUT'}}}});
+        await syncRestaurantFoodStatus(tx,order,'NO_DRIVER');
+        if(!isRestaurantDelivery(order))await this.push(tx,[order.clientId],'order:updated',id);
+        return {offered:null as string|null,withdrawn,expired:true};
+      };
+      const retry=async()=>{
+        // Foreign reservations cannot reset or extend this order's deadline.
+        if(order.searchExpiresAt.getTime()<=Date.now())return expire();
+        return {offered:null as string|null,withdrawn,expired:false};
+      };
       const requiredClass=(await tx.quote.findUniqueOrThrow({where:{id:order.quoteId},select:{tariff:{select:{requiredClass:true}}}})).tariff.requiredClass;
-      const drivers=(await tx.driverProfile.findMany({where:{verified:true,online:true,deposit:{gte:Math.max(this.config.minimumDeposit,order.commission)},vehicle:{isNot:null},locationMeasuredAt:{gte:new Date(now-IDLE_POSITION_MAX_AGE_MS)}}})).filter(d=>driverCanTake(d,order.kind,requiredClass,isRestaurantDelivery(order)));
+      const drivers=(await tx.driverProfile.findMany({where:{verified:true,online:true,user:{role:'DRIVER',deletedAt:null},deposit:{gte:Math.max(this.config.minimumDeposit,order.commission)},vehicle:{isNot:null},locationMeasuredAt:{gte:new Date(now-IDLE_POSITION_MAX_AGE_MS)}}})).filter(d=>driverCanTake(d,order.kind,requiredClass,isRestaurantDelivery(order)));
       const busy=new Set((await tx.order.findMany({where:{driverId:{in:drivers.map(d=>d.userId)},status:{in:ACTIVE_STATUSES}},select:{driverId:true}})).map(o=>o.driverId));
       const offered=new Set(existing.map(o=>o.driverId));
-      const eligible=drivers.filter(d=>!busy.has(d.userId)&&!offered.has(d.userId));
+      const remaining=drivers.filter(d=>!offered.has(d.userId));
+      const reservations=await tx.orderOffer.findMany({where:{driverId:{in:remaining.map(d=>d.userId)},skipped:false,expiresAt:{gt:new Date(now)},order:{status:'SEARCHING'}},select:{driverId:true,expiresAt:true}});
+      const reserved=new Set(reservations.map(offer=>offer.driverId));
+      const eligible=remaining.filter(d=>!busy.has(d.userId)&&!reserved.has(d.userId));
       let ratings=new Map<string,number>();
       if(eligible.length){
         const ids=eligible.map(d=>Prisma.sql`${d.userId}::uuid`);
@@ -160,21 +195,42 @@ export class OrdersService {
         ratings=new Map(rows.map(row=>[row.driverId,row.rating]));
       }
       const pickup=order.pickup as unknown as Point;
-      const next=nextDriver(pickup,eligible,ratings,now) ?? nextDriver(pickup,eligible,ratings,now,IDLE_POSITION_MAX_AGE_MS);
-      if(next){
-        const expiresAt=new Date(now+OFFER_SECONDS*1000);
+      const candidates=[...eligible];
+      while(candidates.length){
+        const next=nextDriver(pickup,candidates,ratings,now) ?? nextDriver(pickup,candidates,ratings,now,IDLE_POSITION_MAX_AGE_MS);
+        if(!next)break;
+        candidates.splice(candidates.findIndex(driver=>driver.userId===next),1);
+        // Different order locks do not serialize selection of the same driver.
+        // A savepoint releases a rejected profile before the next ranked attempt:
+        // at most one profile is locked, always after the current Order lock.
+        await tx.$executeRawUnsafe('SAVEPOINT dispatch_candidate');
+        const locked=await tx.$queryRaw<Array<{userId:string}>>`SELECT "userId" FROM "DriverProfile" WHERE "userId"=${next}::uuid FOR UPDATE SKIP LOCKED`;
+        if(!locked.length){await tx.$executeRawUnsafe('RELEASE SAVEPOINT dispatch_candidate');continue;}
+        const current=await tx.driverProfile.findUnique({where:{userId:next},include:{vehicle:true,user:{select:{role:true,deletedAt:true}}}});
+        const checkedAt=Date.now();
+        const invalid=!current?.verified||!current.online||!current.vehicle||current.user.role!=='DRIVER'||current.user.deletedAt
+          ||current.deposit<Math.max(this.config.minimumDeposit,order.commission)||!driverCanTake(current,order.kind,requiredClass,isRestaurantDelivery(order))
+          ||!(nextDriver(pickup,[current],ratings,checkedAt)??nextDriver(pickup,[current],ratings,checkedAt,IDLE_POSITION_MAX_AGE_MS));
+        const assigned=await tx.order.findFirst({where:{driverId:next,status:{in:ACTIVE_STATUSES}},select:{id:true}});
+        const reservation=await tx.orderOffer.findFirst({where:{driverId:next,skipped:false,expiresAt:{gt:new Date(checkedAt)},order:{status:'SEARCHING'}},select:{id:true}});
+        if(invalid||assigned||reservation){
+          await tx.$executeRawUnsafe('ROLLBACK TO SAVEPOINT dispatch_candidate');
+          await tx.$executeRawUnsafe('RELEASE SAVEPOINT dispatch_candidate');
+          continue;
+        }
+        const expiresAt=new Date(checkedAt+OFFER_SECONDS*1000);
         await tx.orderOffer.create({data:{orderId:id,driverId:next,expiresAt}});
         await tx.order.update({where:{id},data:{searchExpiresAt:expiresAt}});
         await this.push(tx,[next],'order:offer',id);
+        await tx.$executeRawUnsafe('RELEASE SAVEPOINT dispatch_candidate');
         return {offered:next,withdrawn,expired:false};
       }
-      if(existing.length||order.searchExpiresAt.getTime()<=now){
-        await tx.order.update({where:{id},data:{status:'NO_DRIVER',history:{create:{status:'NO_DRIVER',reason:'SEARCH_TIMEOUT'}}}});
-        await syncRestaurantFoodStatus(tx,order,'NO_DRIVER');
-        if(!isRestaurantDelivery(order))await this.push(tx,[order.clientId],'order:updated',id);
-        return {offered:null,withdrawn,expired:true};
-      }
-      return {offered:null,withdrawn,expired:false};
+      const waiting=reservations.filter(offer=>!busy.has(offer.driverId));
+      if(waiting.length)return retry();
+      // A skipped/expired offer does not exhaust drivers that are temporarily
+      // busy on other work. Only all-tried eligible drivers are exhausted early.
+      if(existing.length&&drivers.length>0&&!remaining.length)return expire();
+      return retry();
     });
     if(dispatch.withdrawn.length)this.events.publish(dispatch.withdrawn,'order:withdrawn',{orderId:id});
     if(dispatch.expired) await this.publish(id);

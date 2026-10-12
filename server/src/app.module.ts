@@ -10,6 +10,9 @@ import { WhatsAppCloudWebhook } from './whatsapp-cloud';
 import { AppConfig } from './config';
 import { DriverService } from './driver';
 import { RealtimeEvents } from './events';
+import { OrderOutboxWorker } from './order-outbox';
+import {MetricsController} from './observability';
+import {ReadinessController,ReadinessService} from './readiness';
 import { TaxiGateway } from './gateway';
 import { AdminController, AuthController, DriverController, OrdersController, PublicController, UsersController } from './http';
 import { BackgroundJobs } from './jobs';
@@ -24,6 +27,8 @@ import { FoodService } from './food';
 import { AdminFoodController, FoodCatalogController, FoodOrdersController } from './food.http';
 import { AdminAuditService, AdminGuard } from './admin.security';
 import { AdminAuthController, AdminAuthService } from './admin.auth';
+import { AdminBrowserController, AdminBrowserService } from './admin.browser.auth';
+import { AvatarUploadGate, ChatPhotoUploadGate, RestaurantMediaUploadGate } from './media-upload-gate';
 import { AdminService } from './admin';
 import { AdminOperationsController } from './admin.http';
 import { AdminCatalogController, ContentController, ContentService } from './content';
@@ -36,5 +41,5 @@ import { RestaurantAuthGuard, RestaurantAuthService } from './restaurant-auth';
 import { RestaurantService } from './restaurant';
 import { RestaurantDeliveryService } from './restaurant-delivery';
 import { AdminRestaurantAccountsController, RestaurantAuthController, RestaurantController } from './restaurant.http';
-@Module({imports:[JwtModule.register({}),ScheduleModule.forRoot()],controllers:[WhatsAppCloudWebhook,AccountDeletionController,DriverDetailsController,AdminCitiesController,TrackingController,AuthController,UsersController,OrdersController,DriverController,RegistrationController,RegistrationAdminController,AdminController,PublicController,PlacesController,RoutesController,FoodCatalogController,FoodOrdersController,AdminFoodController,AdminAuthController,AdminOperationsController,ContentController,AdminCatalogController,RestaurantAuthController,RestaurantController,AdminRestaurantAccountsController],providers:[ProfileSelfService,CitiesService,TrackingService,PrismaService,AppConfig,OtpDelivery,OtpFallback,AuthService,AuthGuard,RateLimits,RoutingService,RoadFeaturesService,PushService,RealtimeEvents,OrdersService,DriverService,RegistrationService,RegistrationUploadGate,RegistrationAdminService,TaxiGateway,BackgroundJobs,PlacesService,FoodService,AdminAuditService,AdminGuard,AdminAuthService,AdminService,ContentService,RestaurantAuthGuard,RestaurantAuthService,RestaurantService,RestaurantDeliveryService]})
+@Module({imports:[JwtModule.register({}),ScheduleModule.forRoot()],controllers:[MetricsController,ReadinessController,AdminBrowserController,WhatsAppCloudWebhook,AccountDeletionController,DriverDetailsController,AdminCitiesController,TrackingController,AuthController,UsersController,OrdersController,DriverController,RegistrationController,RegistrationAdminController,AdminController,PublicController,PlacesController,RoutesController,FoodCatalogController,FoodOrdersController,AdminFoodController,AdminAuthController,AdminOperationsController,ContentController,AdminCatalogController,RestaurantAuthController,RestaurantController,AdminRestaurantAccountsController],providers:[ReadinessService,AdminBrowserService,AvatarUploadGate,ChatPhotoUploadGate,RestaurantMediaUploadGate,OrderOutboxWorker,ProfileSelfService,CitiesService,TrackingService,PrismaService,AppConfig,OtpDelivery,OtpFallback,AuthService,AuthGuard,RateLimits,RoutingService,RoadFeaturesService,PushService,RealtimeEvents,OrdersService,DriverService,RegistrationService,RegistrationUploadGate,RegistrationAdminService,TaxiGateway,BackgroundJobs,PlacesService,FoodService,AdminAuditService,AdminGuard,AdminAuthService,AdminService,ContentService,RestaurantAuthGuard,RestaurantAuthService,RestaurantService,RestaurantDeliveryService]})
 export class AppModule {}

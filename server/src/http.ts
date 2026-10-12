@@ -11,8 +11,10 @@ import { DriverService } from './driver';
 import { CreateOrderDto, DriverPositionDto, DriverPreferencesDto, OrdersHistoryDto, MessageDto, PhotoMessageDto, OnlineDto, PhoneDto, ProfileDto, PushTokenDto, QuoteDto, RatingDto, ReadNotificationsDto, RefreshDto, RemovePushTokenDto, TopupDto, VerifyDriverDto, VerifyDto } from './dto';
 import { OrdersService } from './orders';
 import { PrismaService } from './prisma.service';
+import {ReadinessService} from './readiness';
 import { AdminGuard } from './admin.security';
 import { pushNotificationEvents, pushPresentation } from './pushPresentation';
+import { AvatarUploadGate, ChatPhotoUploadGate } from './media-upload-gate';
 type AuthedRequest=Request&{actor:Actor};
 type AvatarFile={buffer:Buffer;mimetype:string;size:number};
 export const MAX_AVATAR_BYTES=5*1024*1024;
@@ -107,14 +109,13 @@ export class UsersController {
   }
   @Post('me/avatar') @ApiConsumes('multipart/form-data')
   @ApiBody({schema:{type:'object',required:['avatar'],properties:{avatar:{type:'string',format:'binary'}}}})
-  @UseInterceptors(FileInterceptor('avatar',{limits:{fileSize:MAX_AVATAR_BYTES,files:1,fields:0},fileFilter:(request,file,callback)=>{
+  @UseInterceptors(AvatarUploadGate,FileInterceptor('avatar',{limits:{fileSize:MAX_AVATAR_BYTES,files:1,fields:0,parts:1,fieldNameSize:100},fileFilter:(request,file,callback)=>{
     if((request as AuthedRequest).actor?.role!=='DRIVER')return callback(new ForbiddenException('Только водитель может установить фотографию профиля.'),false);
     if(!avatarMimes.has(file.mimetype.toLowerCase()))return callback(new BadRequestException('Разрешены только фотографии JPEG, PNG или WEBP.'),false);
     callback(null,true);
   }}))
   async avatar(@Req() req:AuthedRequest,@UploadedFile() file?:AvatarFile) {
     if(req.actor.role!=='DRIVER')throw new ForbiddenException('Только водитель может установить фотографию профиля.');
-    await this.limits.take(`avatar:${req.actor.id}`,10,3600);
     if(!file?.buffer?.length)throw new BadRequestException('Фотография не выбрана.');
     if(file.buffer.length>MAX_AVATAR_BYTES)throw new HttpException('Файл фотографии должен быть не больше 5 МБ.',HttpStatus.PAYLOAD_TOO_LARGE);
     const detected=detectAvatarMime(file.buffer),declared=file.mimetype.toLowerCase();
@@ -167,7 +168,7 @@ export class OrdersController {
   @Post(':id/messages') message(@Req() req:AuthedRequest,@Param('id',ParseUUIDPipe) id:string,@Body() dto:MessageDto) {return this.orders.sendMessage(req.actor,id,dto);}
   @Post(':id/messages/photo') @ApiConsumes('multipart/form-data')
   @ApiBody({schema:{type:'object',required:['image','clientMessageId'],properties:{image:{type:'string',format:'binary'},text:{type:'string'},clientMessageId:{type:'string'}}}})
-  @UseInterceptors(FileInterceptor('image',{limits:{fileSize:8*1024*1024,files:1,fields:2},fileFilter:(_request,file,callback)=>{
+  @UseInterceptors(ChatPhotoUploadGate,FileInterceptor('image',{limits:{fileSize:8*1024*1024,files:1,fields:2,parts:3,fieldSize:2048,fieldNameSize:100},fileFilter:(_request,file,callback)=>{
     if(!['image/jpeg','image/png','image/webp'].includes(file.mimetype.toLowerCase()))return callback(new BadRequestException('Разрешены фотографии JPEG, PNG и WEBP.'),false);
     callback(null,true);
   }}))
@@ -206,7 +207,7 @@ export class AdminController {
 @ApiTags('configuration') @Controller()
 export class PublicController {
   constructor(private readonly db:PrismaService,private readonly config:AppConfig) {}
-  @Get('health') async health() {await this.db.$queryRaw`SELECT 1`;return {status:'ok'};}
+  @Get('health') async health() {return new ReadinessService(this.db).check();}
   @Get('config') configValue() {return {currency:'KGS',development:this.config.development,supportPhone:process.env.SUPPORT_PHONE??'+996700000000',balanceTopupTelegramUrl:process.env.BALANCE_TOPUP_TELEGRAM_URL?.trim()||null};}
   @Get('tariffs') tariffs(@Query('kind') kind:string|undefined) {
     const normalized=kind??'RIDE';

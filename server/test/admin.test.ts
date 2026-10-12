@@ -33,9 +33,9 @@ test('admin guard and service deny customer and driver before any database acces
 });
 
 test('tariff DTO rejects negative, fractional, unbounded and client-controlled fields',async()=>{
-  const valid={id:'economy',name:'Эконом',description:'Поездки',basePrice:60,pricePerKm:14,pricePerMinute:2,minimumPrice:100,commissionBps:1000,active:true};
+  const valid={id:'economy',name:'Эконом',description:'Поездки',basePrice:60,pricePerKm:14,pricePerMinute:2,waitingGraceMinutes:1,freeWaitingMinutes:5,waitingPricePerMinute:2,minimumPrice:100,commissionBps:1000,active:true};
   assert.equal((await validate(plainToInstance(AdminTariffDto,valid))).length,0);
-  for(const patch of [{basePrice:-1},{pricePerKm:1.5},{pricePerMinute:1000001},{commissionBps:10001},{active:'true'},{role:'ADMIN'}]) {
+  for(const patch of [{basePrice:-1},{pricePerKm:1.5},{pricePerMinute:1000001},{waitingGraceMinutes:-1},{freeWaitingMinutes:181},{waitingPricePerMinute:1.5},{commissionBps:10001},{active:'true'},{role:'ADMIN'}]) {
     const errors=await validate(plainToInstance(AdminTariffPatchDto,patch),{whitelist:true,forbidNonWhitelisted:true});
     assert.ok(errors.length,JSON.stringify(patch));
   }
@@ -49,16 +49,19 @@ test('order list bounds prevent invalid pagination and table selection',async()=
 test('realtime admin notifications are authenticated at delivery and never sent to customers',async()=>{
   const delivered:{role:string;event:string}[]=[];
   const sockets=new Map();
-  for(const role of ['ADMIN','CLIENT','DRIVER'])sockets.set(role,{handshake:{auth:{token:role}},data:{userId:role,role},emit:(event:string)=>delivered.push({role,event}),disconnect:()=>{}});
+  const rooms=new Map<string,Set<string>>([['audience:admin',new Set(['ADMIN'])]]);
+  for(const role of ['ADMIN','CLIENT','DRIVER'])sockets.set(role,{id:role,handshake:{auth:{token:role}},data:{userId:role,role},emit:(event:string)=>delivered.push({role,event}),disconnect:()=>{},
+    join:async(room:string)=>{const members=rooms.get(room)??new Set<string>();members.add(role);rooms.set(room,members);},leave:async(room:string)=>{rooms.get(room)?.delete(role);}});
   const auth={authenticate:async(token:string)=>actor(token as Actor['role'])};
-  const gateway=new TaxiGateway(auth as any,new RealtimeEvents());
-  gateway.server={sockets:{sockets}} as any;
+  const gateway=new TaxiGateway(auth as any,new RealtimeEvents(),{} as any,{take:async()=>{}} as any);
+  gateway.server={sockets:{sockets,adapter:{rooms}}} as any;
   await (gateway as any).send({audience:'admin',userIds:[],name:'admin:changed',payload:{resource:'taxi-orders'}});
   assert.deepEqual(delivered,[{role:'ADMIN',event:'admin:changed'}]);
   delivered.length=0;
   auth.authenticate=async()=>actor('CLIENT');
   await (gateway as any).send({audience:'admin',userIds:[],name:'admin:changed',payload:{resource:'taxi-orders'}});
   assert.deepEqual(delivered,[]);
+  assert.equal(rooms.get('audience:admin')?.has('ADMIN'),false);
 });
 
 test('taxi changes invalidate admin data and tariff changes reach authenticated app sessions',()=>{

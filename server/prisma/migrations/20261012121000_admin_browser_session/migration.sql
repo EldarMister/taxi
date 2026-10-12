@@ -1,0 +1,1 @@
+ALTER TABLE "RefreshSession" ADD COLUMN "browserSession" BOOLEAN NOT NULL DEFAULT FALSE;

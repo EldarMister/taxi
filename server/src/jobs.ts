@@ -37,7 +37,12 @@ export class BackgroundJobs {
       await this.db.smsChallenge.updateMany({where:{providerTokenCiphertext:{not:null},expiresAt:{lte:new Date()}},data:{providerTokenCiphertext:null}});
       await this.db.smsChallenge.deleteMany({where:{expiresAt:{lt:new Date(Date.now()-86400000)}}});
       await this.db.refreshSession.deleteMany({where:{expiresAt:{lt:new Date(Date.now()-90*86400000)}}});
+      await this.db.restaurantSession.deleteMany({where:{expiresAt:{lt:new Date(Date.now()-90*86400000)}}});
+      await this.db.orderEventOutbox.deleteMany({where:{deliveredAt:{lt:new Date(Date.now()-30*86400000)}}});
+      const expiredQuotes=await this.db.quote.findMany({where:{expiresAt:{lt:new Date(Date.now()-86400000)},order:null},select:{id:true},take:100});
+      if(expiredQuotes.length)await this.db.quote.deleteMany({where:{id:{in:expiredQuotes.map(quote=>quote.id)},order:null}});
       await this.db.pushJob.deleteMany({where:{sentAt:{lt:new Date(Date.now()-30*86400000)}}});
+      await this.db.adminAudit.deleteMany({where:{createdAt:{lte:new Date(Date.now()-30*86400000)}}});
     } catch{this.logger.error('Retention cleanup failed');}
   }
 }

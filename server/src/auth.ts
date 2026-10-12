@@ -1,7 +1,6 @@
 import { CanActivate, ExecutionContext, HttpException, Injectable, UnauthorizedException, ServiceUnavailableException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { createHash, createHmac, randomBytes, randomInt, randomUUID, timingSafeEqual } from 'node:crypto';
-import { isIP } from 'node:net';
 import type { Request } from 'express';
 import { Prisma, Role } from '@prisma/client';
 import { PrismaService } from './prisma.service';
@@ -10,16 +9,12 @@ import { RealtimeEvents } from './events';
 import { OtpDelivery } from './otp-delivery';
 import { OtpFallback } from './otp-fallback';
 import { sealNikitaToken, unsealNikitaToken, nikitaUnavailable } from './nikita-otp';
+import { requestClientIp } from './request-client-ip';
+import { mapUserProfile, userProfileSelect } from './user-profile';
 export interface Actor { id:string; role:Role; sessionId:string; familyId:string; expiresAt:number }
 const hash = (value:string) => createHash('sha256').update(value).digest('hex');
-/** Railway's public HTTP edge supplies X-Real-IP; private/direct requests do not. */
-export function authRequestIp(request:Pick<Request,'ip'|'headers'>,publicDomain=process.env.RAILWAY_PUBLIC_DOMAIN):string {
-  const host=typeof request.headers.host==='string'?request.headers.host.toLowerCase().replace(/:\d+$/,''):'';
-  const client=request.headers['x-real-ip'];
-  if(publicDomain && host===publicDomain.toLowerCase() && typeof request.headers['x-railway-edge']==='string'
-    && request.headers['x-forwarded-proto']==='https' && typeof client==='string' && isIP(client.trim()))
-    return client.trim().replace(/^::ffff:(?=\d+\.)/i,'');
-  return request.ip??'unknown';
+export function authRequestIp(request:Pick<Request,'headers'> & {socket?:{remoteAddress?:string}},trustedProxies=process.env.TRUSTED_PROXY_CIDRS??''):string {
+  return requestClientIp(request,trustedProxies);
 }
 @Injectable()
 export class RateLimits {
@@ -108,10 +103,11 @@ export class AuthService {
       const user = await tx.user.upsert({where:{phone},create:{phone},update:{}});
       // Administrator accounts never use SMS, including development OTP codes.
       if(user.role==='ADMIN')return null;
-      return this.createSession(tx,user.id,randomUUID());
+      const tokens=await this.createSession(tx,user.id,randomUUID());
+      return {...tokens,user:await this.user(user.id,tx)};
     },{timeout:12000});
     if (!result) throw new UnauthorizedException('Неверный или просроченный код');
-    return {...result,user:await this.user(result.userId)};
+    return result;
   }
   private async createSession(tx:Prisma.TransactionClient,userId:string,familyId:string,adminAuthenticated=false) {
     const refreshToken = randomBytes(48).toString('base64url');
@@ -128,6 +124,9 @@ export class AuthService {
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${initial.familyId}))`;
       const session = await tx.refreshSession.findUnique({where:{tokenHash}});
       if (!session) return null;
+      // Browser families use an HttpOnly stable cookie. Legacy JS requests may
+      // neither rotate that cookie nor revoke its family through token reuse.
+      if(session.browserSession)return null;
       if (session.revokedAt || session.expiresAt.getTime() <= Date.now()) {
         await tx.refreshSession.updateMany({where:{familyId:session.familyId,revokedAt:null},data:{revokedAt:new Date()}}); return null;
       }
@@ -141,10 +140,13 @@ export class AuthService {
         if(!session.adminAuthenticated||!currentCredential||currentCredential.disabled||!currentSession||currentSession.revokedAt)return null;
       }
       await tx.refreshSession.update({where:{id:session.id},data:{revokedAt:new Date()}});
-      return this.createSession(tx,session.userId,session.familyId,session.adminAuthenticated);
+      const tokens=await this.createSession(tx,session.userId,session.familyId,session.adminAuthenticated);
+      // If profile loading fails, rotation rolls back and the old refresh token
+      // stays valid. Never commit a token that cannot be returned to the client.
+      return {...tokens,user:await this.user(session.userId,tx)};
     });
     if (!result) throw new UnauthorizedException('Сессия истекла. Войдите снова.');
-    return {...result,user:await this.user(result.userId)};
+    return result;
   }
   async logout(refreshToken:string, actor:Actor) {
     const session = await this.db.refreshSession.findUnique({where:{tokenHash:hash(refreshToken)}});
@@ -162,25 +164,21 @@ export class AuthService {
     try {
       payload = await this.jwt.verifyAsync<{sub:string;sid:string;fid:string;exp:number}>(token,{secret:this.config.jwtSecret,issuer:'taxi-api',audience:'taxi-mobile',algorithms:['HS256']});
     } catch {throw new UnauthorizedException('Сессия истекла. Войдите снова.');}
+    const uuid=/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    if(![payload.sub,payload.sid,payload.fid].every(value=>typeof value==='string'&&uuid.test(value))||!Number.isFinite(payload.exp))throw new UnauthorizedException('Сессия истекла. Войдите снова.');
     // A temporary database outage is a server error, not an instruction to erase a valid session.
-    const session = await this.db.refreshSession.findUnique({where:{id:payload.sid},select:{id:true,userId:true,familyId:true,revokedAt:true,expiresAt:true,adminAuthenticated:true,user:{select:{role:true,deletedAt:true,adminCredential:{select:{disabled:true}}}}}});
+    const session = await this.db.refreshSession.findUnique({where:{id:payload.sid},select:{id:true,userId:true,familyId:true,revokedAt:true,expiresAt:true,adminAuthenticated:true,user:{select:{role:true,deletedAt:true,adminCredential:{select:{disabled:true}}}}}})
+      .catch(()=>{throw new ServiceUnavailableException('Не удалось проверить доступ. Попробуйте позже.');});
     if (!session || session.user.deletedAt || session.userId !== payload.sub || session.familyId !== payload.fid || session.revokedAt || session.expiresAt.getTime() <= Date.now()) throw new UnauthorizedException('Сессия истекла. Войдите снова.');
     if(session.user.role==='ADMIN'&&(!session.adminAuthenticated||!session.user.adminCredential||session.user.adminCredential.disabled))throw new UnauthorizedException('Используйте вход в панель управления');
     return {id:session.userId,role:session.user.role,sessionId:session.id,familyId:session.familyId,expiresAt:payload.exp};
   }
-  async user(id:string) {
+  async user(id:string,db:Prisma.TransactionClient=this.db) {
     // Do not load the avatar bytea on ordinary profile/order reads. The public
     // avatar endpoint streams it only when an image is actually requested.
-    const user = await this.db.user.findUniqueOrThrow({where:{id},select:{
-      id:true,phone:true,name:true,role:true,notifications:true,language:true,avatarMime:true,avatarUpdatedAt:true,
-      driverProfile:{select:{verified:true,online:true,transportClass:true,requestedTransportClass:true,acceptsEconomy:true,acceptsComfort:true,acceptsDeliveryCar:true,acceptsDeliveryFood:true,acceptsDeliveryTruck:true,courierModes:true,vehicle:{select:{id:true,make:true,color:true,plate:true,photoUpdatedAt:true}}}},
-    }});
-    const rating = user.role === 'DRIVER' ? await this.db.rating.aggregate({where:{order:{driverId:id}},_avg:{score:true}}) : null;
-    const storedAvatar = user.role === 'DRIVER' && user.avatarMime && user.avatarUpdatedAt
-      ? `/avatars/${user.id}?v=${user.avatarUpdatedAt.getTime()}`
-      : null;
-    return {id:user.id,phone:user.phone,name:user.name,photoUrl:storedAvatar,role:user.role,notifications:user.notifications,language:user.language,
-      ...(user.driverProfile?{driverProfile:{verified:user.driverProfile.verified,online:user.driverProfile.online,transportClass:user.driverProfile.transportClass,requestedTransportClass:user.driverProfile.requestedTransportClass,acceptsEconomy:user.driverProfile.acceptsEconomy,acceptsComfort:user.driverProfile.acceptsComfort,acceptsDeliveryCar:user.driverProfile.acceptsDeliveryCar,acceptsDeliveryFood:user.driverProfile.acceptsDeliveryFood,acceptsDeliveryTruck:user.driverProfile.acceptsDeliveryTruck,courierModes:user.driverProfile.courierModes,carMake:user.driverProfile.vehicle?.make??'',carColor:user.driverProfile.vehicle?.color??'',carPlate:user.driverProfile.vehicle?.plate??'',carPhotoUrl:user.driverProfile.vehicle?.photoUpdatedAt?`/vehicles/${user.driverProfile.vehicle.id}/photo?v=${user.driverProfile.vehicle.photoUpdatedAt.getTime()}`:null,rating:rating?._avg.score??null}}:{})};
+    const user = await db.user.findUniqueOrThrow({where:{id},select:userProfileSelect});
+    const rating = user.role === 'DRIVER' ? await db.rating.aggregate({where:{order:{driverId:id}},_avg:{score:true}}) : null;
+    return mapUserProfile(user,rating?._avg.score??null);
   }
 }
 @Injectable()

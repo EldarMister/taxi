@@ -280,6 +280,7 @@ model LedgerEntry {
   @@index([driverId,createdAt])
 }
 model RefreshSession {
+  browserSession Boolean @default(false)
   id String @id @default(uuid()) @db.Uuid
   userId String @db.Uuid
   user User @relation(fields:[userId],references:[id])
@@ -517,6 +518,7 @@ model FoodOrder {
   history FoodStatusHistory[]
   @@unique([clientId,requestId])
   @@index([clientId,createdAt])
+  @@index([restaurantId,createdAt])
   @@index([status,createdAt])
 }
 
@@ -558,6 +560,19 @@ model RestaurantSession {
   createdAt DateTime @default(now())
   @@index([accountId,revokedAt])
   @@index([familyId])
+  @@index([expiresAt])
+}
+
+model OrderEventOutbox {
+  id String @id @default(uuid()) @db.Uuid
+  aggregateType String
+  aggregateId String @db.Uuid
+  previousDriverId String? @db.Uuid
+  createdAt DateTime @default(dbgenerated("(CURRENT_TIMESTAMP AT TIME ZONE 'UTC'::text)"))
+  availableAt DateTime @default(dbgenerated("(CURRENT_TIMESTAMP AT TIME ZONE 'UTC'::text)"))
+  attempts Int @default(0)
+  deliveredAt DateTime?
+  @@index([deliveredAt,availableAt,createdAt])
 }
 model FoodStatusHistory {
   id String @id @default(uuid()) @db.Uuid

@@ -112,10 +112,11 @@ export class RestaurantService {
     return {staff:rows.map(row=>({id:row.accountId,name:row.account.name,phone:row.account.phone,role:row.role,permissions:row.role==='OWNER'?[...RESTAURANT_PERMISSIONS]:row.permissions,active:row.active&&row.account.active}))};
   }
   async saveStaff(actor:RestaurantActor,id:string,dto:RestaurantStaffInputDto,accountId?:string) {
+    await this.access(actor,id,'staff.manage');
+    await this.limits.take(`restaurant-staff:${actor.id}`,60,3600);
     if(!accountId&&(!dto.phone||!dto.password))throw new BadRequestException('Укажите телефон и пароль менеджера');
     if(accountId===actor.id)throw new ForbiddenException('Изменять собственные права нельзя');
     const permissions=dto.permissions===undefined?undefined:restaurantPermissions(dto.permissions);
-    const passwordHash=dto.password?await hashAdminPassword(dto.password):undefined;
     const phone=dto.phone?restaurantPhone(dto.phone):undefined;
     try{return await this.db.$transaction(async tx=>{
       const actorMember=await this.lockAccess(tx,actor,id,'staff.manage');
@@ -127,8 +128,10 @@ export class RestaurantService {
       }
       const existing=accountId?await tx.restaurantMembership.findUnique({where:{accountId_restaurantId:{accountId,restaurantId:id}},include:{account:{include:{memberships:true}}}}):null;
       if(accountId&&(!existing||existing.role!=='MANAGER'))throw new NotFoundException('Менеджер не найден');
-      if(existing&&(passwordHash||phone||dto.name!==undefined)&&existing.account.memberships.some(m=>m.restaurantId!==id))throw new ForbiddenException('Общие данные этого сотрудника изменяет администратор Atlas');
+      if(existing&&(dto.password||phone||dto.name!==undefined)&&existing.account.memberships.some(m=>m.restaurantId!==id))throw new ForbiddenException('Общие данные этого сотрудника изменяет администратор Atlas');
       if(existing&&actorMember.role!=='OWNER'&&existing.permissions.some(permission=>!actorMember.permissions.includes(permission)))throw new ForbiddenException('Права этого сотрудника изменяет владелец');
+      // All actor, target-membership and grant checks precede costly scrypt.
+      const passwordHash=dto.password?await hashAdminPassword(dto.password):undefined;
       const revoke=!!existing&&(!!passwordHash||phone!==undefined&&phone!==existing.account.phone);
       const account=existing?await tx.restaurantAccount.update({where:{id:existing.accountId},data:{...(dto.name===undefined?{}:{name:dto.name.trim()}),...(phone?{phone}:{}),...(passwordHash?{passwordHash}:{}),...(revoke?{sessionVersion:{increment:1}}:{})}}):await tx.restaurantAccount.create({data:{phone:phone!,passwordHash:passwordHash!,name:dto.name?.trim()??''}});
       const member=existing?await tx.restaurantMembership.update({where:{id:existing.id},data:{...(permissions===undefined?{}:{permissions}),...(dto.active===undefined?{}:{active:dto.active})}}):await tx.restaurantMembership.create({data:{accountId:account.id,restaurantId:id,role:'MANAGER',permissions:granted,active:dto.active??true}});
@@ -139,7 +142,7 @@ export class RestaurantService {
   }
   async orders(actor:RestaurantActor,id:string) {
     await this.access(actor,id,'orders.read');
-    const orders=await this.db.foodOrder.findMany({where:{restaurantId:id},include:{client:{select:{name:true,phone:true}},atlasDelivery:{select:{id:true,status:true,price:true}}},orderBy:{createdAt:'desc'},take:200});
+    const orders=await this.db.foodOrder.findMany({where:{restaurantId:id},include:{client:{select:{name:true,phone:true}},atlasDelivery:{select:{id:true,status:true,price:true,driver:{select:{name:true,phone:true}}}},history:{select:{id:true,status:true,reason:true,createdAt:true},orderBy:{createdAt:'asc'}}},orderBy:{createdAt:'desc'},take:200});
     return {orders:orders.map(order=>({...order,deliveryLat:(order.deliveryPoint as {latitude?:number}|null)?.latitude??null,deliveryLng:(order.deliveryPoint as {longitude?:number}|null)?.longitude??null,atlasOrderId:order.atlasDelivery?.id??null,atlasStatus:order.atlasDelivery?.status??null,deliveryPrice:order.atlasDelivery?.price??null}))};
   }
   async changeOrder(actor:RestaurantActor,id:string,orderId:string,dto:RestaurantOrderActionDto) {
@@ -169,12 +172,23 @@ export class RestaurantService {
     return {totalOrders:counts.reduce((sum,row)=>sum+row._count._all,0),revenue:completed._sum.total??0,averageOrder:Math.round(completed._avg.total??0),completedOrders:completed._count._all,cancelledOrders:counts.find(row=>row.status==='CANCELLED')?._count._all??0,byDay};
   }
   async upload(actor:RestaurantActor,id:string,file?:{buffer:Buffer;mimetype:string}) {
-    const member=await this.access(actor,id);
-    if(member.role!=='OWNER'&&!member.permissions.some(p=>p==='menu.manage'||p==='restaurant.manage'))throw new ForbiddenException('Нет доступа к фотографиям');
+    await this.mediaAccess(actor,id);
     await this.limits.take(`restaurant:media:${actor.id}`,60,3600);
     if(!file?.buffer)throw new BadRequestException('Выберите фотографию');
     const normalized=await normalizeContentImage(file.buffer,file.mimetype);
-    const row=await this.db.mediaAsset.create({data:{...normalized,data:Uint8Array.from(normalized.data)}});
+    const row=await this.db.$transaction(async tx=>{
+      const member=await this.lockAccess(tx,actor,id);
+      this.requireMediaAccess(member);
+      return tx.mediaAsset.create({data:{...normalized,data:Uint8Array.from(normalized.data)}});
+    });
     return {url:`/api/content/media/${row.id}`};
+  }
+  async mediaAccess(actor:RestaurantActor,id:string) {
+    const member=await this.access(actor,id);
+    this.requireMediaAccess(member);
+    return member;
+  }
+  private requireMediaAccess(member:{role:string;permissions:string[]}) {
+    if(member.role!=='OWNER'&&!member.permissions.some(p=>p==='menu.manage'||p==='restaurant.manage'))throw new ForbiddenException('Нет доступа к фотографиям');
   }
 }

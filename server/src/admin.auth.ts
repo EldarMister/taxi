@@ -7,6 +7,7 @@ import { AdminLoginDto } from './admin.dto';
 import { verifyAdminPassword } from './admin.security';
 import { AppConfig } from './config';
 import { PrismaService } from './prisma.service';
+import {requestClientIp} from './request-client-ip';
 
 @Injectable()
 export class AdminAuthService {
@@ -36,5 +37,5 @@ export class AdminAuthService {
 @Controller('admin/auth')
 export class AdminAuthController {
   constructor(private readonly auth:AdminAuthService) {}
-  @Post('login') login(@Body() dto:AdminLoginDto,@Req() request:Request) {return this.auth.login(dto,request.ip??'unknown');}
+  @Post('login') login(@Body() dto:AdminLoginDto,@Req() request:Request) {return this.auth.login(dto,requestClientIp(request));}
 }

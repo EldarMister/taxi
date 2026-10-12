@@ -1,6 +1,7 @@
 import { BadRequestException, Injectable, ServiceUnavailableException } from '@nestjs/common';
 import { AppConfig } from './config';
 import { haversine, Point } from './domain';
+import {SingleFlight} from './single-flight';
 
 export type RouteCoordinate = { latitude: number; longitude: number };
 export type RouteStep = {
@@ -159,6 +160,7 @@ export function parseOsrmMatch(payload: unknown, fixes: MatchFix[]): MatchedTrac
 
 @Injectable()
 export class RoutingService {
+  private readonly routeRequests=new SingleFlight<DrivingRoute>();
   private readonly names = new Map<string, { name: string; expires: number }>();
   constructor(private readonly config: AppConfig) {}
   private async roadName(point: RouteCoordinate, language: RouteLanguage, routeName: string, timeoutMs: number): Promise<string> {
@@ -230,7 +232,7 @@ export class RoutingService {
         return parseOsrmRoute(await response.json(), pickup, dropoff);
       };
       let route: DrivingRoute;
-      try { route = await fetchRoute(); }
+      try { route = await this.routeRequests.run(`${url.href}|${timeoutMs}|${JSON.stringify([pickup,dropoff])}`,fetchRoute); }
       catch (error) {
         if (options.bearing == null || !(error instanceof Error) || error.message !== 'No driving route') throw error;
         url.searchParams.delete('bearings');

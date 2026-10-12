@@ -1,8 +1,12 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { EventEmitter } from 'node:events';
 export interface RealtimeEvent {userIds:string[];name:string;payload:unknown;audience?:'admin'|'authenticated';orderId?:string}
 @Injectable()
 export class RealtimeEvents extends EventEmitter {
+  constructor(){super({captureRejections:true});this.on('error',()=>new Logger(RealtimeEvents.name).warn('Realtime delivery deferred; clients resynchronize from database'));}
+  async dispatch(event:RealtimeEvent) {
+    await Promise.all(this.listeners('event').map(listener=>Promise.resolve().then(()=>listener(event))));
+  }
   publish(userIds:string[],name:string,payload:unknown) {
     this.emit('event',{userIds:[...new Set(userIds)],name,payload} satisfies RealtimeEvent);
     if(name==='order:updated')this.adminChanged('taxi-orders',(payload as {id?:string})?.id);

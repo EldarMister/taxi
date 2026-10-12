@@ -1,4 +1,4 @@
-import { CanActivate, ExecutionContext, Injectable, UnauthorizedException } from '@nestjs/common';
+import { CanActivate, ExecutionContext, Injectable, ServiceUnavailableException, UnauthorizedException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { Prisma } from '@prisma/client';
@@ -12,8 +12,8 @@ const hash=(value:string)=>createHash('sha256').update(value).digest('hex');
 @Injectable()
 export class RestaurantAuthService {
   constructor(private readonly db:PrismaService,private readonly jwt:JwtService,private readonly config:AppConfig,private readonly limits:RateLimits) {}
-  async profile(id:string) {
-    const account=await this.db.restaurantAccount.findUnique({where:{id},include:{memberships:{where:{active:true},include:{restaurant:true}}}});
+  async profile(id:string,db:Prisma.TransactionClient=this.db) {
+    const account=await db.restaurantAccount.findUnique({where:{id},include:{memberships:{where:{active:true},include:{restaurant:true}}}});
     if(!account?.active)throw new UnauthorizedException('Доступ к ресторану отключён');
     return {user:{id:account.id,name:account.name,phone:account.phone},memberships:account.memberships.map(member=>({restaurantId:member.restaurantId,restaurantName:(member.restaurant.catalog as {name:string}).name,role:member.role,permissions:member.role==='OWNER'?[...RESTAURANT_PERMISSIONS]:member.permissions}))};
   }
@@ -34,9 +34,9 @@ export class RestaurantAuthService {
       await tx.$queryRaw`SELECT "id" FROM "RestaurantAccount" WHERE "id"=${account.id}::uuid FOR UPDATE`;
       const current=await tx.restaurantAccount.findUnique({where:{id:account.id}});
       if(!current?.active||current.passwordHash!==account.passwordHash)throw new UnauthorizedException('Повторите вход');
-      return this.session(tx,current.id,current.sessionVersion,randomUUID());
+      return {...await this.session(tx,current.id,current.sessionVersion,randomUUID()),...await this.profile(current.id,tx)};
     });
-    return {...tokens,...await this.profile(account.id)};
+    return tokens;
   }
   async refresh(refreshToken:string) {
     const result=await this.db.$transaction(async tx=>{
@@ -50,25 +50,34 @@ export class RestaurantAuthService {
         return null;
       }
       await tx.restaurantSession.update({where:{id:session.id},data:{revokedAt:new Date()}});
-      return {accountId:account.id,...await this.session(tx,account.id,account.sessionVersion,session.familyId)};
+      return {...await this.session(tx,account.id,account.sessionVersion,session.familyId),...await this.profile(account.id,tx)};
     });
     if(!result)throw new UnauthorizedException('Войдите снова');
-    const {accountId,...tokens}=result;
-    return {...tokens,...await this.profile(accountId)};
+    return result;
   }
   async logout(refreshToken:string) {
-    const session=await this.db.restaurantSession.findUnique({where:{tokenHash:hash(refreshToken)}});
-    if(session)await this.db.restaurantSession.updateMany({where:{familyId:session.familyId,revokedAt:null},data:{revokedAt:new Date()}});
+    await this.db.$transaction(async tx=>{
+      const initial=await tx.restaurantSession.findUnique({where:{tokenHash:hash(refreshToken)}});
+      if(!initial)return;
+      // Use the same lock as login, refresh and account/password changes. A
+      // concurrent refresh may create a successor before logout acquires it;
+      // update the family only after the lock so that successor is revoked too.
+      await tx.$queryRaw`SELECT "id" FROM "RestaurantAccount" WHERE "id"=${initial.accountId}::uuid FOR UPDATE`;
+      await tx.restaurantSession.updateMany({where:{accountId:initial.accountId,familyId:initial.familyId,revokedAt:null},data:{revokedAt:new Date()}});
+    });
     return {ok:true};
   }
   async authenticate(token:string):Promise<RestaurantActor> {
+    let claims:{sub:string;sid:string;ver:number};
     try {
-      const claims=await this.jwt.verifyAsync<{sub:string;sid:string;ver:number}>(token,{secret:this.config.jwtSecret,issuer:'taxi-api',audience:'atlas-restaurant'});
-      if(typeof claims.sub!=='string'||typeof claims.sid!=='string'||!Number.isInteger(claims.ver))throw new Error('claims');
-      const session=await this.db.restaurantSession.findUnique({where:{id:claims.sid},include:{account:true}});
-      if(!session||session.accountId!==claims.sub||session.revokedAt||session.expiresAt.getTime()<=Date.now()||!session.account.active||session.account.sessionVersion!==claims.ver)throw new Error('session');
-      return {id:claims.sub,sessionId:claims.sid,sessionVersion:claims.ver};
+      claims=await this.jwt.verifyAsync<{sub:string;sid:string;ver:number}>(token,{secret:this.config.jwtSecret,issuer:'taxi-api',audience:'atlas-restaurant',algorithms:['HS256']});
+      const uuid=/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+      if(![claims.sub,claims.sid].every(value=>typeof value==='string'&&uuid.test(value))||!Number.isInteger(claims.ver))throw new Error('claims');
     }catch {throw new UnauthorizedException('Войдите в приложение ресторана');}
+    const session=await this.db.restaurantSession.findUnique({where:{id:claims.sid},include:{account:true}})
+      .catch(()=>{throw new ServiceUnavailableException('Не удалось проверить доступ. Попробуйте позже.');});
+    if(!session||session.accountId!==claims.sub||session.revokedAt||session.expiresAt.getTime()<=Date.now()||!session.account.active||session.account.sessionVersion!==claims.ver)throw new UnauthorizedException('Войдите в приложение ресторана');
+    return {id:claims.sub,sessionId:claims.sid,sessionVersion:claims.ver};
   }
 }
 @Injectable()

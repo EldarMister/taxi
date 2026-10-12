@@ -10,6 +10,7 @@ import { PrismaService } from './prisma.service';
 import { AdminAuditService } from './admin.security';
 import { RealtimeEvents } from './events';
 import { applyFoodPromotionsForDisplay } from './food-promotions';
+import { CatalogAudience, projectCatalog } from './catalog-capabilities';
 
 export function serializeFoodOrder(order:FoodOrder) {
   return {id:order.id,status:order.status,createdAt:order.createdAt,updatedAt:order.updatedAt,completedAt:order.completedAt,restaurant:order.restaurantSnapshot,items:order.items,subtotal:order.subtotal,deliveryFee:order.deliveryFee,total:order.total,currency:'KGS',fulfillment:order.fulfillment,address:order.address,deliveryPoint:order.deliveryPoint,deliveryMethod:order.deliveryMethod,courierName:order.courierName,courierPhone:order.courierPhone,comment:order.comment,paymentMethod:order.paymentMethod,isDemo:order.isDemo};
@@ -19,10 +20,10 @@ export function serializeFoodOrder(order:FoodOrder) {
 export class FoodService {
   constructor(private readonly db:PrismaService,private readonly config:AppConfig,private readonly limits:RateLimits,private readonly audit:AdminAuditService,private readonly events:RealtimeEvents) {}
 
-  async catalog() {
+  async catalog(audience:CatalogAudience='food-modifiers-v2') {
     const rows=await this.db.foodRestaurant.findMany({where:{active:true,...(!this.config.development?{isDemo:false}:{})},orderBy:[{sortOrder:'asc'},{id:'asc'}]});
     const restaurants=rows.map(row=>applyFoodPromotionsForDisplay({...row.catalog as unknown as FoodRestaurant,id:row.id,isDemo:row.isDemo}));
-    return {restaurants,paymentMethods:FOOD_PAYMENT_METHODS,isDemo:restaurants.some(restaurant=>restaurant.isDemo)};
+    return {restaurants:projectCatalog(restaurants,audience),paymentMethods:FOOD_PAYMENT_METHODS,isDemo:restaurants.some(restaurant=>restaurant.isDemo)};
   }
 
   async create(actor:Actor,dto:CreateFoodOrderDto) {

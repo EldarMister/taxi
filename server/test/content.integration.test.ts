@@ -1,3 +1,5 @@
+import { requireTestDatabase } from './test-database';
+requireTestDatabase();
 import 'reflect-metadata';
 import assert from 'node:assert/strict';
 import { after, before, test } from 'node:test';
@@ -26,8 +28,6 @@ function once(connection:Socket,event:string) {
   return new Promise<any>((resolve,reject)=>{const timer=setTimeout(()=>reject(new Error(`${event} timeout`)),5000);connection.once(event,value=>{clearTimeout(timer);resolve(value);});});
 }
 before(async()=>{
-  const url=new URL(process.env.DATABASE_URL??'http://invalid');
-  if(process.env.TEST_DATABASE_RESET!=='true'||!['127.0.0.1','localhost'].includes(url.hostname)||url.pathname!=='/taxi_test')throw new Error('Use the disposable local taxi_test database and TEST_DATABASE_RESET=true');
   // This file runs serially after the taxi suite against the explicitly disposable local database.
   await db.banner.deleteMany();
   const suffix=randomUUID().replace(/\D/g,'').padEnd(8,'0').slice(0,8),password=`catalog-test-${randomUUID()}`;
@@ -90,6 +90,21 @@ test('concurrent banner activation admits only three, permits partial edits and 
   await api.patch(`/api/admin/banners/${draft.body.id}`).set(headers(adminToken)).send({active:true}).expect(200);
   assert.equal(await db.banner.count({where:{active:true}}),3);
 });
+test('banner display endpoint publishes one wide or three square creatives as a single change',async()=>{
+  const selected=[];
+  for(let index=0;index<3;index++) {
+    const draft=(await api.post('/api/admin/banners').set(headers(adminToken)).send({title:`Новый набор ${index}`,imageUrl,actionType:'RESTAURANT',restaurantId,active:false}).expect(201)).body;
+    selected.push(draft.id);
+  }
+  await api.patch('/api/admin/banners/display').set(headers(clientToken)).send({ids:selected}).expect(403);
+  const previous=(await db.banner.findMany({where:{active:true}})).map(banner=>banner.id).sort();
+  await api.patch('/api/admin/banners/display').set(headers(adminToken)).send({ids:selected.slice(0,2)}).expect(400);
+  assert.deepEqual((await db.banner.findMany({where:{active:true}})).map(banner=>banner.id).sort(),previous);
+  await api.patch('/api/admin/banners/display').set(headers(adminToken)).send({ids:selected}).expect(200);
+  assert.deepEqual((await api.get('/api/content/banners').expect(200)).body.banners.map((banner:any)=>banner.id),selected);
+  await api.patch('/api/admin/banners/display').set(headers(adminToken)).send({ids:[selected[1]]}).expect(200);
+  assert.deepEqual((await api.get('/api/content/banners').expect(200)).body.banners.map((banner:any)=>banner.id),[selected[1]]);
+});
 test('food orders snapshot menu prices/photos and survive menu replacement and restaurant archive',async()=>{
   const customer=await socket(clientToken),admin=await socket(adminToken),placedEvent=once(customer,'food:order:updated'),adminEvent=once(admin,'admin:changed');
   const body={requestId:randomUUID(),restaurantId,items:[{dishId:'philadelphia',quantity:2,optionIds:['soy']}],fulfillment:'DELIVERY',address:'ул. Тестовая, 15',paymentMethod:'CASH'};
@@ -106,9 +121,10 @@ test('food orders snapshot menu prices/photos and survive menu replacement and r
   await api.delete(`/api/admin/restaurants/${restaurantId}`).set(headers(adminToken)).expect(200);
   const history=(await api.get('/api/food/orders/history?period=all').set(headers(clientToken)).expect(200)).body;
   assert.ok(history.some((order:any)=>order.id===placed.id));assert.ok(!(await api.get('/api/food/catalog').expect(200)).body.restaurants.some((r:any)=>r.id===restaurantId));
-  await api.post(`/api/food/orders/${placed.id}/cancel`).set(headers(clientToken)).expect(201);
+  await api.post(`/api/food/orders/${placed.id}/cancel`).set(headers(clientToken)).expect(400);
+  await api.patch(`/api/admin/food/orders/${placed.id}/status`).set(headers(adminToken)).send({status:'CANCELLED'}).expect(200);
   await api.post('/api/food/orders').set(headers(clientToken)).send({...body,requestId:randomUUID()}).expect(404);
   assert.equal(await db.foodOrder.count({where:{clientId}}),1);
   assert.ok(await db.adminAudit.count({where:{entityId:restaurantId}})>=3);
-  assert.equal(await db.adminAudit.count({where:{entityId:placed.id,action:'food-order.status'}}),1);
+  assert.equal(await db.adminAudit.count({where:{entityId:placed.id,action:'food-order.status'}}),2);
 });

@@ -6,6 +6,7 @@ import helmet from 'helmet';
 import { Request, urlencoded } from 'express';
 import { AppModule } from './app.module';
 import { AppConfig } from './config';
+import {observeRequest} from './observability';
 import { ApiExceptionFilter, apiValidation, stripLegacyCacheQuery } from './http';
 import { mountSiteRedirects } from './site';
 import { whatsappWebhookBodyParser } from './whatsapp-cloud';
@@ -20,6 +21,7 @@ async function bootstrap() {
   app.use((request:Request,_response:unknown,next:()=>void)=>{if(request.method==='GET')request.url=stripLegacyCacheQuery(request.url);next();});
   const config=app.get(AppConfig);
   app.setGlobalPrefix('api');
+  app.use(observeRequest);
   app.use(helmet({contentSecurityPolicy:{directives:{'img-src':["'self'",'data:','blob:','https:']}}}));
   mountSiteRedirects(app.getHttpAdapter().getInstance());
   app.enableCors({origin:config.origins,credentials:false});
@@ -27,7 +29,7 @@ async function bootstrap() {
   app.useGlobalFilters(new ApiExceptionFilter());
   app.enableShutdownHooks();
   const spec=new DocumentBuilder().setTitle('Такси — REST API').setDescription('Все суммы — целые сомы (KGS). JWT в Authorization: Bearer. Права вычисляются сервером. Socket.IO подключается к корню сервера с auth.token.').setVersion('1.0.0').addBearerAuth().build();
-  SwaggerModule.setup('api/docs',app,SwaggerModule.createDocument(app,spec));
+  if(config.development)SwaggerModule.setup('api/docs',app,SwaggerModule.createDocument(app,spec));
   await app.listen(config.port,'0.0.0.0');
 }
 void bootstrap();
