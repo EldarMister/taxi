@@ -5,19 +5,16 @@ import { SharedArray } from 'k6/data';
 import execution from 'k6/execution';
 import crypto from 'k6/crypto';
 import { assertLoadTarget, validateLoadManifest } from './target.mjs';
-import { LOAD_ROLES, rolePlan, roleSlot, bookingActorIndex, validateRoleFixtures } from './roles.mjs';
+import { roleSlot, bookingActorIndex } from './roles.mjs';
+import { sharedRoleFixtures } from './shared-fixtures.mjs';
 const profile = validateLoadManifest(JSON.parse(open(__ENV.LOAD_MANIFEST)));
 const base = assertLoadTarget(profile.target, profile.approvedStagingOrigin);
-const fixtureText = open(__ENV.LOAD_FIXTURES), fixtureDigest = crypto.sha256(fixtureText, 'hex');
-const fixtures = new SharedArray('isolated-load-fixtures', () => [JSON.parse(fixtureText)])[0];
 const role = __ENV.LOAD_ROLE;
-if (!LOAD_ROLES.includes(role) || fixtureDigest !== __ENV.LOAD_FIXTURE_DIGEST) throw new Error('Requires an immutable fixture and one declared role per k6 process.');
-const plan = validateRoleFixtures(fixtures, profile);
-if (fixtures.fixtureRunId !== profile.fixtureRunId) throw new Error('Load fixtures belong to a different run.');
+const { metadata: fixtures, groups } = sharedRoleFixtures({ SharedArray, open, sha256: text => crypto.sha256(text, 'hex'), path: __ENV.LOAD_FIXTURES, expectedDigest: __ENV.LOAD_FIXTURE_DIGEST, role, profile });
+const { fixtureDigest, plan } = fixtures;
 const clients = Math.floor(profile.activeUsers * .8), drivers = Math.round(profile.activeUsers * .15), restaurants = profile.activeUsers - clients - drivers;
 const booking = Math.max(1, Math.floor(clients * .05)), browse = clients - booking;
-if (fixtures.clients.length < clients || fixtures.drivers.length < drivers || fixtures.restaurants.length < restaurants) throw new Error('Need one distinct synthetic account per role slot.');
-const clientAccounts = fixtures.clients.slice(0, clients), driverAccounts = fixtures.drivers.slice(0, drivers), merchantAccounts = fixtures.restaurants.slice(0, restaurants);
+const clientAccounts = groups.clients, driverAccounts = groups.drivers, merchantAccounts = groups.restaurants;
 const bad429 = new Rate('unexpected_429'), timeouts = new Rate('request_timeouts'), unexpected = new Rate('unexpected_responses');
 const created = new Rate('order_create_success'), accepted = new Rate('order_accept_success'), processed = new Rate('order_process_success');
 const completed = new Counter('orders_completed'), orderCount = new Counter('orders_created'), acceptedCount = new Counter('orders_accepted'), operations = new Counter('critical_operations'), duplicate = new Rate('idempotent_retry_success');
@@ -62,14 +59,15 @@ function account(group, role) {
   if (actorBindings[role] === undefined) {
     if (role !== __ENV.LOAD_ROLE) throw new Error('Cross-role actor access.');
     const slot = roleSlot(role, __VU, plan);
-    actorBindings[role] = slot;
-    console.log(JSON.stringify({ kind: 'actor', role, vu: __VU, slot, actorId: group[slot].userId || group[slot].accountId }));
+    const actor = group[slot];
+    actorBindings[role] = actor;
+    console.log(JSON.stringify({ kind: 'actor', role, vu: __VU, slot, actorId: actor.userId || actor.accountId }));
   }
-  return group[actorBindings[role]];
+  return actorBindings[role];
 }
 function uuid() { return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => { const r = Math.floor(Math.random() * 16); return (c === 'x' ? r : (r & 3) | 8).toString(16); }); }
 export function clientRead() {
-  const actor = account(clientAccounts.slice(0, browse), 'clients');
+  const actor = account(clientAccounts, 'clients');
   call(actor, 'GET', '/orders/active'); call(actor, 'GET', '/food/orders/active-all');
   if (__ITER % 5 === 0) call(actor, 'GET', '/food/catalog');
   sleep(profile.intervalsSeconds.clientSync);

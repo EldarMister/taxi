@@ -5,6 +5,7 @@ import { resolve } from 'node:path';
 import vm from 'node:vm';
 import { assertLoadTarget, validateLoadManifest } from '../load/target.mjs';
 import { LOAD_ROLES, rolePlan, roleSlot, bookingActorIndex, validateRoleFixtures } from '../load/roles.mjs';
+import { sharedRoleFixtures } from '../load/shared-fixtures.mjs';
 // Execute the actual k6 script against an in-memory protocol fixture. This does
 // not replace a k6/API load run; it catches wrong routes, statuses and metrics.
 test('k6 fixture exercises creation, identical retry, acceptance and completion for food and taxi', () => {
@@ -29,7 +30,7 @@ test('k6 fixture exercises creation, identical retry, acceptance and completion 
   } };
   const execution = { scenario: { iterationInTest: 0 } };
   const source = readFileSync(resolve(import.meta.dirname, '../load/http.k6.js'), 'utf8').replace(/^import .*;\n/gm, '').replaceAll('export ', '');
-  function process(role) { const context = vm.createContext({ http, execution, crypto: { sha256: () => 'immutable' }, console: { log() {} }, Rate, Counter, SharedArray: class { constructor(_name, callback) { return callback(); } }, open: name => JSON.stringify(name === 'manifest' ? profile : fixture), assertLoadTarget, validateLoadManifest, LOAD_ROLES, rolePlan, roleSlot, bookingActorIndex, validateRoleFixtures, sleep() {}, __ENV: { LOAD_ROLE: role, LOAD_FIXTURE_DIGEST: 'immutable', LOAD_MANIFEST: 'manifest', LOAD_FIXTURES: 'fixtures' }, __VU: 1, __ITER: 0, Math, Date: class extends Date { static now() { return now; } } }); vm.runInContext(source + '\nthis.scenario={bookOrder,restaurantWork,driverWork};', context); return context; }
+  function process(role) { const context = vm.createContext({ http, execution, crypto: { sha256: () => 'immutable' }, console: { log() {} }, Rate, Counter, SharedArray: class { constructor(_name, callback) { return callback(); } }, open: name => JSON.stringify(name === 'manifest' ? profile : fixture), assertLoadTarget, validateLoadManifest, LOAD_ROLES, rolePlan, roleSlot, bookingActorIndex, validateRoleFixtures, sharedRoleFixtures, sleep() {}, __ENV: { LOAD_ROLE: role, LOAD_FIXTURE_DIGEST: 'immutable', LOAD_MANIFEST: 'manifest', LOAD_FIXTURES: 'fixtures' }, __VU: 1, __ITER: 0, Math, Date: class extends Date { static now() { return now; } } }); vm.runInContext(source + '\nthis.scenario={bookOrder,restaurantWork,driverWork};', context); return context; }
   const context = process('booking'), merchant = process('restaurants'), driver = process('drivers');
   context.scenario.bookOrder(); context.__ITER = 1; execution.scenario.iterationInTest = 1; context.scenario.bookOrder();
   for (let step = 0; step < 5; step++) { merchant.scenario.restaurantWork(); now += 13000; driver.scenario.driverWork(); }
