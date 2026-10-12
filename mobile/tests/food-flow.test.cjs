@@ -226,6 +226,30 @@ test('catalog changes refresh an open restaurant and recalculate existing cart p
   assert.equal(h.view.cartTotal, 570);
 });
 
+test('quick add opens required modifiers before creating a cart', async t => {
+  const currentCatalog = clone(catalog), dish = currentCatalog.restaurants[0].dishes[0];
+  dish.optionGroups = [{ id: 'sauce', name: 'Соус', optionIds: ['soy', 'ginger'], minSelected: 1, maxSelected: 1 }];
+  const h = await setup(t, { request: url => url === '/food/catalog' ? currentCatalog : undefined });
+  await h.press('onFood'); await h.press('onRestaurant', currentCatalog.restaurants[0]); await h.press('onAdd', dish);
+  assert.equal(h.screen, 'DishScreen');
+  assert.equal(h.posts.length, 0);
+  await h.press('onAdd', dish, 2, ['ginger']);
+  assert.equal(h.screen, 'CartScreen');
+  assert.deepEqual(clone(h.view.lines), [{ dishId: dish.id, quantity: 2, optionIds: ['ginger'] }]);
+});
+
+test('custom defaults are applied on quick add and per-line prices refresh without losing selections', async t => {
+  const currentCatalog = clone(catalog), dish = currentCatalog.restaurants[0].dishes[0];
+  dish.defaultOptionIds = ['ginger'];
+  currentCatalog.restaurants[0].options[1].priceScope = 'PER_ITEM';
+  const h = await setup(t, { request: url => url === '/food/catalog' ? currentCatalog : undefined });
+  await h.press('onFood'); await h.press('onRestaurant', currentCatalog.restaurants[0]);
+  await h.press('onAdd', dish); await h.press('onAdd', dish);
+  assert.equal(h.view.cartTotal, 1050);
+  await h.press('onCart');
+  assert.deepEqual(clone(h.view.lines), [{ dishId: dish.id, quantity: 2, optionIds: ['ginger'] }]);
+});
+
 test('submit waits for the actual server response, blocks double taps/back and only then clears the cart', async t => {
   const h = await setup(t);
   await checkout(h, { quantity: 2, optionIds: ['soy'] });

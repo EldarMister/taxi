@@ -104,7 +104,7 @@ export function AccountScreen({ page, user, config, onUser, onError, onOnline, o
     catch (error) { onError(messageOf(error)); }
     finally { setSaving(false); }
   }
-  async function updatePreferences(patch: Partial<Pick<NonNullable<User['driverProfile']>, 'acceptsEconomy' | 'acceptsComfort' | 'acceptsDeliveryCar' | 'acceptsDeliveryTruck'>>) {
+  async function updatePreferences(patch: Partial<Pick<NonNullable<User['driverProfile']>, 'acceptsEconomy' | 'acceptsComfort' | 'acceptsDeliveryCar' | 'acceptsDeliveryFood' | 'acceptsDeliveryTruck'>>) {
     if (!user.driverProfile) return;
     setSaving(true);
     try { onUser(await api.patch<User>('/driver/preferences', patch)); }
@@ -212,6 +212,7 @@ export function AccountScreen({ page, user, config, onUser, onError, onOnline, o
         {driverProfile.transportClass !== 'TRUCK' && <PreferenceRow title="Эконом" caption="Обычные поездки" value={!!driverProfile.acceptsEconomy} disabled={saving} onChange={acceptsEconomy => void updatePreferences({ acceptsEconomy })}/>}
         <PreferenceRow title="Комфорт" caption={driverProfile.transportClass === 'COMFORT' ? local('Поездки Комфорт', 'Комфорт сапарлары') : local('Недоступен вам', 'Сиз үчүн жеткиликсиз')} value={!!driverProfile.acceptsComfort} disabled={saving || driverProfile.transportClass !== 'COMFORT'} onChange={acceptsComfort => void updatePreferences({ acceptsComfort })}/>
         {driverProfile.transportClass !== 'TRUCK' && <PreferenceRow title="Доставка на машине" caption="Небольшие чистые грузы" value={!!driverProfile.acceptsDeliveryCar} disabled={saving} onChange={acceptsDeliveryCar => void updatePreferences({ acceptsDeliveryCar })}/>}
+        {driverProfile.transportClass !== 'TRUCK' && <PreferenceRow title="Доставка еды" caption="Заказы из ресторанов" value={driverProfile.acceptsDeliveryFood === true} disabled={saving} onChange={acceptsDeliveryFood => void updatePreferences({ acceptsDeliveryFood })}/>}
         {driverProfile.transportClass === 'TRUCK' && <PreferenceRow title="Грузовая доставка" caption="Крупные грузы" value={!!driverProfile.acceptsDeliveryTruck} disabled={saving} onChange={acceptsDeliveryTruck => void updatePreferences({ acceptsDeliveryTruck })}/>}
       </View>}
       <View style={[s.card, isDark && styles.darkSettingsCard, { gap: 11 }]}>

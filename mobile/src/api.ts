@@ -41,7 +41,7 @@ async function raw<T>(path: string, init: RequestInit, accessToken?: string): Pr
     const formData = typeof FormData !== 'undefined' && init.body instanceof FormData;
     const request = (url: string, bypassCache = false) => fetch(url, {
       ...init, cache: 'no-store', signal: controller.signal,
-      headers: { 'Cache-Control': 'no-store', Pragma: 'no-cache', ...(!formData && init.body !== undefined ? { 'Content-Type': 'application/json' } : {}), ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}), ...init.headers,
+      headers: { 'X-Atlas-Capabilities': 'food-modifiers-v2', 'Cache-Control': 'no-store', Pragma: 'no-cache', ...(!formData && init.body !== undefined ? { 'Content-Type': 'application/json' } : {}), ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}), ...init.headers,
         ...(bypassCache ? { 'Cache-Control': 'no-cache, no-store, max-age=0', 'If-Modified-Since': 'Thu, 01 Jan 1970 00:00:00 GMT' } : {}) },
     });
     let response = await request(`${baseUrl}${path}`);

@@ -6,6 +6,15 @@ export type FoodOption = {
   price: number;
   imageKey: string;
   imageUrl?: string | null;
+  priceScope?: 'PER_PORTION' | 'PER_ITEM';
+};
+
+export type FoodOptionGroup = {
+  id: string;
+  name: string;
+  optionIds: string[];
+  minSelected?: number;
+  maxSelected?: number;
 };
 
 export type FoodDish = {
@@ -22,6 +31,8 @@ export type FoodDish = {
   heroImageUrl?: string | null;
   available: boolean;
   optionIds: string[];
+  optionGroups?: FoodOptionGroup[];
+  defaultOptionIds?: string[];
 };
 
 export type FoodRestaurant = {

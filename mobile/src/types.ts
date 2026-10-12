@@ -18,6 +18,7 @@ export type DriverProfile = {
   acceptsEconomy: boolean;
   acceptsComfort: boolean;
   acceptsDeliveryCar: boolean;
+  acceptsDeliveryFood?: boolean;
   acceptsDeliveryTruck: boolean;
   carPhotoUrl?: string | null;
 };

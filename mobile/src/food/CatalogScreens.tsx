@@ -10,7 +10,7 @@ import { useTheme } from '../design/theme';
 import { FoodButton, FoodHeader, FoodIconButton, foodColors as c, money } from './components';
 import { useFoodColors, useFoodStyles } from './foodTheme';
 import { foodImage } from './assets';
-import { MAX_FOOD_QUANTITY } from './cart';
+import { defaultDishOptions, dishLineTotal, dishOptionGroups, dishOptionsValid, MAX_FOOD_QUANTITY, toggleDishOption } from './cart';
 import type { FoodDish, FoodRestaurant } from './types';
 
 function SearchField({ value, onChange, placeholder, inputRef }: {
@@ -253,9 +253,11 @@ export function DishScreen({ dish, restaurant, onBack, onAdd, favorite, onFavori
   const insets = useSafeAreaInsets();
   const { width } = useWindowDimensions();
   const [quantity, setQuantity] = useState(1);
-  const [selectedOptions, setSelectedOptions] = useState<string[]>(() => dish.optionIds.includes('soy') ? ['soy'] : []);
+  const [selectedOptions, setSelectedOptions] = useState<string[]>(() => defaultDishOptions(dish));
   const options = restaurant.options.filter(option => dish.optionIds.includes(option.id));
-  const price = (dish.price + options.filter(option => selectedOptions.includes(option.id)).reduce((sum, option) => sum + option.price, 0)) * quantity;
+  const groups = dishOptionGroups(dish);
+  const valid = dishOptionsValid(dish, selectedOptions) && selectedOptions.every(id => options.some(option => option.id === id));
+  const price = dishLineTotal(dish, options, selectedOptions, quantity);
   return <View style={s.screen}>
     <ScrollView style={s.flex} showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 16 }}>
       <View style={{ height: Math.max(width * .98, insets.top + 265), backgroundColor: '#080A09' }}>
@@ -278,24 +280,24 @@ export function DishScreen({ dish, restaurant, onBack, onAdd, favorite, onFavori
           <Text accessibilityLiveRegion="polite" style={s.quantityValue}>{quantity}</Text>
           <SpringPressable accessibilityRole="button" accessibilityLabel="Увеличить количество" accessibilityState={{ disabled: quantity >= MAX_FOOD_QUANTITY }} disabled={quantity >= MAX_FOOD_QUANTITY} onPress={() => setQuantity(value => Math.min(MAX_FOOD_QUANTITY, value + 1))} pressScale={.88} style={s.quantityPlus}><Ionicons name="add" color={c.white} size={28} /></SpringPressable>
         </View>
-        {options.length > 0 && <View style={s.modifierSection}>
-          <View style={s.modifierHeader}><Text style={s.modifierTitle}>Комплектация и добавки</Text><Text style={s.modifierHint}>По желанию</Text></View>
+        {groups.map(group => <View key={group.id} style={s.modifierSection}>
+          <View style={s.modifierHeader}><Text style={s.modifierTitle}>{group.name}</Text><Text style={s.modifierHint}>{group.minSelected ? `Обязательно · от ${group.minSelected}` : 'По желанию'}{group.maxSelected !== undefined ? ` · до ${group.maxSelected}` : ''}</Text></View>
           <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.modifierCards} style={s.modifierFrame}>
-            {options.map(option => {
+            {options.filter(option => group.optionIds.includes(option.id)).map(option => {
               const selected = selectedOptions.includes(option.id);
-              return <SpringPressable key={option.id} accessibilityRole="checkbox" accessibilityState={{ checked: selected }} accessibilityLabel={`${option.name}, ${option.price ? `плюс ${money(option.price)}` : 'бесплатно'}`} onPress={() => setSelectedOptions(current => selected ? current.filter(id => id !== option.id) : [...current, option.id])} pressScale={.97} style={[s.modifierCard, selected && s.modifierCardSelected]}>
+              return <SpringPressable key={option.id} accessibilityRole={group.maxSelected === 1 ? 'radio' : 'checkbox'} accessibilityState={{ checked: selected }} accessibilityLabel={`${option.name}, ${option.price ? `плюс ${money(option.price)}` : 'бесплатно'}, ${option.priceScope === 'PER_ITEM' ? 'за позицию заказа' : 'за каждую порцию'}`} onPress={() => setSelectedOptions(current => toggleDishOption(dish, current, option.id))} pressScale={.97} style={[s.modifierCard, selected && s.modifierCardSelected]}>
                 <Image source={foodImage(option.imageKey, option.imageUrl)} style={s.modifierImage} resizeMode="cover" />
                 {selected && <View style={s.modifierCheck}><Ionicons name="checkmark" color={c.white} size={16} /></View>}
                 <Text numberOfLines={2} style={s.modifierName}>{option.name}</Text>
-                <Text style={[s.modifierPrice, selected && { color: c.blue }]}>{option.price ? `+ ${money(option.price)}` : 'Бесплатно'}</Text>
+                <Text style={[s.modifierPrice, selected && { color: c.blue }]}>{option.price ? `+ ${money(option.price)}${option.priceScope === 'PER_ITEM' ? '\nза позицию' : '\nза порцию'}` : 'Бесплатно'}</Text>
               </SpringPressable>;
             })}
           </ScrollView>
-        </View>}
+        </View>)}
       </Reveal>
     </ScrollView>
     <Reveal distance={8} style={[s.footer, { paddingBottom: Math.max(insets.bottom, 16), paddingLeft: Math.max(insets.left, 21), paddingRight: Math.max(insets.right, 21) }]}>
-      <FoodButton label={dish.available ? `Добавить в корзину ${money(price)}` : 'Блюдо временно недоступно'} disabled={!dish.available} onPress={() => onAdd(dish, quantity, selectedOptions)} />
+      <FoodButton label={!dish.available ? 'Блюдо временно недоступно' : valid ? `Добавить в корзину ${money(price)}` : 'Выберите варианты'} disabled={!dish.available || !valid} onPress={() => { if (valid) onAdd(dish, quantity, selectedOptions); }} />
     </Reveal>
   </View>;
 }

@@ -55,6 +55,52 @@ test('food cards, text and primary buttons keep contrast when dark theme is acti
   assert.equal(exports.useFoodStyles(light), light, 'light styles remain exactly as designed');
 });
 
+test('dish screen enforces required radio selection and displays quantity-aware per-line totals', async t => {
+  const exports = {}, cart = {}, added = [];
+  vm.runInNewContext(compile('cart.ts'), { exports: cart });
+  const colors = { blue: '#087FFF', ink: '#111', white: '#FFF', muted: '#888' };
+  const native = { ...Object.fromEntries(['ActivityIndicator', 'Image', 'Pressable', 'ScrollView', 'Text', 'TextInput', 'View'].map(name => [name, name])), StyleSheet: { create: styles => styles }, useWindowDimensions: () => ({ width: 390 }) };
+  vm.runInNewContext(compile('CatalogScreens.tsx'), { exports, require: name => {
+    if (name === 'react' || name === 'react/jsx-runtime') return require(name);
+    if (name === 'react-native') return native;
+    if (name === 'react-native-safe-area-context') return { SafeAreaView: 'SafeAreaView', useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }) };
+    if (name === '@expo/vector-icons') return { Ionicons: 'Icon' };
+    if (name === '../design/motion') return { Reveal: 'Reveal', SpringPressable: 'SpringPressable' };
+    if (name === '../design/tokens') return { palette: colors, radii: {} };
+    if (name === '../design/typography') return { fonts: {} };
+    if (name === '../design/theme') return { useTheme: () => ({ isDark: false }) };
+    if (name === './components') return { FoodButton: 'FoodButton', FoodHeader: 'FoodHeader', FoodIconButton: 'FoodIconButton', foodColors: colors, money: value => `${value} сом` };
+    if (name === './foodTheme') return { useFoodColors: () => colors, useFoodStyles: styles => styles };
+    if (name === './assets') return { foodImage: id => id };
+    if (name === './cart') return cart;
+    if (name === '../BottomPanel') return { BottomPanel: 'BottomPanel' };
+    throw new Error(`Unexpected dependency ${name}`);
+  } });
+  const dish = { id: 'dish', name: 'Блюдо', price: 100, available: true, optionIds: ['sauce', 'gravy', 'bag'], defaultOptionIds: ['bag'], optionGroups: [{ id: 'sauce', name: 'Соус', optionIds: ['sauce', 'gravy'], minSelected: 1, maxSelected: 1 }] };
+  const restaurant = { options: [{ id: 'sauce', name: 'Острый', price: 20 }, { id: 'gravy', name: 'Сливочный', price: 30 }, { id: 'bag', name: 'Пакет', price: 10, priceScope: 'PER_ITEM' }] };
+  let renderer;
+  await act(async () => { renderer = create(React.createElement(exports.DishScreen, { dish, restaurant, onBack() {}, onAdd: (...args) => added.push(args), favorite: false, onFavorite() {} })); });
+  t.after(async () => act(async () => renderer.unmount()));
+  const button = () => renderer.root.findByType('FoodButton');
+  const option = name => renderer.root.findAllByType('SpringPressable').find(node => node.props.accessibilityLabel?.startsWith(`${name},`));
+  assert.equal(button().props.disabled, true);
+  await act(async () => button().props.onPress());
+  assert.equal(added.length, 0);
+  assert.equal(option('Пакет').props.accessibilityState.checked, true);
+  await act(async () => option('Сливочный').props.onPress());
+  assert.equal(option('Сливочный').props.accessibilityRole, 'radio');
+  assert.equal(button().props.disabled, false);
+  assert.equal(button().props.label, 'Добавить в корзину 140 сом');
+  await act(async () => renderer.root.findAllByType('SpringPressable').find(node => node.props.accessibilityLabel === 'Увеличить количество').props.onPress());
+  assert.equal(button().props.label, 'Добавить в корзину 270 сом');
+  await act(async () => option('Острый').props.onPress());
+  assert.equal(option('Сливочный').props.accessibilityState.checked, false);
+  assert.equal(button().props.label, 'Добавить в корзину 250 сом');
+  await act(async () => button().props.onPress());
+  assert.equal(added[0][1], 2);
+  assert.deepEqual(JSON.parse(JSON.stringify(added[0][2])), ['bag', 'sauce']);
+});
+
 test('banner swipe, page dots, and tap navigate real configured items and adapt after removal', async t => {
   const exports = {}, scrolls = [], opened = [];
   const native = { Image: 'Image', Pressable: 'Pressable', ScrollView: 'ScrollView', Text: 'Text', View: 'View', StyleSheet: { create: value => value, absoluteFill: { position: 'absolute', left: 0, top: 0, right: 0, bottom: 0 } } };

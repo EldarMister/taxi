@@ -4,6 +4,8 @@
   "private": true,
   "main": "index.ts",
   "scripts": {
+    "postinstall": "node scripts/patch-metro-image-size.cjs",
+    "test:bundler": "node --test tests/metro-image-size.test.cjs",
     "start": "node scripts/run-app-variant.cjs client start --dev-client",
     "start:client": "node scripts/run-app-variant.cjs client start --dev-client",
     "start:driver": "node scripts/run-app-variant.cjs driver start --dev-client",
@@ -27,9 +29,9 @@
     "typecheck": "tsc --noEmit",
     "test:native": "node --test tests/native-lifecycle.test.cjs tests/app-variant.test.cjs tests/location.test.cjs tests/map-selection.test.cjs tests/car-route-animation.test.cjs tests/permission-onboarding.test.cjs tests/push-permissions.test.cjs tests/theme.test.cjs tests/client-history.test.cjs",
     "test:variant": "node --test tests/app-variant.test.cjs",
-    "test:api": "node --test scripts/test-api.cjs",
+    "test:api": "node --test scripts/test-api.cjs tests/verified-socket.test.cjs",
     "test:ui": "node --test scripts/test-ui-contracts.cjs",
-    "test:food": "node --test tests/food-cart.test.cjs tests/food-flow.test.cjs tests/food-banners.test.cjs tests/screen-transition.test.cjs",
+    "test:food": "node --test tests/food-cart.test.cjs tests/food-flow.test.cjs tests/food-banners.test.cjs tests/driver-food-preferences.test.cjs tests/screen-transition.test.cjs",
     "test:auth": "node --test tests/auth-flow.test.cjs",
     "test:booking": "node --test tests/address-format.test.cjs tests/address-search.test.cjs tests/booking-flow.test.cjs tests/booking-panels.test.cjs tests/bottom-panel.test.cjs tests/sheet-stage-transition.test.cjs",
     "test:navigation": "node --test tests/navigation.test.cjs tests/navigation-lifecycle.test.cjs tests/driver-background.test.cjs",
@@ -74,5 +76,9 @@
     "@types/react": "~19.1.10",
     "react-test-renderer": "19.1.0",
     "typescript": "~5.9.2"
+  },
+  "overrides": {
+    "postcss": "8.5.29",
+    "image-size": "2.0.4"
   }
 }

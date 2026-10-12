@@ -7,7 +7,7 @@ import { ServiceHomeScreen } from './HomeScreen';
 import { DishScreen, RestaurantsScreen, RestaurantScreen } from './CatalogScreens';
 import { CartScreen, CheckoutScreen, type CheckoutDetails } from './CheckoutScreens';
 import { FoodHistoryScreen, FoodOrderScreen } from './OrderScreens';
-import { addCartLine, cartLineKey, cartSummary, changeCartQuantity, MAX_FOOD_QUANTITY } from './cart';
+import { addCartLine, cartLineKey, cartSummary, changeCartQuantity, dishOptionsValid, MAX_FOOD_QUANTITY } from './cart';
 import { readFoodState, writeFoodState, type FoodState } from './storage';
 import { ScreenTransition, type ScreenDirection } from './ScreenTransition';
 import type { CartLine, FoodCatalog, FoodDish, FoodOrder, FoodRestaurant, HomeBanner } from './types';
@@ -232,8 +232,9 @@ export function FoodExperience({ userId, active, entry, defaultAddress, onTaxi, 
 
   const openRestaurant = (value: FoodRestaurant) => { wantedPromo.current = null; setSelectedRestaurantId(value.id); navigate('restaurant'); };
   const openCart = (origin: 'restaurants' | 'restaurant') => { cartOrigin.current = origin; navigate('cart'); };
-  const add = (dish: FoodDish, quantity = 1, optionIds: string[] = [], showCart = false) => {
+  const add = (dish: FoodDish, quantity = 1, optionIds: string[] = dish.defaultOptionIds ?? [], showCart = false) => {
     if (!restaurant || !restored) return;
+    if (!dishOptionsValid(dish, optionIds)) { setDishId(dish.id); navigate('dish'); return; }
     const existing = cartRestaurantId === restaurant.id ? lines.find(line => cartLineKey(line) === cartLineKey({ dishId: dish.id, quantity, optionIds }))?.quantity || 0 : 0;
     if (existing + quantity > MAX_FOOD_QUANTITY) { Alert.alert('Количество порций', `Можно добавить не больше ${MAX_FOOD_QUANTITY} порций одного блюда с одинаковыми добавками.`); return; }
     const apply = (replace = false) => {

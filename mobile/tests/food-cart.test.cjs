@@ -21,7 +21,7 @@ function load(file, dependencies = {}) {
 }
 
 const plain = value => JSON.parse(JSON.stringify(value));
-const { addCartLine, cartLineKey, cartSummary, changeCartQuantity } = load('cart.ts');
+const { addCartLine, cartLineKey, cartSummary, changeCartQuantity, defaultDishOptions, dishOptionGroups, dishOptionsValid, toggleDishOption } = load('cart.ts');
 
 function menu() {
   const philadelphia = { id: 'philadelphia', name: 'Филадельфия', price: 520, available: true, optionIds: ['soy', 'ginger', 'wasabi'] };
@@ -35,6 +35,43 @@ function menu() {
     ],
   };
 }
+
+test('required and bounded modifier groups reject stale carts and invalid additions', () => {
+  const restaurant = menu(), dish = restaurant.dishes[0];
+  dish.optionGroups = [{ id: 'sauce', name: 'Соус', optionIds: ['soy', 'ginger'], minSelected: 1, maxSelected: 1 }];
+  dish.defaultOptionIds = ['ginger'];
+  assert.deepEqual(plain(defaultDishOptions(dish)), ['ginger']);
+  assert.equal(dishOptionsValid(dish, []), false);
+  assert.equal(dishOptionsValid(dish, ['soy', 'ginger']), false);
+  assert.equal(dishOptionsValid(dish, ['ginger']), true);
+  assert.equal(dishOptionsValid(dish, ['ginger', 'ginger']), false);
+  const lines = [];
+  assert.equal(addCartLine(lines, dish, 1, []), lines);
+  assert.equal(cartSummary(restaurant, [{ dishId: dish.id, quantity: 1, optionIds: [] }]).invalid, true);
+  assert.equal(cartSummary(restaurant, [{ dishId: dish.id, quantity: 1, optionIds: ['soy', 'ginger'] }]).invalid, true);
+  assert.deepEqual(plain(dishOptionGroups(dish)).map(group => group.optionIds), [['soy', 'ginger'], ['wasabi']]);
+  assert.deepEqual(plain(toggleDishOption(dish, ['soy'], 'ginger')), ['ginger']);
+  assert.deepEqual(plain(toggleDishOption(dish, ['ginger'], 'ginger')), []);
+});
+
+test('bounded multi-select options stop at the maximum and legacy soy default remains explicit', () => {
+  const dish = menu().dishes[0];
+  assert.deepEqual(plain(defaultDishOptions(dish)), ['soy']);
+  assert.deepEqual(plain(defaultDishOptions({ ...dish, defaultOptionIds: [] })), []);
+  dish.optionGroups = [{ id: 'extras', name: 'Добавки', optionIds: dish.optionIds, maxSelected: 2 }];
+  const selected = ['soy', 'ginger'];
+  assert.equal(toggleDishOption(dish, selected, 'wasabi'), selected);
+  assert.equal(toggleDishOption(dish, selected, 'unknown'), selected);
+});
+
+test('PER_ITEM add-on is charged once per cart line while PER_PORTION scales with quantity', () => {
+  const restaurant = menu();
+  restaurant.options.find(option => option.id === 'ginger').priceScope = 'PER_ITEM';
+  const result = cartSummary(restaurant, [{ dishId: 'philadelphia', quantity: 3, optionIds: ['ginger', 'wasabi'] }]);
+  assert.equal(result.subtotal, 520 * 3 + 15 + 10 * 3);
+  assert.equal(result.total, 520 * 3 + 15 + 10 * 3 + 100);
+  assert.equal(result.invalid, false);
+});
 
 test('adding the same dish and selected options merges quantities regardless of option order', () => {
   const dish = menu().dishes[0];

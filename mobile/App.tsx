@@ -46,6 +46,7 @@ import { PermissionOnboarding } from "./src/PermissionOnboarding";
 import { WrongAppScreen } from "./src/WrongAppScreen";
 import { appVariant, isRoleAllowed } from "./src/appVariant";
 import { FoodExperience, FoodEntry } from "./src/food/FoodExperience";
+import { bindVerifiedSocket, completeOrderSnapshot } from "./src/verifiedSocket";
 import {
   Avatar,
   Button,
@@ -196,6 +197,7 @@ function TaxiApp() {
   const socketRef = useRef<Socket | null>(null);
   const orderKey = useRef<{ quoteId: string; key: string } | null>(null);
   const syncRef = useRef(false);
+  const syncQueuedRef = useRef(false);
   const t = tr(user?.language || "ru");
   const driver = user?.role === "DRIVER";
   const showingServices = !driver && page === 'home' && service === 'hub' && !order;
@@ -295,7 +297,8 @@ function TaxiApp() {
   }
 
   async function sync() {
-    if (!userRef.current || syncRef.current) return;
+    if (!userRef.current) return;
+    if (syncRef.current) { syncQueuedRef.current = true; return; }
     syncRef.current = true;
     try {
       const [active, profile] = await Promise.all([
@@ -325,6 +328,7 @@ function TaxiApp() {
       if (!(e instanceof ApiError) || e.status !== 0) setError(messageOf(e));
     } finally {
       syncRef.current = false;
+      if (syncQueuedRef.current) { syncQueuedRef.current = false; void sync(); }
     }
   }
   async function bootstrap() {
@@ -442,38 +446,40 @@ function TaxiApp() {
       reconnectionDelayMax: 10000,
     });
     socketRef.current = socket;
-    socket.on("connect", () => {
+    const verifiedSocket = bindVerifiedSocket(socket, user.id, { onReady: () => {
       setConnected(true);
       void sync();
       refreshTariffs();
       setContentRevision(value => value + 1);
       setFoodOrderRevision(value => value + 1);
       if (userRef.current?.notifications) void registerPushNotifications();
-    });
+    }, onUnavailable: () => {
+      setConnected(false);
+      setError('Не удалось проверить доступ. Сессия сохранена; повторите действие после восстановления сервера.');
+    }, onDisconnected: () => setConnected(false) });
     refreshTariffs();
-    socket.on("content:changed", (event?: { resource?: string }) => {
+    verifiedSocket.on("content:changed", (event?: { resource?: string }) => {
       setContentRevision(value => value + 1);
       if (!event?.resource || event.resource === 'tariffs') refreshTariffs();
     });
-    socket.on("tariffs:changed", refreshTariffs);
-    socket.on("food:order:updated", () => setFoodOrderRevision(value => value + 1));
-    socket.on("registration:updated", () => {
+    verifiedSocket.on("tariffs:changed", refreshTariffs);
+    verifiedSocket.on("food:order:updated", () => setFoodOrderRevision(value => value + 1));
+    verifiedSocket.on("registration:updated", () => {
       setRegistrationRevision(value => value + 1);
       const profile = userRef.current;
       if (profile?.role === 'DRIVER') void refreshRegistrationAttention(profile, true);
     });
-    socket.on("disconnect", () => setConnected(false));
-    socket.on("connect_error", () => setConnected(false));
     socket.on("session:expired", () => {
       void api.refresh().catch((e) => setError(messageOf(e)));
     });
-    socket.on("driver:location", tracking.receive);
-    socket.on("order:updated", (next: Order) => {
+    verifiedSocket.on("driver:location", tracking.receive);
+    verifiedSocket.on("order:updated", (next: Partial<Order>) => {
+      if (!completeOrderSnapshot(next)) { void sync(); return; }
       applyOrder(next);
       if (next.status === "COMPLETED" && userRef.current?.role === "DRIVER")
         void sync();
     });
-    socket.on("order:offer", (next: Order) => {
+    verifiedSocket.on("order:offer", (next: Order) => {
       if (userRef.current?.driverProfile?.online && !isActive(orderRef.current))
         setOffers((current) =>
           current.some((item) => item.id === next.id)
@@ -481,21 +487,22 @@ function TaxiApp() {
             : [...current, next],
         );
     });
-    socket.on("order:withdrawn", ({ orderId }: { orderId: string }) => {
+    verifiedSocket.on("order:withdrawn", ({ orderId }: { orderId: string }) => {
       driverSounds.stopOffer(orderId);
       setOffers((current) => current.filter((item) => item.id !== orderId));
     });
-    socket.on("chat:message", (message: ChatMessage) => {
+    verifiedSocket.on("chat:message", (message: ChatMessage) => {
       driverSounds.message(message, orderRef.current);
       setIncoming(message);
     });
-    socket.on("rider:coming", ({ orderId }: { orderId: string }) => {
+    verifiedSocket.on("rider:coming", ({ orderId }: { orderId: string }) => {
       if (orderRef.current?.id === orderId) setComing(true);
     });
     const interval = setInterval(() => void sync(), 12000);
     return () => {
       subscribed = false;
       clearInterval(interval);
+      verifiedSocket.dispose();
       socket.removeAllListeners();
       socket.disconnect();
       if (socketRef.current === socket) socketRef.current = null;

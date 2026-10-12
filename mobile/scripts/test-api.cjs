@@ -81,6 +81,36 @@ test('a network failure retains the refresh token for reconnection', async () =>
   assert.equal(api.getTokens().refreshToken, 'retained'); assert.equal(storage.value.refreshToken, 'retained');
 });
 
+test('database outage during refresh retains the session and fails the protected request', async () => {
+  const seen = [];
+  const { api, storage } = setup(async (url, init) => {
+    seen.push({ url, token: init.headers.Authorization });
+    return url.endsWith('/auth/refresh') ? reply(503, { message: 'Временно недоступно' }) : reply(401, { message: 'Обновите токен' });
+  });
+  await api.setTokens({ accessToken: 'active', refreshToken: 'retained' });
+  await assert.rejects(api.request('/users/me'), error => error.status === 503);
+  assert.equal(api.getTokens().accessToken, 'active');
+  assert.equal(storage.value.refreshToken, 'retained');
+  assert.equal(seen.length, 2, 'does not retry protected action with an unchecked token');
+});
+
+test('direct server outage never yields protected data or clears the session', async () => {
+  let calls = 0;
+  const { api, storage } = setup(async () => { calls++; return reply(503, { message: 'Временно недоступно' }); });
+  await api.setTokens({ accessToken: 'active', refreshToken: 'retained' });
+  await assert.rejects(api.request('/users/me'), error => error.status === 503);
+  assert.equal(calls, 1);
+  assert.equal(storage.value.refreshToken, 'retained');
+});
+
+test('updated client explicitly advertises modifier support on catalog and order requests', async () => {
+  const seen = [];
+  const { api } = setup(async (url, init) => { seen.push(init.headers['X-Atlas-Capabilities']); return reply(200, {}); });
+  await api.request('/food/catalog');
+  await api.post('/food/orders', { requestId: 'one', items: [] });
+  assert.deepEqual(seen, ['food-modifiers-v2', 'food-modifiers-v2']);
+});
+
 test('refresh without a session does not poison a later login', async () => {
   const { api } = setup(async () => reply(200, { accessToken: 'rotated', refreshToken: 'rotated-refresh' }));
   await assert.rejects(api.refresh(), error => error.status === 401);

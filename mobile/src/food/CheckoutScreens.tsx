@@ -22,7 +22,7 @@ export function CartScreen({ restaurant, lines, onBack, onClear, onQuantity, onR
   const insets = useSafeAreaInsets();
   const summary = cartSummary(restaurant, lines);
   const extras = restaurant?.options.flatMap(option => {
-    const quantity = lines.reduce((count, line) => count + (line.optionIds.includes(option.id) ? line.quantity : 0), 0);
+    const quantity = lines.reduce((count, line) => count + (line.optionIds.includes(option.id) ? option.priceScope === 'PER_ITEM' ? 1 : line.quantity : 0), 0);
     return quantity ? [{ ...option, quantity }] : [];
   }) || [];
   return <SafeAreaView style={s.screen} edges={['top', 'left', 'right']}>
