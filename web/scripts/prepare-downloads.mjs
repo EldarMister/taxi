@@ -1,65 +1,37 @@
-import { createHash } from 'node:crypto';
-import { createReadStream } from 'node:fs';
-import { copyFile, mkdir, readdir, rm, stat, writeFile, readFile } from 'node:fs/promises';
-import { resolve } from 'node:path';
+import { copyFile, readFile, writeFile } from 'node:fs/promises';
+import { resolve, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { VARIANTS, physicalPath, sameRelease, stagedRelease, stageAndActivate, validatePin, verifyFile } from './release-downloads.mjs';
 
-const root = resolve(import.meta.dirname, '../..');
-const source = resolve(root, 'mobile/builds');
-const destination = resolve(root, 'web/public/downloads');
-await mkdir(destination, { recursive: true });
-
-let files = [];
-let sourceAvailable = true;
-try {
-  files = await readdir(source);
-} catch {
-  // A fresh checkout may not include ignored APK files.
-  sourceAvailable = false;
-}
-
-let stagedManifest = {};
-if (!sourceAvailable) {
-  try { stagedManifest = JSON.parse(await readFile(resolve(destination, 'manifest.json'), 'utf8')); } catch {}
-}
-
-async function digest(file) {
-  const hash = createHash('sha256');
-  for await (const chunk of createReadStream(file)) hash.update(chunk);
-  return hash.digest('hex');
-}
-
-const entries = await Promise.all(['client', 'driver'].map(async (variant) => {
-  const releaseFiles = files
-    .map((name) => ({ name, match: name.match(new RegExp(`^Atlas-${variant}-(\\d+)\\.(\\d+)\\.(\\d+)(?:-arm64)?\\.apk$`)) }))
-    .filter(({ match }) => match)
-    .sort((a, b) => {
-      for (let i = 1; i <= 3; i += 1) {
-        const difference = Number(b.match[i]) - Number(a.match[i]);
-        if (difference) return difference;
-      }
-      return Number(b.name.endsWith('-arm64.apk')) - Number(a.name.endsWith('-arm64.apk'));
-    });
-  const release = releaseFiles[0];
-  if (!release) {
-    // A deployment can contain a verified, pre-staged release without mobile sources.
-    const staged = stagedManifest[variant];
-    const stagedFile = resolve(destination, `atlas-${variant}.apk`);
-    if (staged?.available && staged.path === `/downloads/atlas-${variant}.apk`) {
-      try {
-        if ((await stat(stagedFile)).size === staged.bytes && await digest(stagedFile) === staged.sha256) return [variant, staged];
-      } catch {}
-    }
-    await rm(resolve(destination, `atlas-${variant}.apk`), { force: true });
-    return [variant, { available: false }];
+export async function prepareDownloads({ source, destination, pin, replace = false, allowUnavailable = false, runtime = process.env.NODE_ENV, activation } = {}) {
+  const existing = await stagedRelease(destination);
+  const expected = pin ? validatePin(pin) : null;
+  if (existing.kind === 'verified' && !replace) {
+    if (expected && !sameRelease(existing.manifest, expected)) throw new Error('Pinned release differs; replacement must be explicit.');
+    return existing.manifest;
   }
-  const from = resolve(source, release.name);
-  const outputName = `atlas-${variant}.apk`;
-  const to = resolve(destination, outputName);
-  await copyFile(from, to);
-  const bytes = (await stat(to)).size;
-  const sha256 = await digest(to);
-  return [variant, { available: true, version: release.match.slice(1).join('.'), architecture: release.name.endsWith('-arm64.apk') ? 'arm64-v8a' : 'universal', bytes, sha256, path: `/downloads/${outputName}` }];
-}));
+  if (replace && !pin) throw new Error('Replacement requires an independent immutable release pin.');
+  if (pin) {
+    const manifest = validatePin(pin, true);
+    await physicalPath(source, 'directory');
+    for (const variant of VARIANTS) await verifyFile(join(source, pin[variant].file), manifest[variant]);
+    return stageAndActivate(destination, existing, async stage => {
+      for (const variant of VARIANTS) await copyFile(join(source, pin[variant].file), join(stage, `atlas-${variant}.apk`));
+      await writeFile(join(stage, 'manifest.json'), JSON.stringify(manifest, null, 2) + '\n', { flag: 'wx', mode: 0o600 });
+    }, activation);
+  }
+  if (!allowUnavailable || runtime === 'production') throw new Error('Release build requires verified staged APKs or an immutable pin.');
+  const unavailable = { client: { available: false }, driver: { available: false } };
+  if (existing.kind === 'unavailable') return existing.manifest;
+  return stageAndActivate(destination, existing, stage => writeFile(join(stage, 'manifest.json'), JSON.stringify(unavailable, null, 2) + '\n', { flag: 'wx', mode: 0o600 }), activation);
+}
 
-await writeFile(resolve(destination, 'manifest.json'), `${JSON.stringify(Object.fromEntries(entries), null, 2)}\n`);
-for (const [variant, info] of entries) console.log(`${variant}: ${info.available ? `APK ${info.version} (${(info.bytes / 1048576).toFixed(1)} MiB)` : 'APK missing'}`);
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  const flags = process.argv.slice(2);
+  if (flags.some(flag => !['--replace', '--allow-unavailable'].includes(flag))) throw new Error('Unknown download preparation option.');
+  const root = resolve(import.meta.dirname, '../..');
+  let pin;
+  if (process.env.ATLAS_RELEASE_PIN_FILE) { await physicalPath(process.env.ATLAS_RELEASE_PIN_FILE, 'file'); pin = JSON.parse(await readFile(process.env.ATLAS_RELEASE_PIN_FILE)); }
+  const manifest = await prepareDownloads({ source: resolve(root, 'mobile/builds'), destination: resolve(root, 'web/public/downloads'), pin, replace: flags.includes('--replace'), allowUnavailable: flags.includes('--allow-unavailable') });
+  for (const variant of VARIANTS) console.log(`${variant}: ${manifest[variant].available ? 'verified APK ' + manifest[variant].version : 'explicit development: APK unavailable'}`);
+}

@@ -23,6 +23,7 @@ const checks = [
   ['server-integration', 'server', [tsx, '--test', '--test-reporter=tap', '--test-concurrency=1', ...tests.filter(name => isIntegration(name)).map(name => `test/${name}`)]],
   ['mobile-typecheck', 'mobile', [npm, 'run', 'typecheck']],
   ['mobile-tests', 'mobile', mobileScripts.map(name => [npm, 'run', name])],
+  ['website-release-tests', 'web', [npm, 'run', 'test:release-downloads']],
   ['website-build', 'web', [npm, 'run', 'build']],
   ['website-admin-tests', '.', ['--test', '--test-reporter=tap', ...adminTests.map(name => `web/admin/test/${name}`)]],
   ['operations-tests', '.', ['--test', '--test-reporter=tap', ...readdirSync(join(root, 'scripts/test')).filter(name => name.endsWith('.test.mjs')).map(name => `scripts/test/${name}`)]],

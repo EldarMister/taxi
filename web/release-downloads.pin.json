@@ -1,0 +1,13 @@
+{
+  "version": "1.2.08",
+  "client": {
+    "architecture": "arm64-v8a",
+    "bytes": 94588630,
+    "sha256": "916ef640d2301111cd60c5d719871b31e5832ae3e345989ef26aabf0edba0119"
+  },
+  "driver": {
+    "architecture": "arm64-v8a",
+    "bytes": 94588674,
+    "sha256": "8c005c72a192fce488da3f54d9aa4ca288416b1887cf72a8b8e929992de3c6e6"
+  }
+}

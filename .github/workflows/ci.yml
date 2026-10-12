@@ -44,6 +44,11 @@ jobs:
       - run: npm ci --prefix server
       - run: npm ci --prefix mobile
       - run: npm ci --prefix web
+      - name: Stage the independently pinned published APK pair
+        env:
+          ATLAS_RELEASE_DOWNLOAD_BASE: https://atlas-app.up.railway.app
+          ATLAS_RELEASE_PIN_FILE: ${{ github.workspace }}/web/release-downloads.pin.json
+        run: node web/scripts/fetch-release-downloads.mjs
       - name: Verify disposable database before migration
         run: node --input-type=module -e "import {assertTestDatabase} from './scripts/lib/database-target.mjs'; assertTestDatabase(process.env.DATABASE_URL);"
       - run: npm run db:migrate --prefix server

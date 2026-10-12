@@ -2,7 +2,7 @@ import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { readFileSync, existsSync, readdirSync, lstatSync } from 'node:fs';
 import { resolve, relative, dirname, isAbsolute } from 'node:path';
-export const MANDATORY_CHECKS = Object.freeze(['server-build', 'server-unit', 'server-integration', 'mobile-typecheck', 'mobile-tests', 'website-build', 'website-admin-tests', 'operations-tests', 'dependency-audit']);
+export const MANDATORY_CHECKS = Object.freeze(['server-build', 'server-unit', 'server-integration', 'mobile-typecheck', 'mobile-tests', 'website-release-tests', 'website-build', 'website-admin-tests', 'operations-tests', 'dependency-audit']);
 export function digestCandidateFiles(root, files) {
   const hash = createHash('sha256');
   for (const file of [...files].sort()) {

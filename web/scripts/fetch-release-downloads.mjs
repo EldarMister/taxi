@@ -1,67 +1,50 @@
 import { createHash } from 'node:crypto';
 import { createWriteStream } from 'node:fs';
-import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
-import { resolve } from 'node:path';
+import { readFile, writeFile } from 'node:fs/promises';
+import { join, resolve } from 'node:path';
 import { Readable, Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { fileURLToPath } from 'node:url';
+import { VARIANTS, physicalPath, sameRelease, stagedRelease, stageAndActivate, validateInfo, validatePin } from './release-downloads.mjs';
 
-// Bootstrap files from the live release when code-upload limits prevent bundling APKs.
-// The resulting image contains the APKs and needs no runtime download or credentials.
-export async function hydrateReleaseDownloads({ base, destination, version, fetcher = fetch }) {
+export async function hydrateReleaseDownloads({ base, destination, pin, version, replace = false, fetcher = fetch, activation }) {
+  const existing = await stagedRelease(destination);
+  const expected = pin ? validatePin(pin) : null;
+  if (existing.kind === 'verified' && !replace) {
+    if (expected && !sameRelease(existing.manifest, expected)) throw new Error('Pinned release differs; replacement must be explicit.');
+    if (version && existing.manifest.client.version !== version) throw new Error('Pinned release version differs.');
+    return existing.manifest;
+  }
+  if (!expected || (version && version !== pin.version)) throw new Error('Require an independent immutable release pin, not only a version.');
   const origin = new URL(base);
   if (origin.protocol !== 'https:' || origin.username || origin.password) throw new Error('Release source must be HTTPS');
-  await mkdir(destination, { recursive: true });
-  let expected = {};
-  try {
-    expected = JSON.parse(await readFile(resolve(destination, 'manifest.json'), 'utf8'));
-  } catch (error) {
-    if (error.code !== 'ENOENT') throw error;
-    // Generated APK metadata is deliberately excluded from Git. A fresh
-    // checkout must pin the release version before trusting the live manifest.
-    if (!version) throw new Error('Pin the release version for a fresh checkout');
-  }
-  const response = await fetcher(new URL('/downloads/manifest.json', origin), { signal: AbortSignal.timeout(30000) });
+  const response = await fetcher(new URL('/downloads/manifest.json', origin), { redirect: 'error', signal: AbortSignal.timeout(30000) });
   if (!response.ok) throw new Error('Release manifest unavailable');
   const remote = await response.json();
-  const prepared = [];
-  const manifest = {};
-  try {
-    for (const variant of ['client', 'driver']) {
-      const info = remote[variant];
-      const path = `/downloads/atlas-${variant}.apk`;
-      if (!info?.available || info.path !== path || !/^\d+\.\d+\.\d+$/.test(info.version) ||
-          info.architecture !== 'arm64-v8a' || !/^[a-f0-9]{64}$/.test(info.sha256) ||
-          !Number.isSafeInteger(info.bytes) || info.bytes <= 0 || info.bytes > 150 * 1048576 ||
-          (version && info.version !== version)) throw new Error(`Invalid ${variant} release`);
-      if (expected[variant]?.available && ['version', 'sha256', 'bytes'].some(key => info[key] !== expected[variant][key])) {
-        throw new Error(`Unexpected ${variant} release`);
-      }
-      const target = resolve(destination, `atlas-${variant}.apk`);
-      const temporary = `${target}.download`;
-      prepared.push({ target, temporary });
-      const apk = await fetcher(new URL(path, origin), { signal: AbortSignal.timeout(300000) });
+  for (const variant of VARIANTS) validateInfo(remote[variant], variant, pin.version);
+  if (!sameRelease(remote, expected)) throw new Error('Remote release differs from independent immutable pin.');
+  return stageAndActivate(destination, existing, async stage => {
+    for (const variant of VARIANTS) {
+      const info = expected[variant], apk = await fetcher(new URL(info.path, origin), { redirect: 'error', signal: AbortSignal.timeout(300000) });
       if (!apk.ok || !apk.body) throw new Error(`${variant} APK unavailable`);
-      let bytes = 0;
-      const hash = createHash('sha256');
+      let bytes = 0; const hash = createHash('sha256');
       await pipeline(Readable.fromWeb(apk.body), new Transform({ transform(chunk, _encoding, callback) {
         bytes += chunk.length;
         if (bytes > info.bytes) return callback(new Error('APK exceeds declared size'));
         hash.update(chunk); callback(null, chunk);
-      } }), createWriteStream(temporary));
+      } }), createWriteStream(join(stage, `atlas-${variant}.apk`), { flags: 'wx', mode: 0o600 }));
       if (bytes !== info.bytes || hash.digest('hex') !== info.sha256) throw new Error(`${variant} APK integrity mismatch`);
-      manifest[variant] = { available: true, version: info.version, architecture: info.architecture, bytes, sha256: info.sha256, path };
     }
-    for (const file of prepared) await rename(file.temporary, file.target);
-    await writeFile(resolve(destination, 'manifest.json'), `${JSON.stringify(manifest, null, 2)}\n`);
-    return manifest;
-  } finally {
-    await Promise.all(prepared.map(file => rm(file.temporary, { force: true })));
-  }
+    await writeFile(join(stage, 'manifest.json'), JSON.stringify(expected, null, 2) + '\n', { flag: 'wx', mode: 0o600 });
+  }, activation);
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url) && process.env.ATLAS_RELEASE_DOWNLOAD_BASE) {
+  const flags = process.argv.slice(2);
+  if (flags.some(flag => flag !== '--replace')) throw new Error('Unknown release hydration option.');
+  let pin;
+  if (process.env.ATLAS_RELEASE_PIN_FILE) { await physicalPath(process.env.ATLAS_RELEASE_PIN_FILE, 'file'); pin = JSON.parse(await readFile(process.env.ATLAS_RELEASE_PIN_FILE)); }
   const manifest = await hydrateReleaseDownloads({ base: process.env.ATLAS_RELEASE_DOWNLOAD_BASE,
-    destination: resolve(import.meta.dirname, '../public/downloads'), version: process.env.ATLAS_RELEASE_VERSION });
+    destination: resolve(import.meta.dirname, '../public/downloads'), pin, version: process.env.ATLAS_RELEASE_VERSION, replace: flags.includes('--replace') });
   console.log(`Verified release APKs: ${manifest.client.version}`);
 }

@@ -6,7 +6,8 @@
   "scripts": {
     "sync:admin-content": "node scripts/sync-admin-content.mjs",
     "prepare:downloads": "node scripts/prepare-downloads.mjs",
-    "dev": "npm run sync:admin-content && npm run prepare:downloads && vite --host 0.0.0.0",
+    "test:release-downloads": "node --test --test-reporter=tap scripts/prepare-downloads.test.mjs scripts/fetch-release-downloads.test.mjs",
+    "dev": "npm run sync:admin-content && npm run prepare:downloads -- --allow-unavailable && vite --host 0.0.0.0",
     "build": "npm run sync:admin-content && npm run prepare:downloads && vite build",
     "preview": "vite preview --host 0.0.0.0"
   },
