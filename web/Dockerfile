@@ -10,6 +10,8 @@ COPY terms ./terms
 COPY delete-account ./delete-account
 COPY drivers ./drivers
 COPY scripts ./scripts
+COPY release-downloads.pin.json ./release-downloads.pin.json
+ENV ATLAS_RELEASE_PIN_FILE=/site/web/release-downloads.pin.json
 COPY admin/dist ./admin/dist
 ARG VITE_CLIENT_APP_STORE_URL
 ARG VITE_CLIENT_GOOGLE_PLAY_URL
@@ -31,4 +33,8 @@ RUN chmod +x /docker-entrypoint.d/10-atlas-resolver.envsh
 COPY deploy/default.conf.template /etc/nginx/templates/default.conf.template
 COPY --from=build /site/web/dist /usr/share/nginx/html
 COPY admin/dist /usr/share/nginx/html/admin
+# Private staging uses 0700 directories/0600 APKs. Published assets must be
+# readable by nginx workers while ownership stays with root.
+RUN find /usr/share/nginx/html -type d -exec chmod 0755 {} + \
+    && find /usr/share/nginx/html -type f -exec chmod 0644 {} +
 EXPOSE 8080

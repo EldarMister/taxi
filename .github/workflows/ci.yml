@@ -6,6 +6,47 @@ on:
 permissions:
   contents: read
 jobs:
+  container-packaging:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    services:
+      postgres:
+        image: postgres:18-alpine
+        env:
+          POSTGRES_USER: taxi
+          POSTGRES_PASSWORD: taxi_ci_only
+          POSTGRES_DB: taxi_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U taxi -d taxi_test"
+          --health-interval 5s --health-timeout 3s --health-retries 20
+    env:
+      NODE_ENV: development
+      TEST_DATABASE_RESET: 'true'
+      DATABASE_URL: postgresql://taxi:taxi_ci_only@127.0.0.1:5432/taxi_test?schema=public
+      JWT_SECRET: container-ci-only-jwt-secret-at-least-32-characters
+      OTP_SECRET: container-ci-only-otp-secret-at-least-32-characters
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm ci --prefix web
+      - name: Hydrate independently pinned current APKs
+        env:
+          ATLAS_RELEASE_DOWNLOAD_BASE: https://atlas-app.up.railway.app
+          ATLAS_RELEASE_PIN_FILE: ${{ github.workspace }}/web/release-downloads.pin.json
+        run: node web/scripts/fetch-release-downloads.mjs
+      - name: Build and exercise API and website containers
+        run: node scripts/verify-container-release.mjs
+      - name: Preserve container evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: container-checks-${{ github.sha }}
+          path: artifacts/container-checks/
+          if-no-files-found: error
+          retention-days: 30
   verify:
     runs-on: ubuntu-latest
     timeout-minutes: 35
