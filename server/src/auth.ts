@@ -80,7 +80,7 @@ export class AuthService {
     if (!activated.count) throw new ServiceUnavailableException('Запрос кода устарел. Запросите новый код.');
     return {sent:true,...receipt,retryAfterSeconds:60,...(testAuth || this.config.devAuth?{development:true,developmentCode:code}:{}),...(testAuth?{testPhone:phone}:{})};
   }
-  async verifyCode(phone:string, code:string, ip:string, appVariant:'client'|'driver'='client') {
+  async verifyCode(phone:string, code:string, ip:string, appVariant:'client'|'driver'='client', existingOnly=false) {
     const role=appVariant==='driver'?'DRIVER':'CLIENT';
     await this.limits.take(`verify:ip:${ip}`,40,900);
     await this.limits.take(`verify:phone:${phone}`,10,900);
@@ -112,14 +112,16 @@ export class AuthService {
       }
       await tx.smsChallenge.update({where:{phone},data:{consumedAt:new Date(),providerTokenCiphertext:null}});
       if(challenge.expiresAt.getTime()<=Date.now())return null;
-      const user = await tx.user.upsert({where:{phone_role:{phone,role}},create:{phone,role},update:{}});
-      if(user.deletedAt)return null;
+      const user = existingOnly
+        ? await tx.user.findUnique({where:{phone_role:{phone,role}},select:{id:true,deletedAt:true}})
+        : await tx.user.upsert({where:{phone_role:{phone,role}},create:{phone,role},update:{}});
+      if(!user || user.deletedAt)return null;
       return this.createSession(tx,user.id,randomUUID());
     },{timeout:12000});
     if (!result) throw new UnauthorizedException('Неверный или просроченный код');
     // Do not retain the OTP row lock while claiming an old application: deletion
     // locks application/user before removing its challenge in the opposite order.
-    if(role==='DRIVER')await this.db.$transaction(tx=>this.claimLegacyRegistration(tx,result.userId,phone),{timeout:12000});
+    if(role==='DRIVER'&&!existingOnly)await this.db.$transaction(tx=>this.claimLegacyRegistration(tx,result.userId,phone),{timeout:12000});
     return {...result,user:await this.user(result.userId)};
   }
   /** Recover an unactivated application created by the old shared-account app.

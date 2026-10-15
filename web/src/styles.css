@@ -469,6 +469,31 @@ a.apk-link:active { transform: scale(.97); }
 .legal-table thead { background: #f6f5f8; }
 .legal-table th[scope="row"] { width: 20%; font-weight: 600; }
 .legal-mail-button { display: inline-flex; align-items: center; gap: 9px; padding: 14px 18px; margin-top: 22px; border-radius: 14px; background: #f1eef7; font-weight: 600; }
+.delete-account-card { max-width: 590px; margin: 24px 0 32px; padding: 26px; border: 1px solid #e6e0f2; border-radius: 20px; background: #f9f7fd; }
+.delete-account-card h3 { margin: 0 0 8px; font-size: 21px; line-height: 1.25; }
+.delete-account-card p { font-size: 14px; line-height: 1.6; }
+.delete-account-card form { display: grid; gap: 12px; margin-top: 20px; }
+.delete-account-card label:not(.delete-account-consent) { font-size: 13px; font-weight: 650; }
+.delete-account-variants { display: flex; gap: 8px; margin-top: 19px; }
+.delete-account-variants button { padding: 10px 16px; border: 1px solid #d8cfec; border-radius: 999px; background: #fff; color: #443b50; cursor: pointer; }
+.delete-account-variants button[aria-pressed="true"] { border-color: #7253a9; background: #7253a9; color: #fff; }
+.delete-account-card button:disabled { opacity: .55; cursor: not-allowed; }
+.delete-account-phone { display: flex; align-items: center; gap: 11px; min-height: 50px; padding: 0 14px; border: 1px solid #d8cfec; border-radius: 12px; background: #fff; }
+.delete-account-phone span { color: #42364f; font-weight: 650; }
+.delete-account-phone input { width: 100%; min-width: 0; border: 0; outline: 0; background: transparent; font: inherit; font-size: 16px; }
+.delete-account-code { width: 100%; min-height: 50px; padding: 0 14px; border: 1px solid #d8cfec; border-radius: 12px; background: #fff; font: inherit; font-size: 16px; letter-spacing: .12em; }
+.delete-account-phone:focus-within, .delete-account-code:focus { outline: 2px solid #7253a9; outline-offset: 2px; }
+.delete-account-secondary, .delete-account-danger { min-height: 48px; padding: 11px 17px; border: 0; border-radius: 12px; font: inherit; font-weight: 650; cursor: pointer; }
+.delete-account-secondary { background: #e8e1f4; color: #3e2b58; }
+.delete-account-danger { background: #a82e43; color: #fff; }
+.delete-account-consent { display: flex; align-items: flex-start; gap: 10px; margin: 4px 0; color: #4c4257; font-size: 13px; line-height: 1.55; cursor: pointer; }
+.delete-account-consent input { width: 17px; height: 17px; flex: none; margin: 2px 0 0; accent-color: #a82e43; }
+.delete-account-card .delete-account-sent { margin-top: 4px; color: #4c3c69; font-weight: 600; }
+.delete-account-card .delete-account-error { margin-top: 16px; color: #9e2339; font-weight: 600; }
+.delete-account-card .delete-account-hint { margin-top: 19px; font-size: 12px; }
+.delete-account-complete { border-color: #b7d6bb; background: #f1faf1; }
+.delete-account-complete strong { font-size: 18px; color: #245632; }
+.delete-account-complete p { margin-top: 9px; }
 @media (max-width: 600px) {
   .legal-table thead { display: none; }
   .legal-table tbody, .legal-table tr, .legal-table th, .legal-table td { display: block; width: 100%; }
@@ -553,6 +578,7 @@ a.apk-link:active { transform: scale(.97); }
   .legal-head h1 { font-size: clamp(30px, 8.8vw, 51px); }
   .draft-notice { margin: 32px 0 45px; padding: 18px; }
   .legal-body h2 { font-size: 21px; }
+  .delete-account-card { padding: 19px; }
 }
 
 @media (max-width: 390px) {

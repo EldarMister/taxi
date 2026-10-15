@@ -11,6 +11,7 @@ import './landing.css';
 import Landing, { ProductMark } from './Landing.jsx';
 import { MediaSlot } from './MediaSlot.jsx';
 import LegalPage from './LegalPage.jsx';
+import AccountDeletionForm from './AccountDeletionForm.jsx';
 
 const links = {
   client: {
@@ -173,7 +174,7 @@ function App() {
   if (path === '/drivers') content = <Drivers downloads={downloads} />;
   if (path === '/privacy') content = <LegalPage kind="privacy" />;
   if (path === '/terms') content = <LegalPage kind="terms" />;
-  if (path === '/delete-account') content = <LegalPage kind="deletion" />;
+  if (path === '/delete-account') content = <LegalPage kind="deletion" accountDeletionForm={<AccountDeletionForm />} />;
   return <><SiteHeader /><main className={path === '/' ? 'site-main' : 'site-main subpage-main'}>{content}</main><SiteFooter /></>;
 }
 

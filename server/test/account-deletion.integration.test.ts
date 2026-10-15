@@ -142,3 +142,28 @@ test('driver deletion removes vehicle, location, ledger and chats while retainin
   assert.ok(await db.user.findUnique({ where: { id: ids.peer } }));
   await api.get('/api/users/me').set(session.headers).expect(401);
 });
+
+test('public deletion confirms a one-time code, removes only the chosen account, and never creates an unknown account', async () => {
+  const phone = `+996${BigInt('0x' + randomUUID().replaceAll('-', '').slice(0, 11)).toString().padStart(12, '0').slice(-9)}`;
+  const clientId = randomUUID(), driverId = randomUUID();
+  createdUsers.add(clientId); createdUsers.add(driverId);
+  phones.set(clientId, phone); phones.set(driverId, phone);
+  await db.user.createMany({ data: [{ id: clientId, phone, role: 'CLIENT' }, { id: driverId, phone, role: 'DRIVER' }] });
+  await api.post('/api/auth/request-code').send({ phone, appVariant: 'client' }).expect(201);
+  await api.post('/api/account-deletion/confirm').send({ phone, code: '000000', appVariant: 'client' }).expect(401);
+  await api.post('/api/account-deletion/confirm').send({ phone, code: '123456', appVariant: 'client' }).expect(201, { ok: true });
+  assert.equal(await db.user.count({ where: { id: clientId } }), 0);
+  assert.equal(await db.user.count({ where: { id: driverId } }), 1);
+  await db.rateLimit.deleteMany({ where: { key: `sms:phone-minute:${phone}` } });
+  await api.post('/api/auth/request-code').send({ phone, appVariant: 'driver' }).expect(201);
+  await api.post('/api/account-deletion/confirm').send({ phone, code: '123456', appVariant: 'driver' }).expect(201, { ok: true });
+  assert.equal(await db.user.count({ where: { id: driverId } }), 0);
+
+  const unknownPhone = `+996${BigInt('0x' + randomUUID().replaceAll('-', '').slice(0, 11)).toString().padStart(12, '0').slice(-9)}`;
+  await api.post('/api/auth/request-code').send({ phone: unknownPhone, appVariant: 'driver' }).expect(201);
+  await api.post('/api/account-deletion/confirm').send({ phone: unknownPhone, code: '123456', appVariant: 'driver' }).expect(401);
+  assert.equal(await db.user.count({ where: { phone: unknownPhone } }), 0);
+  await db.smsChallenge.deleteMany({ where: { phone: unknownPhone } });
+  await db.otpDeliveryAttempt.deleteMany({ where: { phone: unknownPhone } });
+  await db.rateLimit.deleteMany({ where: { key: { in: ['sms:phone-hour:', 'sms:phone-minute:', 'verify:phone:'].flatMap(prefix => [phone, unknownPhone].map(value => `${prefix}${value}`)) } } });
+});

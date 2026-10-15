@@ -1,14 +1,15 @@
-import { BadRequestException, Body, ConflictException, Controller, Delete, ForbiddenException, Get, Injectable, Patch, Req, UseGuards } from '@nestjs/common';
+import { BadRequestException, Body, ConflictException, Controller, Delete, ForbiddenException, Get, Injectable, Patch, Post, Req, UseGuards } from '@nestjs/common';
 import { IsInt, IsObject, IsOptional, IsString, MaxLength, Min } from 'class-validator';
 import { Prisma, PerformerRole } from '@prisma/client';
 import { Request } from 'express';
-import { Actor, AuthGuard, AuthService } from './auth';
+import { Actor, AuthGuard, AuthService, authRequestIp } from './auth';
 import { PrismaService } from './prisma.service';
 import { CitiesService } from './cities';
 import { RealtimeEvents } from './events';
 import { ACTIVE_STATUSES } from './domain';
 import { ACTIVE_FOOD_STATUSES } from './food-domain';
 import { RegistrationData, validateRegistrationDataValues } from './registration-domain';
+import { VerifyDto } from './dto';
 
 type Tx = Prisma.TransactionClient;
 type Authed = Request & { actor: Actor };
@@ -166,4 +167,15 @@ export class DriverDetailsController {
 export class AccountDeletionController {
   constructor(private readonly service:ProfileSelfService) {}
   @Delete('me') remove(@Req() req:Authed) {return this.service.removeAccount(req.actor);}
+}
+
+/** The public deletion page confirms ownership without creating a new account or returning a login token. */
+@Controller('account-deletion')
+export class PublicAccountDeletionController {
+  constructor(private readonly service:ProfileSelfService, private readonly auth:AuthService) {}
+  @Post('confirm') async confirm(@Body() dto:VerifyDto,@Req() req:Request) {
+    const variant=dto.appVariant??'client';
+    const session=await this.auth.verifyCode(dto.phone,dto.code,authRequestIp(req),variant,true);
+    return this.service.removeAccount({id:session.userId,role:variant==='driver'?'DRIVER':'CLIENT',sessionId:'',familyId:'',expiresAt:0});
+  }
 }
