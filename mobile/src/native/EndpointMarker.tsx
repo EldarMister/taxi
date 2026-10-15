@@ -7,6 +7,7 @@ import type { Language } from '../types';
 import type { MapPoint } from './mapkit';
 
 export type EndpointPresentation = 'compact' | 'detailed' | 'focused';
+export type EndpointAppearance = 'passenger' | 'driver';
 export type EndpointMetrics = { label: string; value: string };
 export interface EndpointMarkerProps {
   id: string;
@@ -15,6 +16,8 @@ export interface EndpointMarkerProps {
   dark: boolean;
   language: Language;
   presentation?: EndpointPresentation;
+  appearance?: EndpointAppearance;
+  styleRevision?: number;
   metrics?: EndpointMetrics | null;
   pickupEtaMinutes?: number | null;
   routeLabel?: string;
@@ -31,8 +34,8 @@ export const ENDPOINT_ANCHOR = { x: ENDPOINT_FRAME.groundX / ENDPOINT_FRAME.widt
  * Android PointAnnotation snapshots its child; the live selection pin belongs
  * outside MapView instead, where its lift/spinner can animate normally. */
 export const EndpointMarker = memo(function EndpointMarker({
-  id, field, point, dark, language, presentation = 'detailed', metrics, pickupEtaMinutes,
-  routeLabel, onPress, onEdit,
+  id, field, point, dark, language, presentation = 'detailed', appearance = 'passenger', metrics, pickupEtaMinutes,
+  routeLabel, styleRevision = 0, onPress, onEdit,
 }: EndpointMarkerProps) {
   const annotation = useRef<PointAnnotationRef>(null);
   const frame = useRef<number | null>(null);
@@ -43,9 +46,10 @@ export const EndpointMarker = memo(function EndpointMarker({
   const focused = presentation === 'focused';
   const eta = pickupEtaMinutes != null && Number.isFinite(pickupEtaMinutes) && pickupEtaMinutes >= 0
     ? String(Math.max(1, Math.ceil(pickupEtaMinutes))) : null;
-  const timeOnly = field === 'pickup' && presentation !== 'detailed' && eta != null;
+  const driver = appearance === 'driver';
+  const foreground = dark ? '#101010' : '#FFFFFF';
+  const timeOnly = !driver && field === 'pickup' && presentation !== 'detailed' && eta != null;
   const routeParts = routeLabel?.split(' · ');
-  const routeDestination = field === 'dropoff' && !!routeLabel;
   const detail = routeParts?.length ? { label: routeParts[0], value: routeParts.slice(1).join(' · ') } : metrics;
   const [headWidth, setHeadWidth] = useState(200);
 
@@ -72,7 +76,7 @@ export const EndpointMarker = memo(function EndpointMarker({
       frame.current = null;
     };
   }, [refreshBitmap]);
-  useEffect(refreshBitmap, [refreshBitmap, field, presentation, dark, language, eta, metrics?.label, metrics?.value, routeLabel]);
+  useEffect(refreshBitmap, [refreshBitmap, field, appearance, presentation, dark, language, eta, metrics?.label, metrics?.value, routeLabel, styleRevision]);
 
   return <PointAnnotation ref={annotation} id={id} coordinate={coordinate} anchor={ENDPOINT_ANCHOR}
     draggable={false} onSelected={() => { if (focused) onEdit?.(); else (onPress ?? onEdit)?.(); }}>
@@ -91,15 +95,16 @@ export const EndpointMarker = memo(function EndpointMarker({
             static translucent halos are captured into the same GL bitmap. */}
         <View pointerEvents="none" style={s.badgeShadowOuter}/>
         <View pointerEvents="none" style={s.badgeShadowInner}/>
-        <View testID={`${field}-endpoint-icon`} style={routeDestination ? [s.icon, s.routeIcon, dark && s.darkRouteIcon] : s.icon}>
-          {timeOnly ? <><Text onTextLayout={refreshBitmap} maxFontSizeMultiplier={1.15} style={s.etaValue}>{eta}</Text>
-            <Text onTextLayout={refreshBitmap} maxFontSizeMultiplier={1.15} style={s.etaUnit}>{t('мин')}</Text></>
-            : routeDestination ? <Text testID="driver-destination-letter" onTextLayout={refreshBitmap} maxFontSizeMultiplier={1.2}
-              style={[s.routeLetter, dark && s.darkRouteLetter]}>Б</Text>
-            : field === 'pickup' ? <PickupIcon color="#FFFFFF" size={22}/> : <Icon name="flag" color="#FFFFFF" size={22}/>}
+        <View testID={`${field}-endpoint-surface`} pointerEvents="none" style={[s.surface, dark && s.darkSurface]}/>
+        <View testID={`${field}-endpoint-icon`} style={[s.icon, driver && s.routeIcon, dark && s.darkIcon]}>
+          {driver ? <Text testID={`driver-${field}-letter`} onTextLayout={refreshBitmap} maxFontSizeMultiplier={1.2}
+            style={[s.routeLetter, { color: foreground }]}>{field === 'pickup' ? 'А' : 'Б'}</Text>
+            : timeOnly ? <><Text onTextLayout={refreshBitmap} maxFontSizeMultiplier={1.15} style={[s.etaValue, { color: foreground }]}>{eta}</Text>
+              <Text onTextLayout={refreshBitmap} maxFontSizeMultiplier={1.15} style={[s.etaUnit, { color: foreground }]}>{t('мин')}</Text></>
+            : field === 'pickup' ? <PickupIcon color={foreground} size={22}/> : <Icon name="flag" color={foreground} size={22}/>}
         </View>
         {(focused || presentation === 'detailed' && detail) && <View testID={`${field}-endpoint-detail`}
-          style={[s.detail, focused && s.focusedDetail, dark && s.darkDetail]}>
+          style={[s.detail, focused && s.focusedDetail]}>
           <Text onTextLayout={refreshBitmap} numberOfLines={1} maxFontSizeMultiplier={1.2}
             style={[s.detailLabel, focused && s.focusedTitle, dark && s.darkText]}>{focused ? `${title} ›` : detail?.label}</Text>
           <Text onTextLayout={refreshBitmap} numberOfLines={1} maxFontSizeMultiplier={1.2}
@@ -113,16 +118,16 @@ export const EndpointMarker = memo(function EndpointMarker({
 const s = StyleSheet.create({
   frame: { width: ENDPOINT_FRAME.width, height: ENDPOINT_FRAME.height, alignSelf: 'flex-start' },
   head: { position: 'absolute', left: ENDPOINT_FRAME.groundX - 22, top: 38, height: 44, flexDirection: 'row', alignItems: 'center' },
+  surface: { position: 'absolute', top: 0, bottom: 0, left: 0, right: 0, borderRadius: 16, backgroundColor: '#FFFFFF' },
+  darkSurface: { backgroundColor: '#24272D' },
   badgeShadowOuter: { position: 'absolute', top: -2, left: -4, right: -4, height: 52, borderRadius: 20, backgroundColor: 'rgba(14, 25, 40, .04)' },
   badgeShadowInner: { position: 'absolute', top: 0, left: -2, right: -2, height: 48, borderRadius: 18, backgroundColor: 'rgba(14, 25, 40, .07)' },
   icon: { width: 44, height: 44, borderRadius: 16, borderWidth: 2, borderColor: '#FFFFFF', backgroundColor: colors.blue, alignItems: 'center', justifyContent: 'center' },
   routeIcon: { backgroundColor: '#246BFD' },
-  darkRouteIcon: { backgroundColor: '#FFFFFF' },
+  darkIcon: { backgroundColor: '#FFFFFF' },
   routeLetter: { color: '#FFFFFF', fontSize: 22, lineHeight: 28, fontWeight: '800' },
-  darkRouteLetter: { color: '#101010' },
-  detail: { height: 44, maxWidth: 116, marginLeft: -2, paddingLeft: 7, paddingRight: 10, borderTopRightRadius: 16, borderBottomRightRadius: 16, justifyContent: 'center', backgroundColor: '#FFFFFF' },
+  detail: { height: 44, maxWidth: 116, paddingLeft: 5, paddingRight: 10, borderTopRightRadius: 16, borderBottomRightRadius: 16, justifyContent: 'center' },
   focusedDetail: { maxWidth: 166 },
-  darkDetail: { backgroundColor: '#24272D' },
   detailLabel: { color: '#20252B', fontSize: 11, lineHeight: 14 },
   detailValue: { color: '#20252B', fontSize: 13, lineHeight: 18, fontWeight: '700' },
   focusedTitle: { fontSize: 13, lineHeight: 17, fontWeight: '600' },

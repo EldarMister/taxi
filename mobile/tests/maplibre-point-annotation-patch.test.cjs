@@ -40,7 +40,9 @@ test('fresh SDK patch is idempotent, preserves CRLF and is wired into npm instal
   assert.equal(patchSource(oldAnnotationPatch, PATCHES[0]), patchSource(sources[0], PATCHES[0]), 'the reviewed crop patch upgrades to one-time layer raising');
   const privateHelperPatch = patchSource(sources[0], PATCHES[0]).replace('public static void atlasBringAnnotationLayerToFront', 'private static void atlasBringAnnotationLayerToFront');
   assert.equal(patchSource(privateHelperPatch, PATCHES[0]), patchSource(sources[0], PATCHES[0]));
-  const oldLayoutPatch = PATCHES[1].replacements.slice(0, -1).reduce((source, [before, after]) => source.replace(before, after), sources[1]);
+  const priorLayerPatch = PATCHES[1].migrations[0].replacements.reduce((source, [patched, original]) => source.replace(original, patched), sources[1]);
+  assert.equal(patchSource(priorLayerPatch, PATCHES[1]), patchSource(sources[1], PATCHES[1]), 'the previous layer patch migrates safely to cached IDs during theme reload');
+  const oldLayoutPatch = PATCHES[1].replacements.slice(0, 2).reduce((source, [before, after]) => source.replace(before, after), sources[1]);
   assert.equal(patchSource(oldLayoutPatch, PATCHES[1]), patchSource(sources[1], PATCHES[1]), 'the previous layout patch upgrades to new-order layer events');
 });
 
@@ -83,6 +85,8 @@ test('actual patched Java crop/anchor and repeated-click methods preserve positi
   const annotation = fs.readFileSync(path.join(root, PATCHES[0].file), 'utf8');
   const map = fs.readFileSync(path.join(root, PATCHES[1].file), 'utf8');
   assert.match(method(annotation, 'public void addToMap'), /atlasBringAnnotationLayerToFront/);
+  assert.match(method(map, 'public void createSymbolManager'), /atlasAnnotationLayerId = symbolManager.getLayerId\(\)/);
+  assert.doesNotMatch(method(map, 'public void layerAdded'), /symbolManager.getLayerId\(\)/);
   for (const signature of ['public void setCoordinate', 'private void updateOptions', 'private void refreshBitmap(View v, int left']) {
     assert.doesNotMatch(method(annotation, signature), /atlasBringAnnotationLayerToFront/, `layer raising must not run for ${signature}`);
   }
@@ -104,9 +108,9 @@ public class AtlasPointAnnotationRegression {
   static class NativeMap {
     Style style; NativeMap(Style style) { this.style = style; } Style getStyle() { return style; }
   }
-  static class SymbolManager { String getLayerId() { return "annotation"; } }
+  static class SymbolManager { String getLayerId() { throw new Error("disposed native Layer handle"); } }
   interface FoundLayerCallback { void found(Layer layer); }
-  NativeMap mMap; SymbolManager symbolManager;
+  NativeMap mMap; SymbolManager symbolManager; String atlasAnnotationLayerId = "annotation";
   Map<String, List<FoundLayerCallback>> layerWaiters = new HashMap<>();
   ${method(map, 'public void layerAdded')}
   boolean mAnnotationClicked;
@@ -217,6 +221,11 @@ public class AtlasPointAnnotationRegression {
     Layer newRoute = new Layer("next-order-route"); style.layers.add(style.layers.indexOf(newOrderDriver), newRoute);
     map.layerAdded(newRoute);
     check(style.adds == 2 && style.layers.get(style.layers.size() - 1) == endpointLayer, "route inserted below driver cannot cover endpoint ground");
+    Style replacementStyle = new Style(); replacementStyle.layers.add(new Layer("replacement-background"));
+    map.mMap = new NativeMap(replacementStyle);
+    map.layerAdded(replacementStyle.layers.get(0));
+    check(replacementStyle.removes == 0, "theme reload must not touch a disposed SymbolManager native layer");
+    map.mMap = new NativeMap(style);
     map.mPointAnnotations.clear();
     MLRNPointAnnotation pickup = new MLRNPointAnnotation(1), dropoff = new MLRNPointAnnotation(2);
     map.mPointAnnotations.put("pickup", pickup); map.mPointAnnotations.put("dropoff", dropoff);

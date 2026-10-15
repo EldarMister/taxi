@@ -1386,10 +1386,10 @@ test('dark approach route has a distinct amber line alongside the blue fare rout
   assert.equal(h.renderer.root.findByProps({ id: 'route-line' }).props.style.lineColor, '#57AAFF');
 });
 
-test('driver offer retains destination Б and its light and dark theme colours on the fixed bitmap', async t => {
-  const h = await mountMap(t, { pickup: { latitude: 41.2, longitude: 72.18 }, dropoff: { latitude: 41.24, longitude: 72.22 }, dropoffRouteLabel: '0,5 км · 1 мин' });
+test('driver order retains both А and Б in either theme after offer details are removed', async t => {
+  const h = await mountMap(t, { pickup: { latitude: 41.2, longitude: 72.18 }, dropoff: { latitude: 41.24, longitude: 72.22 }, dropoffRouteLabel: '0,5 км · 1 мин', endpointAppearance: 'driver' });
   const icon = () => h.renderer.root.findByProps({ testID: 'dropoff-endpoint-icon' });
-  const letter = () => h.renderer.root.findByProps({ testID: 'driver-destination-letter' });
+  const letter = () => h.renderer.root.findByProps({ testID: 'driver-dropoff-letter' });
   assert.equal(icon().props.style[1].backgroundColor, '#246BFD');
   assert.equal(icon().props.style[0].borderWidth, 2);
   assert.equal(letter().children.join(''), 'Б');
@@ -1399,6 +1399,9 @@ test('driver offer retains destination Б and its light and dark theme colours o
   assert.equal(icon().props.style[0].borderWidth, 2);
   assert.equal(letter().children.join(''), 'Б');
   assert.equal(letter().props.style[1].color, '#101010');
+  await h.update({ dropoffRouteLabel: undefined, navigationActive: true });
+  assert.equal(h.renderer.root.findByProps({ testID: 'driver-pickup-letter' }).children.join(''), 'А');
+  assert.equal(letter().children.join(''), 'Б');
 });
 
 test('passenger sees only the supplied driver and can inspect the route without camera resets', async t => {
@@ -1653,7 +1656,7 @@ test('GL endpoint bitmaps retain their coordinates and ground anchor through vie
     assert.equal(childHeight, 112);
     assert.equal(childWidth * marker.props.anchor.x, shadowX);
     assert.equal(childHeight * marker.props.anchor.y, shadowY);
-    assert.equal(visual.findByProps({ testID: `${field}-endpoint-icon` }).props.style.borderWidth, 2);
+    assert.equal(visual.findByProps({ testID: `${field}-endpoint-icon` }).props.style[0].borderWidth, 2);
   };
   for (const [width, height, zoom] of [[487, 980, 14], [320, 700, 18], [720, 480, 12]]) {
     await act(async () => {

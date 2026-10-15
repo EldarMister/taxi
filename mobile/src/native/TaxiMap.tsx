@@ -18,7 +18,7 @@ import { carMetresBetween as metresBetween } from './carRouteAnimation';
 import { darkRasterMapFallback, mapStyleForLanguage, rasterMapFallback } from './taxiMapStyle';
 import { alignCrossingsToRoads, crossingMarkings, validMapRoadFeature, type MapRoadFeature } from './mapRoadFeatures';
 import type { Language } from '../types';
-import { EndpointMarker } from './EndpointMarker';
+import { EndpointMarker, type EndpointAppearance } from './EndpointMarker';
 import { canLocatePickup, clearRouteFocusCallout, compactPickupForZoom, initialRouteFocus, reconcileRouteFocus, stepRouteFocus } from './routeFocus';
 
 export { searchAddresses, reverseGeocode } from './mapkit';
@@ -43,6 +43,7 @@ export interface TaxiMapProps {
   theme?: 'light' | 'dark';
   language?: Language;
   passengerView?: boolean;
+  endpointAppearance?: EndpointAppearance;
   passengerControlsVisible?: boolean;
   cameraSession?: string;
   cameraReady?: boolean;
@@ -173,7 +174,7 @@ export default function TaxiMap({
   language = 'ru',
   pickup, dropoff, dropoffRouteLabel, pickupEtaMinutes, pickupAvailability = 'unknown', dropoffEstimate, geometry, approachGeometry, routeOverview = false, onSelectPoint, onEditPoint, onSearchPoint, onPanelHeight,
   focusPoint, browsePickup = false, preferPickupCenter = false, onPickupChange, onSelectionPreview, onMapMovingChange, onBack, backLabel, browseControlsOffset, selectionMode, selectionTitle, renderSelectionPanel, selectionAppearance = 'default', onSelectionInteraction, recenterKey,
-  showUserPosition = false, onUserLocation, contentTopInset = 0, contentBottomInset = 0, animatedBottomInset, centerInVisibleArea = false, selecting = false, driverPosition, passengerView = false, passengerControlsVisible = true, cameraSession = '',
+  showUserPosition = false, onUserLocation, contentTopInset = 0, contentBottomInset = 0, animatedBottomInset, centerInVisibleArea = false, selecting = false, driverPosition, passengerView = false, endpointAppearance = 'passenger', passengerControlsVisible = true, cameraSession = '',
   navigationActive = false, followDriver = false, onFollowDriverChange, cameraReady = true, stableOverview = false,
 }: TaxiMapProps) {
   const t = tr(language);
@@ -852,12 +853,12 @@ export default function TaxiMap({
           setUserLocation(previous => previous && metresBetween(previous, point) < 2 ? previous : point);
           onUserLocation?.(point);
         }}/>}
-        {pickup && (!browsePickup || !!selectionMode) && selectionMode !== 'pickup' && <EndpointMarker id="pickup" field="pickup" point={pickup} dark={dark} language={language}
+        {pickup && (!browsePickup || !!selectionMode) && selectionMode !== 'pickup' && <EndpointMarker id="pickup" field="pickup" point={pickup} dark={dark} language={language} appearance={endpointAppearance} styleRevision={mapReadyRevision}
           presentation={routeFocus.callout === 'pickup' ? 'focused' : compactPickup && pickupEtaMinutes != null && Number.isFinite(pickupEtaMinutes) && pickupEtaMinutes >= 0 && pickupAvailability !== 'unavailable' ? 'compact' : 'detailed'}
           metrics={pickupMetrics} pickupEtaMinutes={pickupAvailability === 'unavailable' ? null : pickupEtaMinutes}
           onPress={!picking && routeControls && passengerControlsVisible ? () => focusEndpointCamera('pickup', pickup) : undefined}
           onEdit={!picking && passengerControlsVisible && onEditPoint ? () => onEditPoint('pickup') : undefined}/>}
-        {dropoff && selectionMode !== 'dropoff' && <EndpointMarker id="dropoff" field="dropoff" point={dropoff} dark={dark} language={language}
+        {dropoff && selectionMode !== 'dropoff' && <EndpointMarker id="dropoff" field="dropoff" point={dropoff} dark={dark} language={language} appearance={endpointAppearance} styleRevision={mapReadyRevision}
           presentation={routeFocus.callout === 'dropoff' ? 'focused' : 'detailed'} metrics={destinationMetrics} routeLabel={dropoffRouteLabel}
           onPress={!picking && routeControls && passengerControlsVisible ? () => focusEndpointCamera('dropoff', dropoff) : undefined}
           onEdit={!picking && passengerControlsVisible && onEditPoint ? () => onEditPoint('dropoff') : undefined}/>}

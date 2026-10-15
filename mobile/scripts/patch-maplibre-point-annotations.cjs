@@ -195,7 +195,7 @@ const topLayerAfter = `            addBitmapToStyle(mCalloutBitmap, mCalloutBitm
     public void removeFromMap(MLRNMapView mapView) {`;
 const layerAddedBefore = `        layerWaiters.remove(layerId);
     }`;
-const layerAddedAfter = `        layerWaiters.remove(layerId);
+const layerAddedV1 = `        layerWaiters.remove(layerId);
         // A later order can remount RN driver/route layers while its endpoint
         // annotations stay mounted. Keep their stems/shadows above those layers.
         // This is a layer-creation event, never a camera or coordinate update.
@@ -207,6 +207,13 @@ const layerAddedAfter = `        layerWaiters.remove(layerId);
         }
     }`;
 
+const layerAddedAfter = layerAddedV1.replace('symbolManager.getLayerId()', 'atlasAnnotationLayerId')
+  .replace('symbolManager != null &&', 'atlasAnnotationLayerId != null &&');
+const managerFieldBefore = '    private SymbolManager symbolManager;';
+const managerFieldAfter = managerFieldBefore + '\n    private String atlasAnnotationLayerId;';
+const managerCreateBefore = '        symbolManager = new SymbolManager(this, mMap, style);';
+const managerCreateAfter = managerCreateBefore + '\n        // Cache before a theme reload disposes the old native Layer handle.\n        atlasAnnotationLayerId = symbolManager.getLayerId();';
+
 const PATCHES = [
   { file: `${JAVA_ROOT}/components/annotation/MLRNPointAnnotation.java`,
     hash: '2784785d67aa8928d1112ad66ecce09229253b3553d955e189e58524876c7c3c',
@@ -216,7 +223,8 @@ const PATCHES = [
   { file: `${JAVA_ROOT}/components/mapview/MLRNMapView.java`,
     hash: '93c49acc60fb276caf8a67594aab355e7897ed28147892e06bf81135f78118cb',
     previousHashes: ['3536b76f509471144891977cb856b21646f336e4e75872eafef34c4b2f01641d', 'f06567139c325e7e7838cb503c653ff79d0a851a9eef2c0538c03ceaf2e3c973'],
-    replacements: [[clickBefore, clickAfter], [containerBefore, containerAfter], [layerAddedBefore, layerAddedAfter]] },
+    migrations: [{ hash: '182dd314058ff177c3d6e6dedde2f8cd290f816e13ea48b30f75984a4e1ecd66', replacements: [[clickAfter, clickBefore], [containerAfter, containerBefore], [layerAddedV1, layerAddedBefore]] }],
+    replacements: [[clickBefore, clickAfter], [containerBefore, containerAfter], [managerFieldBefore, managerFieldAfter], [managerCreateBefore, managerCreateAfter], [layerAddedBefore, layerAddedAfter]] },
 ];
 const normalise = source => source.replace(/\r\n/g, '\n');
 const sha = source => crypto.createHash('sha256').update(source).digest('hex');

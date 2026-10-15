@@ -1508,6 +1508,7 @@ function TaxiApp() {
               routeOverview={mapRoutes.routeOverview}
               driverPosition={(driver ? navigation.position : tracking.position) || undefined}
               passengerView={!driver}
+              endpointAppearance={driver ? 'driver' : 'passenger'}
               passengerControlsVisible={driver || page === 'home' && !addressField && !drawer && !chat && (service !== 'taxi' || !!order || !!mapSelection || bookingMapControlsVisible)}
               cameraReady={!driver || driverPanelReady}
               stableOverview={driver && !!offer}

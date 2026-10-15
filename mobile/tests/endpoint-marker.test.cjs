@@ -9,6 +9,7 @@ const { act, create } = require('react-test-renderer');
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 const filename = path.join(__dirname, '../src/native/EndpointMarker.tsx');
+const flatStyle = style => Object.assign({}, ...[style].flat().filter(Boolean));
 const compiled = ts.transpileModule(fs.readFileSync(filename, 'utf8'), {
   compilerOptions: { jsx: ts.JsxEmit.ReactJSX, target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS, esModuleInterop: true },
 }).outputText;
@@ -106,7 +107,7 @@ test('compact pickup uses truthful rounded ETA and a focused bubble offers edit 
   assert.equal(edited, 1);
   await h.update({ presentation: 'detailed' });
   assert.equal(h.native().findAllByType('PickupIcon').length, 1);
-  assert.equal(h.native().findByProps({ testID: 'pickup-endpoint-icon' }).props.style.backgroundColor, '#087FFF');
+  assert.equal(h.native().findByProps({ testID: 'pickup-endpoint-icon' }).props.style[0].backgroundColor, '#087FFF');
 });
 
 test('missing ETA keeps the pickup icon, and driver route distance/duration remain readable in one native endpoint', async t => {
@@ -115,11 +116,11 @@ test('missing ETA keeps the pickup icon, and driver route distance/duration rema
   assert.deepEqual(h.texts(), []);
   await h.update({ pickupEtaMinutes: Number.NaN });
   assert.equal(h.native().findAllByType('PickupIcon').length, 1);
-  await h.update({ id: 'dropoff', field: 'dropoff', presentation: 'detailed', routeLabel: '44 км · 1 ч 10 мин', metrics: null });
+  await h.update({ id: 'dropoff', field: 'dropoff', presentation: 'detailed', appearance: 'driver', routeLabel: '44 км · 1 ч 10 мин', metrics: null });
   assert.deepEqual(h.texts(), ['Б', '44 км', '1 ч 10 мин']);
   assert.equal(h.native().findAllByType('Icon').length, 0, 'driver route keeps its original letter instead of the passenger flag');
   const icon = () => h.native().findByProps({ testID: 'dropoff-endpoint-icon' });
-  const letter = () => h.native().findByProps({ testID: 'driver-destination-letter' });
+  const letter = () => h.native().findByProps({ testID: 'driver-dropoff-letter' });
   assert.equal(icon().props.style[1].backgroundColor, '#246BFD');
   assert.equal(letter().props.style[0].color, '#FFFFFF');
   const anchor = h.native().props.anchor, bounds = h.bitmap().props.style;
@@ -159,4 +160,48 @@ test('focused bubble centers over its fixed ground and fits even a 320dp viewpor
   }
   await h.update({ presentation: 'compact' });
   assert.equal(head().left + 44 / 2, groundX, 'compact icon returns without moving the geographic ground');
+});
+
+
+test('both passenger endpoints restore white icons and black content at night, including ETA-only pickup', async t => {
+  const h = await mount(t);
+  const anchor = h.native().props.anchor;
+  for (const field of ['pickup', 'dropoff']) {
+    await h.update({ field, dark: true, presentation: 'detailed' });
+    const icon = h.native().findByProps({ testID: field + '-endpoint-icon' });
+    assert.equal(flatStyle(icon.props.style).backgroundColor, '#FFFFFF');
+    const glyph = icon.findByType(field === 'pickup' ? 'PickupIcon' : 'Icon');
+    assert.equal(glyph.props.color, '#101010');
+    assert.equal(h.native().props.anchor, anchor);
+  }
+  await h.update({ field: 'pickup', presentation: 'compact' });
+  const icon = h.native().findByProps({ testID: 'pickup-endpoint-icon' });
+  assert.deepEqual(icon.findAllByType('Text').map(node => node.children.join('')), ['6', 'мин']);
+  assert.ok(icon.findAllByType('Text').every(node => flatStyle(node.props.style).color === '#101010'));
+});
+
+test('driver letters persist after offer metrics disappear and do not turn into ETA or passenger icons', async t => {
+  const h = await mount(t, { appearance: 'driver', presentation: 'compact' });
+  assert.equal(h.native().findByProps({ testID: 'driver-pickup-letter' }).children.join(''), 'А');
+  assert.equal(h.native().findAllByType('PickupIcon').length, 0);
+  await h.update({ field: 'dropoff', routeLabel: '1 км · 2 мин' });
+  assert.equal(h.native().findByProps({ testID: 'driver-dropoff-letter' }).children.join(''), 'Б');
+  await h.update({ routeLabel: undefined, metrics: null, dark: true });
+  assert.deepEqual(h.texts(), ['Б']);
+  assert.equal(flatStyle(h.native().findByProps({ testID: 'driver-dropoff-letter' }).props.style).color, '#101010');
+});
+
+
+test('a completed style reload refreshes the current bitmap without remounting or moving the endpoint', async t => {
+  const h = await mount(t);
+  await h.flush();
+  const native = h.native(), anchor = native.props.anchor;
+  const before = h.refreshes;
+  await h.update({ styleRevision: 1 });
+  await h.flush();
+  assert.equal(h.refreshes, before + 1);
+  assert.equal(h.native(), native);
+  assert.equal(h.native().props.anchor, anchor);
+  await h.update({ styleRevision: 1 });
+  assert.equal(h.frames.size, 0, 'ordinary renders do not trigger refresh work');
 });

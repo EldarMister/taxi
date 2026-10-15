@@ -191,7 +191,7 @@ const detailedSiteLayers: StyleLayer[] = [
   // OpenMapTiles, whose kindergarten class is separate from school campuses.
   { id: 'site-kindergarten', type: 'fill', source: 'openmaptiles', 'source-layer': 'landuse', minzoom: 13,
     filter: ['==', ['get', 'class'], 'kindergarten'],
-    paint: { 'fill-color': '#E8EBFA', 'fill-outline-color': '#D4DAEF' } },
+    paint: { 'fill-color': '#D1CBEA', 'fill-outline-color': '#9B90C5' } },
   { id: 'site-stadium', type: 'fill', source: 'openmaptiles', 'source-layer': 'landuse', minzoom: 13,
     filter: ['==', ['get', 'class'], 'stadium'],
     paint: { 'fill-color': '#B4DCC3', 'fill-outline-color': '#68AD85' } },
