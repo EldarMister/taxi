@@ -24,10 +24,12 @@ const followCameraExports = {};
 vm.runInNewContext(compile('followCamera.ts'), { exports: followCameraExports });
 const mapRoadFeatureExports = {};
 vm.runInNewContext(compile('mapRoadFeatures.ts'), { exports: mapRoadFeatureExports });
+const routeFocusExports = {};
+vm.runInNewContext(compile('routeFocus.ts'), { exports: routeFocusExports });
 const feature = (latitude, longitude, properties = {}) => ({ type: 'Feature', geometry: { type: 'Point', coordinates: [longitude, latitude] }, properties });
 
 async function mountMap(t, initialProps, options = {}) {
-  const timers = new Map(), timerDurations = new Map(), frames = new Map(), cameraCalls = [], bounds = [], requests = [], headers = [], nativeShapes = new Map(), appListeners = new Set();
+  const timers = new Map(), timerDurations = new Map(), frames = new Map(), cameraCalls = [], bounds = [], requests = [], headers = [], nativeShapes = new Map(), appListeners = new Set(), annotationRefreshes = new Map();
   const animationClock = options.animationClock || { now: Date.now() };
   // UI fixtures default to a real 1 Hz moving GPS sample; motion-specific cases
   // explicitly supply measurement time, speed, accuracy and course.
@@ -44,6 +46,10 @@ async function mountMap(t, initialProps, options = {}) {
   });
   const nativeCamera = { setCamera: config => cameraCalls.push(config), fitBounds: (...args) => bounds.push(args) };
   const Camera = React.forwardRef((cameraProps, ref) => { React.useImperativeHandle(ref, () => nativeCamera); return React.createElement('Camera', cameraProps); });
+  const PointAnnotation = React.forwardRef((annotationProps, ref) => {
+    React.useImperativeHandle(ref, () => ({ refresh: () => annotationRefreshes.set(annotationProps.id, (annotationRefreshes.get(annotationProps.id) || 0) + 1) }), [annotationProps.id]);
+    return React.createElement('PointAnnotation', { ...annotationProps, testID: annotationProps.id });
+  });
   const NativeMap = React.forwardRef((mapProps, ref) => { React.useImperativeHandle(ref, () => ({
     getCenter: async () => options.mapCenter || null,
     getVisibleBounds: async () => options.mapBounds || [[74.6, 42.9], [74.58, 42.88]],
@@ -56,7 +62,7 @@ async function mountMap(t, initialProps, options = {}) {
     throw Error('Routing unavailable');
   } };
   const styles = {};
-  const playbackExports = {}, markerExports = {};
+  const playbackExports = {}, markerExports = {}, endpointExports = {};
   const runtime = {
     Date: class extends Date { static now() { return animationClock.now; } },
     performance: { now: () => animationClock.now },
@@ -64,6 +70,14 @@ async function mountMap(t, initialProps, options = {}) {
     cancelAnimationFrame: id => frames.delete(id),
   };
   vm.runInNewContext(compile('trackingPlayback.ts'), { ...runtime, exports: playbackExports });
+  vm.runInNewContext(compile('EndpointMarker.tsx'), { ...runtime, exports: endpointExports, require: id => {
+    if (id === 'react' || id === 'react/jsx-runtime') return require(id);
+    if (id === 'react-native') return { View: 'View', Text: 'Text', StyleSheet: { create: s => s } };
+    if (id === '@expo/vector-icons') return { Ionicons: { loadFont: async () => {} } };
+    if (id === '@maplibre/maplibre-react-native') return { PointAnnotation };
+    if (id === '../ui') return { Icon: 'Icon', PickupIcon: 'PickupIcon', colors: { blue: '#087FFF', ink: '#101D38' }, tr: () => value => value };
+    throw Error(id);
+  } });
   vm.runInNewContext(compile('DriverTrackingMarker.tsx'), { ...runtime, exports: markerExports, require: id => {
     if (id === 'react' || id === 'react/jsx-runtime') return require(id);
     if (id === 'react-native') return { AppState };
@@ -94,7 +108,7 @@ async function mountMap(t, initialProps, options = {}) {
         useReducedMotion: () => !!options.reducedMotion, withSpring: value => value, withTiming: (value, config) => { options.timingCalls?.push({ value, config }); return value; }, Easing: { bezier: (...values) => values }, ReduceMotion: { System: 'system' } };
       if (id === 'react-native-safe-area-context') return { useSafeAreaInsets: () => ({ top: 24, bottom: 24 }) };
       if (id === '../ui') return { Button: 'Button', Icon: 'Icon', PickupIcon: 'PickupIcon', colors: { blue: '#087FFF', ink: '#101D38' }, shortAddress: x => x || '', tr: () => value => value };
-      if (id === '@maplibre/maplibre-react-native') return { Camera, MapView: NativeMap, PointAnnotation: 'PointAnnotation', MarkerView: 'MarkerView', ShapeSource, LineLayer: 'LineLayer', CircleLayer: 'CircleLayer', SymbolLayer: 'SymbolLayer', FillLayer: 'FillLayer', UserLocation: 'UserLocation', addCustomHeader: (...args) => headers.push(args) };
+      if (id === '@maplibre/maplibre-react-native') return { Camera, MapView: NativeMap, PointAnnotation, MarkerView: 'MarkerView', ShapeSource, LineLayer: 'LineLayer', CircleLayer: 'CircleLayer', SymbolLayer: 'SymbolLayer', FillLayer: 'FillLayer', UserLocation: 'UserLocation', addCustomHeader: (...args) => headers.push(args) };
       if (id === '../api') return { api };
       if (id === './mapkit') return { BISHKEK: { latitude: 42.87, longitude: 74.57 }, reverseGeocode: async point => options.reverseGeocode ? options.reverseGeocode(point) : ({ ...point, address: 'Выбранная улица' }) };
       if (id === './location') return { getCurrentPosition: async () => {
@@ -109,6 +123,8 @@ async function mountMap(t, initialProps, options = {}) {
       if (id === './followCamera') return followCameraExports;
       if (id === './mapRoadFeatures') return mapRoadFeatureExports;
       if (id === './taxiMapStyle') return styles;
+      if (id === './EndpointMarker') return endpointExports;
+      if (id === './routeFocus') return routeFocusExports;
       throw Error(id);
     },
   });
@@ -135,7 +151,7 @@ async function mountMap(t, initialProps, options = {}) {
     if (delay != null && timerDurations.get(id) !== delay) continue;
     timers.delete(id); timerDurations.delete(id); callback();
   } });
-  return { renderer, map, update, ready, cameraCalls, bounds, requests, headers, timers, frames, advanceFrame, settle, shape, background, appListeners, flushTimers };
+  return { renderer, map, update, ready, cameraCalls, bounds, requests, headers, timers, frames, advanceFrame, settle, shape, background, appListeners, flushTimers, annotationRefreshes };
 }
 
 test('food map uses the shared arrival marker and hides its initial hint after two seconds', async t => {
@@ -389,13 +405,13 @@ test('center pin confirms the settled camera point, switches endpoints and brows
   await h.flushTimers();
   await act(async () => confirm().props.onPress()); assert.equal(selected[1].latitude, 42.91);
   await h.update({ selectionMode: null });
-  const markers = h.renderer.root.findAllByType('MarkerView');
-  await act(async () => { markers[0].findByType('Pressable').props.onPress(); markers[1].findByType('Pressable').props.onPress(); });
+  const markers = h.renderer.root.findAllByType('PointAnnotation');
+  await act(async () => { markers[0].props.onSelected(); markers[1].props.onSelected(); });
   assert.deepEqual(edited, ['pickup', 'dropoff']);
   const browsed = [];
   await h.update({ browsePickup: true, dropoff: null, focusPoint: null, onPickupChange: p => browsed.push(p) });
   assert.equal(h.renderer.root.findAllByType('Button').length, 0);
-  assert.equal(h.renderer.root.findAllByType('MarkerView').length, 0, 'home has only the fixed center pin');
+  assert.equal(h.renderer.root.findAllByType('PointAnnotation').length, 0, 'home has only the fixed center pin');
   await act(async () => h.map().props.onRegionWillChange(feature(42.88, 74.58, { isUserInteraction: true })));
   await act(async () => h.map().props.onRegionDidChange(feature(42.88, 74.58)));
   await act(async () => { for (const [id, callback] of [...h.timers]) { h.timers.delete(id); callback(); } });
@@ -410,6 +426,7 @@ test('pickup marker lifts above its anchored shadow and only displays a server E
     pickupEtaMinutes: 9.2, onMapMovingChange: value => movement.push(value), onSelectionPreview: value => preview.push(value),
   }, { reverseGeocode: point => new Promise(resolve => requests.push({ point, resolve })) });
   await h.ready();
+  await act(async () => h.map().props.onRegionDidChange(feature(42.87, 74.57, { zoomLevel: 16 })));
   const pin = () => h.renderer.root.findByProps({ testID: 'pickup-pin-visual' });
   const head = () => h.renderer.root.findByProps({ testID: 'pickup-pin-head' }).props.style.at(-1).evaluate();
   const metrics = () => pin().findByProps({ testID: 'pickup-pin-metrics' });
@@ -425,6 +442,8 @@ test('pickup marker lifts above its anchored shadow and only displays a server E
   assert.equal(pin().findByProps({ testID: 'pickup-pin-icon' }).props.style[0].backgroundColor, '#087FFF');
   assert.equal(metrics().props.style.at(-1).evaluate().opacity, 1);
   assert.equal(preview.at(-1).pending, false);
+  await act(async () => h.map().props.onRegionDidChange(feature(42.87, 74.57, { zoomLevel: 14 })));
+  assert.deepEqual(pin().findByProps({ testID: 'pickup-pin-icon' }).findAllByType('Text').map(node => node.children.join('')), ['10', 'мин']);
   await act(async () => h.map().props.onRegionWillChange(feature(42.88, 74.58, { isUserInteraction: true })));
   await act(async () => h.map().props.onRegionIsChanging(feature(42.881, 74.581, { isUserInteraction: true })));
   assert.deepEqual(movement, [true], 'the native per-frame event emits one state transition');
@@ -433,6 +452,7 @@ test('pickup marker lifts above its anchored shadow and only displays a server E
   assert.equal(shadow.props.style[0].bottom, 0, 'shadow is a stationary sibling of the lifted marker');
   assert.equal(shadow.props.style.at(-1).evaluate().transform[0].scale, 1.32);
   assert.equal(pin().findAllByType('Spinner').length, 0, 'dragging keeps the original icon');
+  assert.equal(pin().findByProps({ testID: 'pickup-pin-icon' }).findAllByType('PickupIcon').length, 1, 'moving an unresolved point cannot display the previous compact ETA');
   assert.equal(metrics().props.style.at(-1).evaluate().opacity, 0);
   await act(async () => h.map().props.onRegionDidChange(feature(42.881, 74.581)));
   assert.ok(head().transform[0].translateY === 0, 'the stem lands before the network request finishes');
@@ -532,38 +552,33 @@ test('old camera events cannot replace a newly opened destination or a tapped ma
   assert.deepEqual([...h.renderer.root.findByProps({ testID: 'pickup' }).props.coordinate], [pickup.longitude, pickup.latitude]);
 });
 
-test('pin metric badges animate on a fixed ground anchor and leave the other endpoint in place', async t => {
-  const timingCalls = [];
+test('committed metric badges keep a fixed bitmap anchor and leave the other endpoint in place', async t => {
   const pickup = { latitude: 42.87, longitude: 74.57 }, dropoff = { latitude: 42.9, longitude: 74.6 };
-  const h = await mountMap(t, { passengerView: true, pickup, dropoff, pickupEtaMinutes: 10 }, { timingCalls });
+  const h = await mountMap(t, { pickup, dropoff, pickupEtaMinutes: 10 });
   await h.ready();
   const marker = () => h.renderer.root.findByProps({ testID: 'pickup' });
-  const frame = () => marker().findByProps({ testID: 'pickup-pin-visual' });
+  const frame = () => marker().findByProps({ testID: 'pickup-endpoint-bitmap' });
   const anchor = { ...marker().props.anchor };
   const footprint = { ...frame().props.style };
   const nativeChild = () => marker().children[0];
   const nativeFootprint = { ...nativeChild().props.style };
-  const head = () => frame().findByProps({ testID: 'pickup-pin-head' }).props.style[0];
-  assert.equal(nativeFootprint.width, 160, 'the immediate JNI child has an explicit width rather than stretching to the map');
-  assert.equal(nativeFootprint.height, 96);
-  assert.equal(anchor.x, 26 / 160, 'native anchor uses the explicitly measured child width');
-  assert.equal(anchor.x * nativeFootprint.width, 26);
-  assert.equal(anchor.y * nativeFootprint.height, 90);
+  assert.equal(nativeFootprint.width, 360, 'every presentation is snapshotted on the same explicit canvas');
+  assert.equal(nativeFootprint.height, 112);
+  assert.equal(anchor.x, 130 / 360);
+  assert.equal(anchor.x * nativeFootprint.width, 130);
+  assert.equal(anchor.y * nativeFootprint.height, 104);
   assert.equal(nativeChild().props.collapsable, false);
   await h.update({ pickupEtaMinutes: undefined, selectionMode: 'dropoff' });
   assert.deepEqual({ ...marker().props.anchor }, anchor);
   assert.deepEqual({ ...frame().props.style }, footprint);
-  assert.equal(head().left, 0);
   await act(async () => h.map().props.onRegionWillChange(feature(42.94, 74.64, { isUserInteraction: true })));
   await h.update({ pickupEtaMinutes: null, pickupAvailability: 'unavailable' });
   assert.deepEqual([...marker().props.coordinate], [pickup.longitude, pickup.latitude]);
   assert.deepEqual({ ...frame().props.style }, footprint);
-  const badge = frame().findByProps({ testID: 'pickup-pin-metrics' });
+  const badge = frame().findByProps({ testID: 'pickup-endpoint-detail' });
   assert.deepEqual(badge.findAllByType('Text').map(node => node.children.join('')), ['Подача', 'Нет машин']);
   assert.equal(badge.props.style[0].left, 28, 'badge extends to the right within the constant marker footprint');
-  assert.ok(timingCalls.some(call => call.value === 1 && call.config.duration === 200));
-  assert.ok(timingCalls.some(call => call.value === 0 && call.config.duration === 200));
-  assert.deepEqual(Array.from(timingCalls.at(-1).config.easing), [.23, 1, .32, 1]);
+  assert.equal(h.renderer.root.findAllByType('MarkerView').length, 0, 'committed endpoints are rendered with the roads, outside the Android view overlay');
 });
 
 test('passenger back and location share one level, white backgrounds and the browse panel animation', async t => {
@@ -698,7 +713,7 @@ test('food destination uses the shared map with a custom panel and a settled geo
 test('white map controls zoom around the visible center and GPS recenters without changing pickup or bearing', async t => {
   const pickup = { latitude: 42.87, longitude: 74.57 };
   const options = { position: { latitude: 42.9, longitude: 74.6 }, mapCenter: [74.583, 42.881] };
-  const h = await mountMap(t, { passengerView: true, pickup, contentTopInset: 110 }, options);
+  const h = await mountMap(t, { pickup, contentTopInset: 110 }, options);
   await h.ready();
   assert.equal(h.map().props.rotateEnabled, true);
   const control = label => h.renderer.root.findByProps({ accessibilityLabel: label });
@@ -707,7 +722,7 @@ test('white map controls zoom around the visible center and GPS recenters withou
   assert.equal(control('Моё местоположение').findByType('Icon').props.color, '#111827');
   assert.equal(h.renderer.root.findByProps({ testID: 'map-zoom-controls' }).props.style[0].backgroundColor, '#FFFFFF');
   assert.equal(control('Моё местоположение').props.style({ pressed: false })[0].backgroundColor, '#FFFFFF');
-  assert.equal(h.renderer.root.findByProps({ testID: 'map-controls' }).props.style[2].top, 621, 'client controls clear the order panel');
+  assert.equal(h.renderer.root.findByProps({ testID: 'map-controls' }).props.style[2].top, 629, 'map controls clear the order panel');
   assert.equal(h.renderer.root.findByProps({ testID: 'map-viewport' }).props.style[1].bottom, 0);
   await act(async () => h.map().props.onRegionWillChange(feature(42.87, 74.57, { isUserInteraction: true, zoomLevel: 12, heading: 75 })));
   await act(async () => h.map().props.onRegionDidChange(feature(42.87, 74.57, { zoomLevel: 12, heading: 75 })));
@@ -739,7 +754,7 @@ test('client map controls rise above the point-selection sheet as its height cha
 });
 
 test('dark map keeps vector streets readable, uses monochrome controls and switches without moving the camera', async t => {
-  const h = await mountMap(t, { theme: 'dark', passengerView: true, pickup: { latitude: 42.87, longitude: 74.57 } });
+  const h = await mountMap(t, { theme: 'dark', pickup: { latitude: 42.87, longitude: 74.57 } });
   await h.ready();
   const style = h.map().props.mapStyle;
   assert.equal(style.name, 'Atlas · Night');
@@ -793,7 +808,7 @@ test('driver location control resumes follow and GPS errors are visible', async 
   assert.ok(Math.abs(h.cameraCalls.at(-1).centerCoordinate[0] - 74.57) < .000001);
   assert.ok(Math.abs(h.cameraCalls.at(-1).centerCoordinate[1] - 42.87) < .000001);
 
-  const withoutFix = await mountMap(t, { passengerView: true }, { locationError: new Error('Включите геолокацию в настройках устройства.') });
+  const withoutFix = await mountMap(t, {}, { locationError: new Error('Включите геолокацию в настройках устройства.') });
   await withoutFix.ready();
   await act(async () => withoutFix.renderer.root.findByProps({ accessibilityLabel: 'Моё местоположение' }).props.onPress());
   assert.equal(withoutFix.renderer.root.findByProps({ accessibilityRole: 'alert' }).findByType('Text').props.children, 'Включите геолокацию в настройках устройства.');
@@ -848,28 +863,29 @@ test('offer route badge sits above dropoff only while its distance and time are 
   const dropoff = { latitude: 42.91, longitude: 74.61 };
   const h = await mountMap(t, { pickup, dropoff, geometry: [pickup, dropoff] });
   const marker = id => h.renderer.root.findByProps({ testID: id });
-  assert.equal(marker('dropoff').props.anchor.y, 90 / 96, 'the stem and the center of the ground shadow share the destination coordinate');
+  assert.equal(marker('dropoff').props.anchor.y, 104 / 112, 'the bitmap ground has the same geographic anchor in every presentation');
   assert.equal(marker('dropoff').findAllByType('Text').length, 0);
 
   await h.update({ dropoffRouteLabel: '44 км · 1 ч 10 мин' });
   const badgeMarker = marker('dropoff');
   assert.equal(badgeMarker.props.coordinate[0], dropoff.longitude);
   assert.equal(badgeMarker.props.coordinate[1], dropoff.latitude);
-  assert.equal(badgeMarker.props.anchor.y, 1, 'the pin stem stays anchored to the destination coordinate');
+  assert.equal(badgeMarker.props.anchor.y, 104 / 112, 'showing a route badge does not change the destination anchor');
   const nativeBadgeBounds = badgeMarker.children[0].props.style;
-  assert.equal(nativeBadgeBounds.width, 174, 'driver offer badge sizes its immediate native child');
-  assert.equal(nativeBadgeBounds.height, 121);
-  assert.equal(nativeBadgeBounds.width * badgeMarker.props.anchor.x, 87, 'the driver destination stem is centered in its real native bounds');
-  assert.equal(nativeBadgeBounds.height * badgeMarker.props.anchor.y, 121, 'the stem ends at the geographic coordinate');
+  assert.equal(nativeBadgeBounds.width, 360);
+  assert.equal(nativeBadgeBounds.height, 112);
+  assert.equal(nativeBadgeBounds.width * badgeMarker.props.anchor.x, 130, 'the route badge uses the same canvas ground as the regular destination');
+  assert.equal(nativeBadgeBounds.height * badgeMarker.props.anchor.y, 104, 'the stem ends at the geographic coordinate');
   const pickupBounds = marker('pickup').children[0].props.style;
-  assert.equal(pickupBounds.width * marker('pickup').props.anchor.x, 26,
-    'the differently sized pickup and destination must each use their own native anchor');
-  assert.equal(marker('pickup').props.anchor.y, 90 / 96, 'pickup marker is unaffected');
-  assert.equal(badgeMarker.findAll(node => node.props.accessibilityLabel === 'Пункт назначения Б, 44 км · 1 ч 10 мин').length, 1);
-  assert.deepEqual(badgeMarker.findAllByType('Text').map(node => node.children.join('')), ['Б', '44 км', '1 ч 10 мин']);
+  assert.equal(pickupBounds.width * marker('pickup').props.anchor.x, 130, 'pickup and destination share the same bitmap ground');
+  assert.equal(marker('pickup').props.anchor.y, 104 / 112, 'pickup marker is unaffected');
+  assert.match(badgeMarker.findByProps({ testID: 'dropoff-endpoint-bitmap' }).props.accessibilityLabel, /44 км.*1 ч 10 мин/);
+  const badgeTexts = badgeMarker.findAllByType('Text').map(node => node.children.join(''));
+  assert.ok(badgeTexts.includes('44 км'));
+  assert.ok(badgeTexts.includes('1 ч 10 мин'));
 
   await h.update({ dropoffRouteLabel: undefined });
-  assert.equal(marker('dropoff').props.anchor.y, 90 / 96);
+  assert.equal(marker('dropoff').props.anchor.y, 104 / 112);
   assert.equal(marker('dropoff').findAllByType('Text').length, 0, 'regular route markers never retain the offer badge');
 });
 
@@ -1359,12 +1375,19 @@ test('dark approach route has a distinct amber line alongside the blue fare rout
   assert.equal(h.renderer.root.findByProps({ id: 'route-line' }).props.style.lineColor, '#57AAFF');
 });
 
-test('destination Б uses blue in the light theme and white in the dark theme', async t => {
+test('driver offer retains destination Б and its light and dark theme colours on the fixed bitmap', async t => {
   const h = await mountMap(t, { pickup: { latitude: 41.2, longitude: 72.18 }, dropoff: { latitude: 41.24, longitude: 72.22 }, dropoffRouteLabel: '0,5 км · 1 мин' });
-  const letter = () => h.renderer.root.findAllByType('Text').find(node => node.children.includes('Б'));
-  assert.equal(letter().parent.props.style[0].backgroundColor, '#246BFD');
+  const icon = () => h.renderer.root.findByProps({ testID: 'dropoff-endpoint-icon' });
+  const letter = () => h.renderer.root.findByProps({ testID: 'driver-destination-letter' });
+  assert.equal(icon().props.style[1].backgroundColor, '#246BFD');
+  assert.equal(icon().props.style[0].borderWidth, 2);
+  assert.equal(letter().children.join(''), 'Б');
+  assert.equal(letter().props.style[0].color, '#FFFFFF');
   await h.update({ theme: 'dark' });
-  assert.equal(letter().parent.props.style[1].backgroundColor, '#FFFFFF');
+  assert.equal(icon().props.style[2].backgroundColor, '#FFFFFF');
+  assert.equal(icon().props.style[0].borderWidth, 2);
+  assert.equal(letter().children.join(''), 'Б');
+  assert.equal(letter().props.style[1].color, '#101010');
 });
 
 test('passenger sees only the supplied driver and can inspect the route without camera resets', async t => {
@@ -1473,7 +1496,8 @@ test('new offer restores overview above tall panel after manual pan and style re
   await h.ready();
   assert.ok(h.bounds.at(-1)[2][2] >= 510);
   assert.equal(h.bounds.at(-1)[1][0], driverPosition.longitude);
-  for (const marker of h.renderer.root.findAllByType('MarkerView')) assert.equal(marker.props.allowOverlap, true);
+  assert.equal(h.renderer.root.findAllByType('MarkerView').length, 0, 'offer endpoints do not use Android view overlays');
+  for (const marker of h.renderer.root.findAllByType('PointAnnotation')) assert.equal(marker.props.draggable, false);
   await act(async () => h.map().props.onRegionWillChange(feature(42, 74, { isUserInteraction: true })));
   const before = h.bounds.length;
   await h.update({ cameraSession: 'offer-two:SEARCHING' });
@@ -1580,62 +1604,210 @@ test('incoming offer waits for its own measured panel and does not refit on ever
 
 test('pickup marker distinguishes unavailable cars from a missing ETA and keeps unknown availability neutral', async t => {
   const pickup = { latitude: 42.87, longitude: 74.57 };
-  const h = await mountMap(t, { pickup, pickupEtaMinutes: null });
-  const texts = () => h.renderer.root.findByProps({ testID: 'pickup-pin-visual' }).findAllByType('Text').map(node => node.children.join(''));
-  const opacity = () => h.renderer.root.findByProps({ testID: 'pickup-pin-metrics' }).props.style.at(-1).evaluate().opacity;
+  const h = await mountMap(t, { passengerView: true, pickup, pickupEtaMinutes: null });
+  const texts = () => h.renderer.root.findByProps({ testID: 'pickup-endpoint-bitmap' }).findAllByType('Text').map(node => node.children.join(''));
   assert.deepEqual(texts(), [], 'a null ETA alone cannot claim that no cars exist');
   await h.update({ pickupAvailability: 'available' });
   assert.deepEqual(texts(), ['Подача', '—'], 'available cars with a failed route estimate have no invented ETA');
   await h.update({ pickupAvailability: 'unavailable', pickupEtaMinutes: 2 });
   assert.deepEqual(texts(), ['Подача', 'Нет машин'], 'current availability overrides a stale ETA');
   await h.update({ pickupAvailability: 'unknown', pickupEtaMinutes: null });
-  assert.equal(opacity(), 0, 'unknown availability hides a stale no-cars badge');
+  assert.equal(h.renderer.root.findAllByProps({ testID: 'pickup-endpoint-detail' }).length, 0, 'unknown availability removes a stale no-cars bitmap label');
 });
 
 test('destination marker retains the server trip time with no fare while no cars are available', async t => {
   const pickup = { latitude: 42.87, longitude: 74.57 }, dropoff = { latitude: 42.9, longitude: 74.6 };
   const h = await mountMap(t, { pickup, dropoff, dropoffEstimate: { durationMinutes: 1.5167, price: null } });
-  const texts = () => h.renderer.root.findByProps({ testID: 'dropoff-pin-visual' }).findAllByType('Text').map(node => node.children.join(''));
+  const texts = () => h.renderer.root.findByProps({ testID: 'dropoff-endpoint-bitmap' }).findAllByType('Text').map(node => node.children.join(''));
   assert.deepEqual(texts(), ['Ехать 2 мин', '—']);
   await h.update({ dropoffEstimate: { durationMinutes: 1.5167, price: 87 } });
   assert.deepEqual(texts(), ['Ехать 2 мин', '87 сом']);
 });
 
-test('native MarkerView ground uses immediate child bounds through viewport changes, pan and zoom', async t => {
+test('GL endpoint bitmaps retain their coordinates and ground anchor through viewport changes, pan and zoom', async t => {
   const pickup = { latitude: 42.87, longitude: 74.57 }, dropoff = { latitude: 42.9, longitude: 74.6 };
   const h = await mountMap(t, { pickup, dropoff, pickupEtaMinutes: 4, dropoffEstimate: { durationMinutes: 2, price: 87 } });
   await h.ready();
-  // Installed MLRNMarkerView.onUpdate subtracts getWidth/getHeight of its
-  // immediate child from Projection.toScreenLocation, in native physical pixels.
-  // A nested fixed frame cannot prevent an auto-width native child stretching.
-  const assertNativeGround = (field, viewportWidth, density, projected) => {
+  const assertBitmapGround = field => {
     const marker = h.renderer.root.findByProps({ testID: field });
     const directChild = marker.children[0];
-    const visual = marker.findByProps({ testID: `${field}-pin-visual` });
-    const shadow = visual.findByProps({ testID: `${field}-pin-shadow` }).props.style[0];
-    const childWidth = directChild.props.style?.width ?? viewportWidth;
-    const childHeight = directChild.props.style?.height ?? visual.props.style.height;
+    assert.equal(marker.type, 'PointAnnotation', 'committed endpoints use the map renderer rather than a separate Android View layer');
+    const visual = marker.findByProps({ testID: `${field}-endpoint-bitmap` });
+    const shadow = visual.findByProps({ testID: `${field}-endpoint-shadow` }).props.style;
+    const childWidth = directChild.props.style.width;
+    const childHeight = directChild.props.style.height;
     const shadowX = shadow.left + shadow.width / 2;
-    const shadowY = visual.props.style.height - shadow.bottom - shadow.height / 2;
-    const groundX = projected[0] - childWidth * density * marker.props.anchor.x + shadowX * density;
-    const groundY = projected[1] - childHeight * density * marker.props.anchor.y + shadowY * density;
-    assert.ok(Math.abs(groundX - projected[0]) < .01, `${field} ground moved by ${groundX - projected[0]} native pixels`);
-    assert.ok(Math.abs(groundY - projected[1]) < .01, `${field} ground moved by ${groundY - projected[1]} native pixels`);
-    assert.equal(visual.findByProps({ testID: `${field}-pin-icon` }).props.style[0].borderWidth, 2);
+    const shadowY = shadow.top + shadow.height / 2;
+    assert.equal(childWidth, 360);
+    assert.equal(childHeight, 112);
+    assert.equal(childWidth * marker.props.anchor.x, shadowX);
+    assert.equal(childHeight * marker.props.anchor.y, shadowY);
+    assert.equal(visual.findByProps({ testID: `${field}-endpoint-icon` }).props.style.borderWidth, 2);
   };
-  for (const [width, height, density, zoom] of [[487, 980, 1.75, 14], [320, 700, 1, 18], [720, 480, 2.625, 12]]) {
+  for (const [width, height, zoom] of [[487, 980, 14], [320, 700, 18], [720, 480, 12]]) {
     await act(async () => {
       h.renderer.root.findByProps({ testID: 'map-viewport' }).props.onLayout({ nativeEvent: { layout: { width, height } } });
       h.map().props.onRegionWillChange(feature(42.94, 74.64, { isUserInteraction: true, zoomLevel: zoom, heading: 83 }));
       h.map().props.onRegionDidChange(feature(42.94, 74.64, { zoomLevel: zoom, heading: 83 }));
     });
-    assertNativeGround('pickup', width, density, [168, 1070]);
-    assertNativeGround('dropoff', width, density, [684, 368]);
+    await h.settle(120);
+    const refreshCounts = Array.from(h.annotationRefreshes.entries());
+    await act(async () => {
+      for (let index = 0; index < 8; index++) h.map().props.onRegionIsChanging(feature(42.94 + index * .0001, 74.64, { isUserInteraction: true, zoomLevel: zoom + .01, heading: 83 }));
+      h.map().props.onRegionDidChange(feature(42.941, 74.64, { zoomLevel: zoom + .01, heading: 83 }));
+    });
+    await h.settle(120);
+    assert.deepEqual(Array.from(h.annotationRefreshes.entries()), refreshCounts, 'continuous pan and zoom without a presentation change never rebuild endpoint bitmaps every frame');
+    assertBitmapGround('pickup');
+    assertBitmapGround('dropoff');
     await h.update({ pickupEtaMinutes: undefined, dropoffEstimate: null });
-    assertNativeGround('pickup', width, density, [333.25, 427.5]);
-    assertNativeGround('dropoff', width, density, [517.8, 102.25]);
+    assertBitmapGround('pickup');
+    assertBitmapGround('dropoff');
     assert.deepEqual([...h.renderer.root.findByProps({ testID: 'pickup' }).props.coordinate], [pickup.longitude, pickup.latitude]);
     assert.deepEqual([...h.renderer.root.findByProps({ testID: 'dropoff' }).props.coordinate], [dropoff.longitude, dropoff.latitude]);
     await h.update({ pickupEtaMinutes: 4, dropoffEstimate: { durationMinutes: 2, price: 87 } });
+    await h.settle(120);
   }
+});
+
+test('client booking control cycles pickup, destination and complete road geometry without requesting GPS or editing endpoints', async t => {
+  const pickup = { latitude: 42.87, longitude: 74.57 }, dropoff = { latitude: 42.9, longitude: 74.6 };
+  const bend = { latitude: 42.94, longitude: 74.65 };
+  let gpsRequests = 0;
+  const edits = [], selections = [];
+  const h = await mountMap(t, { passengerView: true, pickup, dropoff, geometry: [pickup, bend, dropoff],
+    pickupEtaMinutes: 6, onBack: () => {}, onEditPoint: field => edits.push(field), onSelectPoint: point => selections.push(point),
+    contentBottomInset: 350,
+  }, { getPosition: async () => { gpsRequests++; return { latitude: 43, longitude: 75 }; } });
+  await h.ready();
+  const control = () => h.renderer.root.findByProps({ testID: 'passenger-map-route-focus' });
+  const coordinates = field => [...h.renderer.root.findByProps({ testID: field }).props.coordinate];
+  const assertFocusedPointVisible = point => {
+    const camera = h.cameraCalls.at(-1);
+    const mercatorY = latitude => (1 - Math.log(Math.tan(latitude * Math.PI / 180)
+      + 1 / Math.cos(latitude * Math.PI / 180)) / Math.PI) / 2;
+    const markerY = 914 / 2 + (mercatorY(point.latitude) - mercatorY(camera.centerCoordinate[1])) * 512 * 2 ** camera.zoomLevel;
+    assert.equal(camera.centerCoordinate[0], point.longitude);
+    assert.ok(markerY >= 90 && markerY < 914 - 350 - 20, `focused marker at ${markerY}px must be visible above the booking sheet`);
+  };
+  assert.equal(control().props.accessibilityLabel, 'Место подачи');
+  assert.equal(h.renderer.root.findAllByProps({ accessibilityLabel: 'Моё местоположение' }).length, 0);
+  await act(async () => control().props.onPress());
+  assertFocusedPointVisible(pickup);
+  assert.deepEqual(h.renderer.root.findByProps({ testID: 'pickup-endpoint-detail' }).findAllByType('Text').map(node => node.children.join('')), ['Место подачи ›', 'Изменить']);
+  assert.equal(control().props.accessibilityLabel, 'Место назначения');
+  await act(async () => control().props.onPress());
+  assertFocusedPointVisible(dropoff);
+  assert.deepEqual(h.renderer.root.findByProps({ testID: 'dropoff-endpoint-detail' }).findAllByType('Text').map(node => node.children.join('')), ['Место назначения ›', 'Изменить']);
+  assert.equal(control().props.accessibilityLabel, 'Показать весь маршрут');
+  const overviewCount = h.bounds.length;
+  await act(async () => control().props.onPress());
+  assert.equal(h.bounds.length, overviewCount + 1);
+  const [ne, sw, padding] = h.bounds.at(-1);
+  assert.ok(ne[0] >= bend.longitude && ne[1] >= bend.latitude, 'overview contains the complete road, including its bend');
+  assert.ok(sw[0] <= pickup.longitude && sw[1] <= pickup.latitude);
+  assert.ok(padding[2] >= 350, 'overview clears the booking panel');
+  assert.equal(control().props.accessibilityLabel, 'Место подачи');
+  assert.deepEqual(coordinates('pickup'), [pickup.longitude, pickup.latitude]);
+  assert.deepEqual(coordinates('dropoff'), [dropoff.longitude, dropoff.latitude]);
+  assert.equal(gpsRequests, 0);
+  assert.deepEqual(edits, []);
+  assert.deepEqual(selections, []);
+});
+
+test('a real map gesture dismisses the endpoint callout while keeping the next booking control action', async t => {
+  const pickup = { latitude: 42.87, longitude: 74.57 }, dropoff = { latitude: 42.9, longitude: 74.6 };
+  const h = await mountMap(t, { passengerView: true, pickup, dropoff, pickupEtaMinutes: 6, onBack: () => {} });
+  await h.ready();
+  const control = () => h.renderer.root.findByProps({ testID: 'passenger-map-route-focus' });
+  const focused = () => h.renderer.root.findAllByType('Text').some(node => node.children.join('') === 'Место подачи ›');
+  await act(async () => control().props.onPress());
+  assert.equal(focused(), true);
+  await act(async () => h.map().props.onRegionDidChange(feature(pickup.latitude, pickup.longitude, { zoomLevel: 16 })));
+  assert.equal(focused(), true, 'the camera animation completion must not dismiss its own callout');
+  await act(async () => h.map().props.onRegionWillChange(feature(42.88, 74.58, { isUserInteraction: true, zoomLevel: 15.7 })));
+  assert.equal(focused(), false, 'a map gesture restores the regular pickup marker without entering point selection');
+  assert.equal(control().props.accessibilityLabel, 'Место назначения');
+  assert.deepEqual([...h.renderer.root.findByProps({ testID: 'pickup' }).props.coordinate], [pickup.longitude, pickup.latitude]);
+  assert.deepEqual([...h.renderer.root.findByProps({ testID: 'dropoff' }).props.coordinate], [dropoff.longitude, dropoff.latitude]);
+});
+
+test('selecting a committed client endpoint focuses it before a second tap edits that endpoint', async t => {
+  const pickup = { latitude: 42.87, longitude: 74.57 }, dropoff = { latitude: 42.9, longitude: 74.6 };
+  const edits = [];
+  const h = await mountMap(t, { passengerView: true, pickup, dropoff, onBack: () => {}, onEditPoint: field => edits.push(field) });
+  await h.ready();
+  const destination = () => h.renderer.root.findByProps({ testID: 'dropoff' });
+  await act(async () => destination().props.onSelected());
+  assert.deepEqual(edits, [], 'focusing the destination does not open its address editor');
+  assert.ok(h.renderer.root.findAllByType('Text').some(node => node.children.join('') === 'Место назначения ›'));
+  await act(async () => destination().props.onSelected());
+  assert.deepEqual(edits, ['dropoff']);
+});
+
+test('passenger overlays hide both exit and right map control and destination selection never requests GPS', async t => {
+  const pickup = { latitude: 42.87, longitude: 74.57 }, dropoff = { latitude: 42.9, longitude: 74.6 };
+  let gpsRequests = 0;
+  const h = await mountMap(t, { passengerView: true, pickup, browsePickup: true, onBack: () => {} },
+    { getPosition: async () => { gpsRequests++; return pickup; } });
+  await h.ready();
+  const gps = () => h.renderer.root.findAllByProps({ accessibilityLabel: 'Моё местоположение' });
+  assert.equal(gps().length, 1);
+  await act(async () => gps()[0].props.onPress());
+  assert.equal(gpsRequests, 1, 'pickup browsing can use the current position');
+  await h.update({ passengerControlsVisible: false });
+  assert.equal(h.renderer.root.findAllByProps({ testID: 'passenger-map-back' }).length, 0);
+  assert.equal(gps().length, 0);
+  await h.update({ passengerControlsVisible: true, browsePickup: false, selectionMode: 'dropoff', dropoff });
+  assert.equal(gps().length, 0, 'destination editing never offers a GPS pickup action');
+  assert.equal(h.renderer.root.findAllByProps({ testID: 'passenger-map-route-focus' }).length, 0, 'the booking cycle is hidden during address selection');
+  assert.equal(gpsRequests, 1);
+  await h.update({ selectionMode: null });
+  assert.equal(h.renderer.root.findAllByProps({ testID: 'passenger-map-route-focus' }).length, 1);
+  await h.update({ passengerControlsVisible: false });
+  assert.equal(h.renderer.root.findAllByProps({ testID: 'passenger-map-route-focus' }).length, 0);
+  assert.equal(h.renderer.root.findAllByProps({ testID: 'passenger-map-back' }).length, 0);
+});
+
+test('client pickup switches between ETA-only and detailed content across the zoom dead band without changing its geographic point', async t => {
+  const pickup = { latitude: 42.87, longitude: 74.57 }, dropoff = { latitude: 42.9, longitude: 74.6 };
+  const h = await mountMap(t, { passengerView: true, pickup, dropoff, pickupEtaMinutes: 6, onBack: () => {} });
+  await h.ready();
+  const marker = () => h.renderer.root.findByProps({ testID: 'pickup' });
+  const original = marker();
+  const anchor = { ...marker().props.anchor };
+  const icon = () => h.renderer.root.findByProps({ testID: 'pickup-endpoint-icon' });
+  const zoom = async level => act(async () => h.map().props.onRegionDidChange(feature(42.88, 74.58, { zoomLevel: level })));
+  assert.deepEqual(icon().findAllByType('Text').map(node => node.children.join('')), ['6', 'мин']);
+  assert.equal(icon().findAllByType('PickupIcon').length, 0);
+  await zoom(14.7);
+  assert.deepEqual(icon().findAllByType('Text').map(node => node.children.join('')), ['6', 'мин']);
+  await zoom(15);
+  assert.equal(icon().findAllByType('PickupIcon').length, 1);
+  assert.deepEqual(h.renderer.root.findByProps({ testID: 'pickup-endpoint-detail' }).findAllByType('Text').map(node => node.children.join('')), ['Подача', '6 мин']);
+  await zoom(14.7);
+  assert.equal(icon().findAllByType('PickupIcon').length, 1, 'a pinch close to the threshold cannot alternate marker layouts');
+  await zoom(14.5);
+  assert.deepEqual(icon().findAllByType('Text').map(node => node.children.join('')), ['6', 'мин']);
+  assert.equal(marker(), original, 'presentation changes keep the existing native annotation');
+  assert.deepEqual({ ...marker().props.anchor }, anchor);
+  assert.deepEqual([...marker().props.coordinate], [pickup.longitude, pickup.latitude]);
+});
+
+test('delivery keeps its GPS control with both endpoints without changing either selected address', async t => {
+  const pickup = { latitude: 42.87, longitude: 74.57 }, dropoff = { latitude: 42.9, longitude: 74.6 };
+  const position = { latitude: 42.885, longitude: 74.595 };
+  let gpsRequests = 0;
+  const pickupChanges = [];
+  const h = await mountMap(t, { passengerView: true, pickup, dropoff, geometry: [pickup, dropoff],
+    centerInVisibleArea: true, contentBottomInset: 350, onPickupChange: point => pickupChanges.push(point),
+  }, { getPosition: async () => { gpsRequests++; return position; } });
+  await h.ready();
+  const gps = h.renderer.root.findByProps({ accessibilityLabel: 'Моё местоположение' });
+  await act(async () => gps.props.onPress());
+  assert.equal(gpsRequests, 1);
+  assert.equal(h.cameraCalls.at(-1).centerCoordinate[0], position.longitude);
+  assert.deepEqual([...h.renderer.root.findByProps({ testID: 'pickup' }).props.coordinate], [pickup.longitude, pickup.latitude]);
+  assert.deepEqual([...h.renderer.root.findByProps({ testID: 'dropoff' }).props.coordinate], [dropoff.longitude, dropoff.latitude]);
+  assert.deepEqual(pickupChanges, []);
 });

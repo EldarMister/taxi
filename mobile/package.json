@@ -4,6 +4,7 @@
   "private": true,
   "main": "index.ts",
   "scripts": {
+    "postinstall": "node scripts/patch-maplibre-point-annotations.cjs",
     "version:bump": "node scripts/bump-release-version.cjs",
     "start": "node scripts/run-app-variant.cjs client start --dev-client",
     "start:client": "node scripts/run-app-variant.cjs client start --dev-client",
@@ -28,7 +29,7 @@
     "credentials:android:client": "node scripts/run-eas-variant.cjs client credentials --platform android",
     "credentials:android:driver": "node scripts/run-eas-variant.cjs driver credentials --platform android",
     "typecheck": "tsc --noEmit",
-    "test:native": "node --test tests/native-lifecycle.test.cjs tests/app-variant.test.cjs tests/location.test.cjs tests/map-selection.test.cjs tests/map-panel-layout.test.cjs tests/car-route-animation.test.cjs tests/road-match.test.cjs tests/driver-availability.test.cjs tests/permission-onboarding.test.cjs tests/permission-flow.test.cjs tests/push-permissions.test.cjs tests/theme.test.cjs tests/client-history.test.cjs tests/driver-history.test.cjs tests/driver-account.test.cjs tests/chat-overlay.test.cjs tests/service-home.test.cjs",
+    "test:native": "node --test tests/native-lifecycle.test.cjs tests/app-variant.test.cjs tests/location.test.cjs tests/map-selection.test.cjs tests/endpoint-marker.test.cjs tests/route-focus.test.cjs tests/maplibre-point-annotation-patch.test.cjs tests/map-panel-layout.test.cjs tests/car-route-animation.test.cjs tests/road-match.test.cjs tests/driver-availability.test.cjs tests/permission-onboarding.test.cjs tests/permission-flow.test.cjs tests/push-permissions.test.cjs tests/theme.test.cjs tests/client-history.test.cjs tests/driver-history.test.cjs tests/driver-account.test.cjs tests/chat-overlay.test.cjs tests/service-home.test.cjs",
     "test:history": "node --test tests/client-history.test.cjs tests/driver-history.test.cjs",
     "test:account": "node --test tests/driver-account.test.cjs tests/theme.test.cjs tests/push-permissions.test.cjs tests/language-store.test.cjs",
     "test:variant": "node --test tests/app-variant.test.cjs",

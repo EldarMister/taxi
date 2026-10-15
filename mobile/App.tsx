@@ -232,6 +232,7 @@ function TaxiApp() {
   const [deliveryDetails, setDeliveryDetails] = useState(emptyDeliveryDetails);
   const [rideDetails, setRideDetails] = useState(emptyRideDetails);
   const [bookingHeight, setBookingHeight] = useState(166);
+  const [bookingMapControlsVisible, setBookingMapControlsVisible] = useState(false);
   const [driverCompletionHeight, setDriverCompletionHeight] = useState(520);
   const [coming, setComing] = useState(false);
   const [clock, setClock] = useState(Date.now());
@@ -1507,6 +1508,7 @@ function TaxiApp() {
               routeOverview={mapRoutes.routeOverview}
               driverPosition={(driver ? navigation.position : tracking.position) || undefined}
               passengerView={!driver}
+              passengerControlsVisible={driver || page === 'home' && !addressField && !drawer && !chat && (service !== 'taxi' || !!order || !!mapSelection || bookingMapControlsVisible)}
               cameraReady={!driver || driverPanelReady}
               stableOverview={driver && !!offer}
               cameraSession={`${displayed?.id || 'idle'}:${displayed?.status || 'idle'}`}
@@ -1571,6 +1573,7 @@ function TaxiApp() {
               pickupAvailability={pickupAvailability} routeDurationSeconds={mapTripEstimateBase?.durationSeconds}
               quote={quote} previewQuote={previewQuote} quotes={quotes} calculating={calculating} quoteError={quoteError} bookingError={error} busy={busy}
               language={user.language} details={rideDetails} onDetails={setRideDetails}
+              onMapControlsVisibleChange={setBookingMapControlsVisible}
               onAddress={setAddressField} registerAddressOpener={registerAddressOpener} onTariff={setTariffId} hidden={!!mapSelection || !!addressField} mapMoving={mapMoving} browseOffset={taxiBrowseOffset} onHeight={setBookingHeight}
               onSwap={() => { setPickup(dropoff); setDropoff(pickup); setRideDetails(current => ({ ...current, entrance: '' })); }}
               onBook={book}

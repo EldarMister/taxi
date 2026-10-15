@@ -3,7 +3,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, Linking, Pressable, StyleSheet, Text, View } from 'react-native';
 import Svg, { Path } from 'react-native-svg';
 import * as Device from 'expo-device';
-import { Camera, MapView, MarkerView, ShapeSource, LineLayer, FillLayer, SymbolLayer, UserLocation, addCustomHeader, type CameraRef, type MapViewRef } from '@maplibre/maplibre-react-native';
+import { Camera, MapView, ShapeSource, LineLayer, FillLayer, SymbolLayer, UserLocation, addCustomHeader, type CameraRef, type MapViewRef } from '@maplibre/maplibre-react-native';
 import { Button, Icon, PickupIcon, colors, shortAddress, tr } from '../ui';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { api } from '../api';
@@ -18,6 +18,8 @@ import { carMetresBetween as metresBetween } from './carRouteAnimation';
 import { darkRasterMapFallback, mapStyleForLanguage, rasterMapFallback } from './taxiMapStyle';
 import { alignCrossingsToRoads, crossingMarkings, validMapRoadFeature, type MapRoadFeature } from './mapRoadFeatures';
 import type { Language } from '../types';
+import { EndpointMarker } from './EndpointMarker';
+import { canLocatePickup, clearRouteFocusCallout, compactPickupForZoom, initialRouteFocus, reconcileRouteFocus, stepRouteFocus } from './routeFocus';
 
 export { searchAddresses, reverseGeocode } from './mapkit';
 export type { MapPoint } from './mapkit';
@@ -41,6 +43,7 @@ export interface TaxiMapProps {
   theme?: 'light' | 'dark';
   language?: Language;
   passengerView?: boolean;
+  passengerControlsVisible?: boolean;
   cameraSession?: string;
   cameraReady?: boolean;
   stableOverview?: boolean;
@@ -114,14 +117,16 @@ const PIN_HEIGHT = 96;
 const PIN_EASE_OUT = Easing.bezier(.23, 1, .32, 1);
 
 /** The bottom shadow stays at the coordinate while only the head and stem lift. */
-function SelectionPin({ field, moving = false, pending = false, loading = false, dark, metrics }: {
+function SelectionPin({ field, moving = false, pending = false, loading = false, dark, metrics, compact = false, etaMinutes, minuteLabel = 'мин' }: {
   field: 'pickup' | 'dropoff'; moving?: boolean; pending?: boolean; loading?: boolean; dark: boolean;
   metrics?: { label: string; value: string } | null;
+  compact?: boolean; etaMinutes?: number | null; minuteLabel?: string;
 }) {
   const reducedMotion = useReducedMotion();
   const lift = useSharedValue(0);
   const metricsProgress = useSharedValue(0);
-  const visibleMetrics = !pending && !moving ? metrics : null;
+  const timeOnly = field === 'pickup' && compact && !pending && !moving && etaMinutes != null && Number.isFinite(etaMinutes) && etaMinutes >= 0;
+  const visibleMetrics = !pending && !moving && !timeOnly ? metrics : null;
   const [displayMetrics, setDisplayMetrics] = useState(metrics ?? null);
   useEffect(() => {
     if (visibleMetrics) setDisplayMetrics(visibleMetrics);
@@ -154,7 +159,8 @@ function SelectionPin({ field, moving = false, pending = false, loading = false,
       <View style={[styles.pinBadge, dark && styles.darkPinBadge]}>
         <View testID={`${field}-pin-icon`} style={[styles.pinIcon, dark && styles.darkPinBody]}>
           {loading ? reducedMotion ? <Icon name="ellipsis-horizontal" color={dark ? '#101010' : '#FFFFFF'} size={24}/> : <ActivityIndicator testID={`${field}-pin-loading`} color={dark ? '#101010' : '#FFFFFF'} size="small"/>
-            : field === 'pickup' ? <PickupIcon color={dark ? '#101010' : '#FFFFFF'} size={24}/> : <Icon name="flag" color={dark ? '#101010' : '#FFFFFF'} size={24}/>}
+            : timeOnly ? <><Text style={[styles.compactPinTime, dark && { color: '#101010' }]}>{Math.max(1, Math.ceil(etaMinutes!))}</Text><Text style={[styles.compactPinUnit, dark && { color: '#101010' }]}>{minuteLabel}</Text></>
+              : field === 'pickup' ? <PickupIcon color={dark ? '#101010' : '#FFFFFF'} size={24}/> : <Icon name="flag" color={dark ? '#101010' : '#FFFFFF'} size={24}/>}
         </View>
       </View>
       <View style={[styles.pinStem, dark && styles.darkStem]}/>
@@ -167,7 +173,7 @@ export default function TaxiMap({
   language = 'ru',
   pickup, dropoff, dropoffRouteLabel, pickupEtaMinutes, pickupAvailability = 'unknown', dropoffEstimate, geometry, approachGeometry, routeOverview = false, onSelectPoint, onEditPoint, onSearchPoint, onPanelHeight,
   focusPoint, browsePickup = false, preferPickupCenter = false, onPickupChange, onSelectionPreview, onMapMovingChange, onBack, backLabel, browseControlsOffset, selectionMode, selectionTitle, renderSelectionPanel, selectionAppearance = 'default', onSelectionInteraction, recenterKey,
-  showUserPosition = false, onUserLocation, contentTopInset = 0, contentBottomInset = 0, animatedBottomInset, centerInVisibleArea = false, selecting = false, driverPosition, passengerView = false, cameraSession = '',
+  showUserPosition = false, onUserLocation, contentTopInset = 0, contentBottomInset = 0, animatedBottomInset, centerInVisibleArea = false, selecting = false, driverPosition, passengerView = false, passengerControlsVisible = true, cameraSession = '',
   navigationActive = false, followDriver = false, onFollowDriverChange, cameraReady = true, stableOverview = false,
 }: TaxiMapProps) {
   const t = tr(language);
@@ -218,6 +224,8 @@ export default function TaxiMap({
   const [locating, setLocating] = useState(false);
   const center = pickup ?? BISHKEK;
   const initialCamera = useRef({ centerCoordinate: toCoordinate(driverPosition ?? center), zoomLevel: 14 });
+  const [routeFocus, setRouteFocus] = useState(initialRouteFocus);
+  const [compactPickup, setCompactPickup] = useState(() => compactPickupForZoom(false, initialCamera.current.zoomLevel));
   const zoomLevel = useRef(initialCamera.current.zoomLevel);
   const observedZoom = useRef(initialCamera.current.zoomLevel);
   const observedPitch = useRef(0);
@@ -230,6 +238,18 @@ export default function TaxiMap({
   const locatingRef = useRef(false);
   const picking = !!selectionMode || browsePickup;
   const selectionField = selectionMode === 'dropoff' ? 'dropoff' : 'pickup';
+  const routeControls = passengerView && !!pickup && !!dropoff && !picking && selectionAppearance === 'default' && !!onBack;
+  const pickupLocationAllowed = canLocatePickup({ field: picking ? selectionField : null, dropoff, blocked: !passengerControlsVisible });
+  const passengerLocationAllowed = !onBack || selectionAppearance === 'food' || pickupLocationAllowed;
+  useEffect(() => {
+    setRouteFocus(previous => reconcileRouteFocus(previous, { pickup, dropoff }));
+  }, [pickup?.latitude, pickup?.longitude, dropoff?.latitude, dropoff?.longitude]);
+  useEffect(() => {
+    setRouteFocus(initialRouteFocus());
+  }, [cameraSession.split(':')[0], recenterKey]);
+  useEffect(() => {
+    if (picking || !passengerControlsVisible) setRouteFocus(previous => clearRouteFocusCallout(previous));
+  }, [picking, passengerControlsVisible]);
   const clearAddressSpinner = () => {
     if (addressSpinnerTimer.current) clearTimeout(addressSpinnerTimer.current);
     addressSpinnerTimer.current = null;
@@ -433,6 +453,7 @@ export default function TaxiMap({
   };
   const locateOnMap = async () => {
     if (!attached || locatingRef.current) return;
+    if (passengerView && !driverPosition && !passengerLocationAllowed) return;
     setLocationError('');
     if (markerPoint && isMapPoint(markerPoint)) {
       followPaused.current = false;
@@ -468,6 +489,43 @@ export default function TaxiMap({
         setLocating(false);
       }
     }
+  };
+  const focusEndpointCamera = (field: 'pickup' | 'dropoff', point: MapPoint) => {
+    if (!attached || !isMapPoint(point) || viewport.height <= 0) return;
+    manualCamera.current = true;
+    followPaused.current = true;
+    followPose.current = null;
+    setPassengerFollowing(false);
+    setRouteFocus({ next: field === 'pickup' ? 'dropoff' : 'route', callout: field });
+    const zoom = 16;
+    const cameraPoint = centerPointInVisibleArea(point, zoom, viewport.height, contentTopInset, contentBottomInset);
+    cameraCenter.current = toCoordinate(cameraPoint);
+    cameraHeading.current = 0;
+    zoomLevel.current = zoom;
+    cameraPadding.current = { paddingTop: 0, paddingBottom: 0, paddingLeft: 0, paddingRight: 0 };
+    camera.current?.setCamera({ centerCoordinate: cameraCenter.current, zoomLevel: zoom, heading: 0, pitch: 0,
+      padding: cameraPadding.current, animationDuration: 300, animationMode: 'easeTo' });
+  };
+  const cycleRouteFocus = () => {
+    if (!attached || !routeControls || !passengerControlsVisible) return;
+    const transition = stepRouteFocus(routeFocus, { pickup, dropoff });
+    if (!transition.action) return;
+    setRouteFocus(transition.state);
+    if (transition.action.type === 'focus-point') {
+      focusEndpointCamera(transition.action.field, transition.action.point);
+      return;
+    }
+    const frame = routeFrame([...route, ...approachRoute, ...(pickup ? [pickup] : []), ...(dropoff ? [dropoff] : [])],
+      viewport.width, viewport.height, contentTopInset, contentBottomInset);
+    if (!frame) return;
+    manualCamera.current = true;
+    followPaused.current = true;
+    followPose.current = null;
+    setPassengerFollowing(false);
+    cameraHeading.current = 0;
+    cameraPadding.current = { paddingTop: frame.padding[0], paddingRight: frame.padding[1], paddingBottom: frame.padding[2], paddingLeft: frame.padding[3] };
+    camera.current?.setCamera({ heading: 0, pitch: 0, animationDuration: 0 });
+    camera.current?.fitBounds(frame.ne, frame.sw, frame.padding, 300);
   };
 
   useEffect(() => {
@@ -642,6 +700,7 @@ export default function TaxiMap({
     }
   };
   const onRegionChanging = (feature: GeoJSON.Feature<GeoJSON.Point, { isUserInteraction?: boolean; heading?: number; zoomLevel?: number; pitch?: number }>) => {
+    if (feature.properties?.isUserInteraction) setRouteFocus(previous => clearRouteFocusCallout(previous));
     if (picking && feature.properties?.isUserInteraction) {
       selectionGesture.current = true;
       if (!movingRef.current) { selectionLocationRequest.current++; onSelectionInteraction?.('move'); }
@@ -659,7 +718,6 @@ export default function TaxiMap({
     }
   };
   const retry = () => { setLoadTimeout(false); setAttached(false); setRasterFallback(false); setAttempt(value => value + 1); };
-  const dropoffRouteParts = dropoffRouteLabel?.split(' · ');
   const pickupMetrics = pickupAvailability === 'unavailable' ? { label: t('Подача'), value: t('Нет машин') }
     : pickupEtaMinutes != null && Number.isFinite(pickupEtaMinutes) && pickupEtaMinutes >= 0
       ? { label: t('Подача'), value: `${Math.max(1, Math.ceil(pickupEtaMinutes))} ${t('мин')}` }
@@ -671,6 +729,7 @@ export default function TaxiMap({
   const candidatePending = moving || !candidateAddress;
   const candidateMetrics = selectionField === 'dropoff' ? destinationMetrics : pickupMetrics;
   const passengerBottomControls = passengerView && selectionAppearance === 'default' && !!onBack;
+  const routeControlLabel = routeFocus.next === 'pickup' ? t('Место подачи') : routeFocus.next === 'dropoff' ? t('Место назначения') : t('Показать весь маршрут');
   const bottomControlsInset = selectionMode ? panelHeight : contentBottomInset;
   const animatedPassengerControls = useAnimatedStyle(() => ({
     transform: [{ translateY: !selectionMode && browseControlsOffset ? browseControlsOffset.get() : 0 }],
@@ -692,7 +751,7 @@ export default function TaxiMap({
     : contentTopInset + 56;
   const controlsReady = passengerView || !animatedBottomInset || cameraReady;
   const animatedControls = useAnimatedStyle(() => {
-    const opacity = controlsReady ? 1 : 0;
+    const opacity = controlsReady && (!passengerView || passengerControlsVisible) ? 1 : 0;
     if (!animatedBottomInset || viewport.height <= 0) return { opacity };
     const bottom = Math.max(0, animatedBottomInset.get() - deliveryPickupCrop);
     const top = Math.min(
@@ -734,6 +793,7 @@ export default function TaxiMap({
           if ((!followActive || feature.properties.isUserInteraction) && Number.isFinite(feature.properties.heading)) cameraHeading.current = feature.properties.heading;
           if ((!followActive || feature.properties.isUserInteraction) && Number.isFinite(feature.properties.zoomLevel)) observedZoom.current = zoomLevel.current = feature.properties.zoomLevel;
           if (Number.isFinite(feature.properties.zoomLevel)) setCrossingZoom(feature.properties.zoomLevel);
+          if (Number.isFinite(feature.properties.zoomLevel)) setCompactPickup(previous => compactPickupForZoom(previous, feature.properties.zoomLevel));
           if ((!followActive || feature.properties.isUserInteraction) && Number.isFinite(feature.properties.pitch)) observedPitch.current = feature.properties.pitch;
           scheduleMapFeatures();
           if (picking) {
@@ -792,28 +852,20 @@ export default function TaxiMap({
           setUserLocation(previous => previous && metresBetween(previous, point) < 2 ? previous : point);
           onUserLocation?.(point);
         }}/>}
-        {pickup && (!browsePickup || !!selectionMode) && selectionMode !== 'pickup' && <MarkerView testID="pickup" coordinate={toCoordinate(pickup)} allowOverlap anchor={{ x: PIN_GROUND_X / PIN_WIDTH, y: PIN_GROUND_Y / PIN_HEIGHT }}>
-          <Pressable onPress={() => onEditPoint?.('pickup')} accessibilityRole="button" accessibilityLabel="Место подачи" collapsable={false} style={styles.nativePinAnchor}>
-            <SelectionPin field="pickup" dark={dark} metrics={pickupMetrics}/>
-          </Pressable>
-        </MarkerView>}
-        {dropoff && selectionMode !== 'dropoff' && <MarkerView testID="dropoff" coordinate={toCoordinate(dropoff)} allowOverlap anchor={{ x: dropoffRouteLabel ? .5 : PIN_GROUND_X / PIN_WIDTH, y: dropoffRouteLabel ? 1 : PIN_GROUND_Y / PIN_HEIGHT }}>
-          <Pressable onPress={() => onEditPoint?.('dropoff')} accessibilityRole="button" accessibilityLabel="Пункт назначения" collapsable={false} style={dropoffRouteLabel ? styles.destinationWithRoute : styles.nativePinAnchor}>
-            {!!dropoffRouteLabel && <View style={[styles.dropoffRouteBadge, dark && styles.darkDropoffRouteBadge]} accessible accessibilityLabel={`Пункт назначения Б, ${dropoffRouteLabel}`}>
-              <View style={[styles.dropoffRouteLetter, dark && styles.darkDropoffRouteLetter]}><Text style={[styles.dropoffRouteLetterText, dark && styles.darkDropoffRouteLetterText]}>Б</Text></View>
-              <View style={styles.dropoffRouteMetrics}>
-                <Text numberOfLines={1} adjustsFontSizeToFit style={[styles.dropoffRouteDistance, dark && styles.darkDropoffRouteText]}>{dropoffRouteParts?.[0]}</Text>
-                {dropoffRouteParts && dropoffRouteParts.length > 1 && <Text numberOfLines={1} adjustsFontSizeToFit style={[styles.dropoffRouteDuration, dark && styles.darkDropoffRouteText]}>{dropoffRouteParts.slice(1).join(' · ')}</Text>}
-              </View>
-            </View>}
-            {dropoffRouteLabel ? <><View style={[styles.pinBody, dark && styles.darkPinBody]}><Icon name="flag" color={dark ? '#101010' : 'white'} size={24}/></View><View style={[styles.stem, dark && styles.darkStem]}/></>
-              : <SelectionPin field="dropoff" dark={dark} metrics={destinationMetrics}/>}
-          </Pressable>
-        </MarkerView>}
+        {pickup && (!browsePickup || !!selectionMode) && selectionMode !== 'pickup' && <EndpointMarker id="pickup" field="pickup" point={pickup} dark={dark} language={language}
+          presentation={routeFocus.callout === 'pickup' ? 'focused' : compactPickup && pickupEtaMinutes != null && Number.isFinite(pickupEtaMinutes) && pickupEtaMinutes >= 0 && pickupAvailability !== 'unavailable' ? 'compact' : 'detailed'}
+          metrics={pickupMetrics} pickupEtaMinutes={pickupAvailability === 'unavailable' ? null : pickupEtaMinutes}
+          onPress={!picking && routeControls && passengerControlsVisible ? () => focusEndpointCamera('pickup', pickup) : undefined}
+          onEdit={!picking && passengerControlsVisible && onEditPoint ? () => onEditPoint('pickup') : undefined}/>}
+        {dropoff && selectionMode !== 'dropoff' && <EndpointMarker id="dropoff" field="dropoff" point={dropoff} dark={dark} language={language}
+          presentation={routeFocus.callout === 'dropoff' ? 'focused' : 'detailed'} metrics={destinationMetrics} routeLabel={dropoffRouteLabel}
+          onPress={!picking && routeControls && passengerControlsVisible ? () => focusEndpointCamera('dropoff', dropoff) : undefined}
+          onEdit={!picking && passengerControlsVisible && onEditPoint ? () => onEditPoint('dropoff') : undefined}/>}
       </MapView>
       {picking && <View pointerEvents="none" accessibilityLabel={selectionAppearance === 'food' ? t('Адрес доставки') : selectionMode !== 'dropoff' ? 'Метка места подачи' : 'Метка пункта назначения'} style={styles.centerPin}>
         {showFoodPinHint && <View testID="food-pin-hint" style={styles.foodPinHint}><Text style={styles.foodPinHintText}>{t('Пин можно перемещать')}</Text></View>}
-        <SelectionPin field={selectionAppearance === 'food' ? 'dropoff' : selectionField} dark={dark} moving={moving} pending={candidatePending} loading={addressSpinner && !moving} metrics={selectionAppearance === 'food' ? null : candidateMetrics}/>
+        <SelectionPin field={selectionAppearance === 'food' ? 'dropoff' : selectionField} dark={dark} moving={moving} pending={candidatePending} loading={addressSpinner && !moving} metrics={selectionAppearance === 'food' ? null : candidateMetrics}
+          compact={compactPickup} etaMinutes={pickupAvailability === 'unavailable' ? null : pickupEtaMinutes} minuteLabel={t('мин')}/>
       </View>}
       <View style={styles.attribution}>
         <Pressable accessibilityRole="link" accessibilityLabel="Стиль OpenMapTiles Bright" onPress={() => { void Linking.openURL('https://github.com/hyperknot/openfreemap-styles/blob/main/LICENSE.md'); }}><Text style={[styles.attributionText, dark && styles.darkAttributionText]}>© OpenMapTiles Bright</Text></Pressable>
@@ -821,7 +873,7 @@ export default function TaxiMap({
         <Pressable accessibilityRole="link" accessibilityLabel="© OpenStreetMap contributors" onPress={() => { void Linking.openURL('https://www.openstreetmap.org/copyright'); }}><Text style={[styles.attributionText, dark && styles.darkAttributionText]}>© OpenStreetMap</Text></Pressable>
       </View>
     </View>
-    <Animated.View testID="map-controls" pointerEvents={controlsReady ? 'auto' : 'none'} accessibilityElementsHidden={!controlsReady} importantForAccessibility={controlsReady ? 'auto' : 'no-hide-descendants'}
+    <Animated.View testID="map-controls" pointerEvents={controlsReady && (!passengerView || passengerControlsVisible) ? 'auto' : 'none'} accessibilityElementsHidden={!controlsReady || passengerView && !passengerControlsVisible} importantForAccessibility={controlsReady && (!passengerView || passengerControlsVisible) ? 'auto' : 'no-hide-descendants'}
       style={[styles.mapControls, compactControls && styles.compactMapControls, selectionAppearance === 'food' ? { bottom: panelHeight + 12 } : { top: animatedBottomInset ? 0 : controlsTop }, animatedControls]}>
       {selectionAppearance !== 'food' && <View testID="map-zoom-controls" style={[styles.zoomControls, compactControls && styles.compactZoomControls, dark && styles.darkControl]}>
         <Pressable accessibilityRole="button" accessibilityLabel="Приблизить карту" hitSlop={5} onPress={() => { void changeZoom(1); }} style={({ pressed }) => [styles.zoomButton, compactControls && styles.compactZoomButton, pressed && styles.controlPressed]}>
@@ -832,11 +884,11 @@ export default function TaxiMap({
           <Icon name="remove" size={30} color={dark ? '#FFFFFF' : '#111827'}/>
         </Pressable>
       </View>}
-      {!passengerBottomControls && <Pressable accessibilityRole="button" accessibilityLabel={driverPosition ? 'Показать водителя' : 'Моё местоположение'} accessibilityState={{ busy: locating }} hitSlop={5} onPress={() => { void locateOnMap(); }} style={({ pressed }) => [styles.locationControl, dark && styles.darkControl, pressed && styles.controlPressed]}>
+      {!passengerBottomControls && (!passengerView || driverPosition || passengerLocationAllowed) && <Pressable accessibilityRole="button" accessibilityLabel={driverPosition ? 'Показать водителя' : 'Моё местоположение'} accessibilityState={{ busy: locating }} hitSlop={5} onPress={() => { void locateOnMap(); }} style={({ pressed }) => [styles.locationControl, dark && styles.darkControl, pressed && styles.controlPressed]}>
         {locating ? <ActivityIndicator color={dark ? '#FFFFFF' : '#111827'}/> : <Icon name="navigate" size={27} color={dark ? '#FFFFFF' : '#111827'}/>}
       </Pressable>}
     </Animated.View>
-    {passengerBottomControls && <Animated.View testID="passenger-map-bottom-controls" pointerEvents="box-none"
+    {passengerBottomControls && passengerControlsVisible && <Animated.View testID="passenger-map-bottom-controls" pointerEvents="box-none"
       style={[styles.passengerBottomControls, { bottom: Math.max(0, bottomControlsInset) + 16 }, animatedPassengerControls]}>
       <Pressable testID="passenger-map-back" accessibilityRole="button" accessibilityLabel={backLabel || t('Назад')} hitSlop={5} onPress={onBack}
         style={({ pressed }) => [styles.passengerLocationControl, dark && styles.darkControl, pressed && styles.controlPressed]}>
@@ -844,10 +896,13 @@ export default function TaxiMap({
           <Path d="M19 12H5m7-7-7 7 7 7" fill="none" stroke={dark ? '#FFFFFF' : '#111827'} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round"/>
         </Svg>
       </Pressable>
-      <Pressable accessibilityRole="button" accessibilityLabel={driverPosition ? 'Показать водителя' : 'Моё местоположение'} accessibilityState={{ busy: locating }} hitSlop={5}
+      {routeControls ? <Pressable testID="passenger-map-route-focus" accessibilityRole="button" accessibilityLabel={routeControlLabel} hitSlop={5} disabled={!attached}
+        onPress={cycleRouteFocus} style={({ pressed }) => [styles.passengerLocationControl, dark && styles.darkControl, pressed && styles.controlPressed]}>
+        {routeFocus.next === 'pickup' ? <PickupIcon size={23} color={dark ? '#FFFFFF' : '#111827'}/> : <Icon name={routeFocus.next === 'dropoff' ? 'flag' : 'git-network-outline'} size={23} color={dark ? '#FFFFFF' : '#111827'}/>}
+      </Pressable> : passengerLocationAllowed && <Pressable accessibilityRole="button" accessibilityLabel={driverPosition ? 'Показать водителя' : 'Моё местоположение'} accessibilityState={{ busy: locating }} hitSlop={5}
         onPress={() => { void locateOnMap(); }} style={({ pressed }) => [styles.passengerLocationControl, dark && styles.darkControl, pressed && styles.controlPressed]}>
         {locating ? <ActivityIndicator color={dark ? '#FFFFFF' : '#111827'}/> : <Icon name="navigate" size={23} color={dark ? '#FFFFFF' : '#111827'}/>}
-      </Pressable>
+      </Pressable>}
     </Animated.View>}
     {!!locationError && <Pressable accessibilityRole="alert" onPress={() => setLocationError('')} style={[styles.locationNotice, { top: Math.max(insets.top + 54, controlsTop - 72), right: 16 }]}><Text style={styles.locationNoticeText}>{locationError}</Text></Pressable>}
     {selectionMode && <View onLayout={event => { setPanelHeight(event.nativeEvent.layout.height); onPanelHeight?.(event.nativeEvent.layout.height); }} style={renderSelectionPanel ? styles.customConfirm : [styles.confirm, dark && styles.darkConfirm, { paddingBottom: Math.max(insets.bottom, 12) }]}>
@@ -910,6 +965,8 @@ const styles = StyleSheet.create({
   pinMetricsBadge: { position: 'absolute', left: 28, top: 0, width: 132, height: 52, paddingLeft: 31, paddingRight: 8, borderTopRightRadius: 18, borderBottomRightRadius: 18, justifyContent: 'center', backgroundColor: '#FFFFFF', elevation: 4, shadowColor: '#16233C', shadowOpacity: .15, shadowRadius: 8, shadowOffset: { width: 0, height: 3 } },
   pinMetricLabel: { color: '#20252B', fontSize: 12, lineHeight: 16 },
   pinMetricValue: { color: '#20252B', fontSize: 15, lineHeight: 20, fontWeight: '700' },
+  compactPinTime: { color: '#FFFFFF', fontSize: 20, lineHeight: 23, fontWeight: '700' },
+  compactPinUnit: { color: '#FFFFFF', fontSize: 11, lineHeight: 13 },
   darkPinMetricText: { color: '#FFFFFF' },
   groundShadow: { position: 'absolute', left: PIN_GROUND_X - 10, width: 20, height: 12, borderRadius: 10, bottom: 0, backgroundColor: 'rgba(20, 28, 38, .06)', alignItems: 'center', justifyContent: 'center' },
   groundShadowMiddle: { position: 'absolute', width: 14, height: 9, borderRadius: 7, backgroundColor: 'rgba(20, 28, 38, .10)' },

@@ -326,6 +326,57 @@ test('dismissing a nested booking panel returns to the previous panel', async t 
   assert.equal(renderer.root.findAllByType('BottomPanel').length, 0);
 });
 
+test('taxi map controls follow the booking summary across nested panels, address search and unmount', async () => {
+  let renderer;
+  const visibility = [];
+  const props = { pickup: point('A'), dropoff: point('B'), tariffs: [{ id: 'eco', name: 'Эконом' }], tariffId: 'eco',
+    quote: { price: 100 }, quotes: { eco: { price: 100 } }, language: 'ru', details: emptyRideDetails,
+    onDetails() {}, onAddress() {}, onTariff() {}, onSwap() {}, onHeight() {}, onBook() {},
+    onMapControlsVisibleChange: visible => visibility.push(visible) };
+  await act(async () => { renderer = create(React.createElement(BookingPanel, props)); });
+  try {
+    assert.equal(visibility.at(-1), true);
+    await tap(renderer, 'Детали поездки');
+    assert.equal(visibility.at(-1), false, 'details hide the map exit and focus controls');
+    await tap(renderer, 'Комментарий водителю');
+    await act(async () => renderer.root.findByType('BottomPanel').props.onClose());
+    await tap(renderer, 'Способы оплаты');
+    await act(async () => renderer.root.findByType('BottomPanel').props.onClose());
+    assert.equal(visibility.at(-1), false, 'returning from an editor or payment to details keeps controls hidden');
+    await tap(renderer, 'Свернуть детали поездки');
+    assert.equal(visibility.at(-1), true);
+    await act(async () => renderer.update(React.createElement(BookingPanel, { ...props, hidden: true })));
+    assert.equal(visibility.at(-1), false, 'address search suspends summary controls');
+    await act(async () => renderer.update(React.createElement(BookingPanel, { ...props, hidden: false, mapMoving: true })));
+    assert.equal(visibility.at(-1), true, 'moving the map preserves controls so they can travel with the summary');
+  } finally { await act(async () => renderer.unmount()); }
+  assert.equal(visibility.at(-1), false, 'a removed summary releases map controls');
+});
+
+test('app hides booking overlay controls without suppressing active rides, delivery or driver controls', () => {
+  const source = ts.createSourceFile('App.tsx', fs.readFileSync(path.join(__dirname, '../App.tsx'), 'utf8'), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+  let expression;
+  const visit = node => {
+    if (ts.isJsxAttribute(node) && node.name.getText(source) === 'passengerControlsVisible') expression = node.initializer.expression.getText(source);
+    ts.forEachChild(node, visit);
+  };
+  visit(source);
+  assert.ok(expression, 'the real TaxiMap receives control visibility from App');
+  const defaults = { driver: false, page: 'home', service: 'taxi', order: null, addressField: null, drawer: false, chat: false, mapSelection: null, bookingMapControlsVisible: true };
+  const visible = overrides => vm.runInNewContext(expression, { ...defaults, ...overrides });
+  assert.equal(visible({ bookingMapControlsVisible: false }), false, 'nested taxi panels hide the exit and focus controls');
+  assert.equal(visible({ bookingMapControlsVisible: false, mapSelection: 'pickup' }), true, 'pickup map selection retains its back control');
+  assert.equal(visible({ bookingMapControlsVisible: false, mapSelection: 'dropoff' }), true, 'destination map selection retains its back control');
+  assert.equal(visible({ bookingMapControlsVisible: false, order: { id: 'ride' } }), true, 'an active client ride keeps its map controls');
+  assert.equal(visible({ bookingMapControlsVisible: false, service: 'delivery' }), true, 'delivery keeps its existing map controls');
+  assert.equal(visible({ driver: true, bookingMapControlsVisible: false }), true, 'driver map controls are independent of the client summary');
+  for (const overlay of [{ addressField: 'dropoff' }, { drawer: true }, { chat: true }, { page: 'settings' }]) {
+    assert.equal(visible(overlay), false);
+    assert.equal(visible({ service: 'delivery', ...overlay }), false);
+    assert.equal(visible({ order: { id: 'ride' }, ...overlay }), false);
+  }
+});
+
 test('another passenger can be entered or picked and restored in booking details', async t => {
   let saved = emptyRideDetails, renderer;
   function Probe() {

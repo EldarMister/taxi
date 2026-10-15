@@ -31,17 +31,21 @@ type Props = {
   registerAddressOpener?: (open: ((field: 'pickup' | 'dropoff') => void) | null) => void;
   onSwap: () => void; onBook: () => void;
   onHeight: (height: number) => void; hidden?: boolean; mapMoving?: boolean; browseOffset?: SharedValue<number>;
+  onMapControlsVisibleChange?: (visible: boolean) => void;
 };
 const carColor = (index: number) => index === 0 ? '#E5ECF4' : index === 1 ? '#67788D' : '#253447';
 const titles: Record<EditField, string> = { entrance: 'Укажите номер подъезда', comment: 'Комментарий водителю' };
 
-export function BookingPanel({ pickup, dropoff, locatingPickup = false, tariffs, tariffId, quote, previewQuote, quotes, calculating, quoteError, bookingError, busy, pickupAvailability = 'unknown', routeDurationSeconds, language, details, onDetails, onAddress, registerAddressOpener, onTariff, onSwap, onBook, onHeight, hidden, mapMoving = false, browseOffset }: Props) {
+export function BookingPanel({ pickup, dropoff, locatingPickup = false, tariffs, tariffId, quote, previewQuote, quotes, calculating, quoteError, bookingError, busy, pickupAvailability = 'unknown', routeDurationSeconds, language, details, onDetails, onAddress, registerAddressOpener, onTariff, onSwap, onBook, onHeight, hidden, mapMoving = false, browseOffset, onMapControlsVisibleChange }: Props) {
   const { isDark, palette } = useTheme();
   const b = useThemeStyles(baseB);
   const t = tr(language);
   const insets = useSafeAreaInsets();
   const { height } = useWindowDimensions();
   const { surface, navigate, suspend, resume, onSheetClosed, sheetClosing, rootVisible, rootTranslateY, onRootHeight } = usePanelTransition<Surface>('summary');
+  const mapControlsVisible = !hidden && rootVisible;
+  useEffect(() => { onMapControlsVisibleChange?.(mapControlsVisible); }, [mapControlsVisible, onMapControlsVisibleChange]);
+  useEffect(() => () => onMapControlsVisibleChange?.(false), [onMapControlsVisibleChange]);
   const reducedMotion = useMotionPreference();
   const mapHidden = mapMoving && !dropoff && rootVisible;
   const mapProgress = useSharedValue(0);
