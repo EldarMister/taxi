@@ -87,6 +87,7 @@ async function mountMap(t, initialProps, options = {}) {
     throw Error(id);
   } });
   vm.runInNewContext(compile('taxiMapStyle.ts'), { exports: styles, process: { env: options.env || {} }, require: id => {
+    if (id === './site-labels.json') return JSON.parse(fs.readFileSync(path.join(__dirname, '../src/native/site-labels.json'), 'utf8'));
     if (id === './openfreemap-bright.json') return JSON.parse(fs.readFileSync(path.join(__dirname, '../src/native/openfreemap-bright.json'), 'utf8'));
     throw Error(id);
   } });
@@ -577,7 +578,7 @@ test('committed metric badges keep a fixed bitmap anchor and leave the other end
   assert.deepEqual({ ...frame().props.style }, footprint);
   const badge = frame().findByProps({ testID: 'pickup-endpoint-detail' });
   assert.deepEqual(badge.findAllByType('Text').map(node => node.children.join('')), ['Подача', 'Нет машин']);
-  assert.equal(badge.props.style[0].left, 28, 'badge extends to the right within the constant marker footprint');
+  assert.equal(badge.props.style[0].width, undefined, 'metric blocks size to text instead of leaving a fixed blank panel');
   assert.equal(h.renderer.root.findAllByType('MarkerView').length, 0, 'committed endpoints are rendered with the roads, outside the Android view overlay');
 });
 
@@ -1200,6 +1201,16 @@ test('the map styles vector roads and places, keeps attribution and can fall bac
   assert.equal(style.layers.find(layer => layer.id === 'current-osm-addresses')['source-layer'], 'addresses');
   assert.equal(style.layers.find(layer => layer.id === 'current-osm-pois')['source-layer'], 'pois');
   assert.equal(style.layers.find(layer => layer.id === 'current-osm-pois').minzoom, 14);
+  const namedSites = style.sources.named_sites.data;
+  assert.equal(namedSites.type, 'FeatureCollection');
+  assert.ok(namedSites.features.length > 0);
+  assert.equal(new Set(namedSites.features.map(f => f.id)).size, namedSites.features.length);
+  assert.ok(namedSites.features.every(f => f.geometry.type === 'Point' && Object.keys(f.properties).some(k => k.startsWith('name'))));
+  assert.ok(namedSites.features.some(f => f.properties.kind === 'kindergarten'));
+  assert.ok(namedSites.features.some(f => f.properties.kind === 'marketplace'));
+  assert.equal(style.layers.find(layer => layer.id === 'site-names-detail').source, 'named_sites');
+  assert.equal(style.layers.find(layer => layer.id === 'site-names-detail').minzoom, 14);
+  assert.equal(style.layers.find(layer => layer.id === 'site-names-detail').maxzoom, undefined, 'territory names remain available at close zoom');
   assert.equal(style.layers.some(layer => layer.id.startsWith('highway-name-')), false, 'stale OpenMapTiles street names are hidden');
   assert.equal(style.layers.some(layer => layer.id.startsWith('highway-shield-')), false, 'stale route shields cannot hide current street names');
   assert.equal(style.layers.find(layer => layer.id === 'overview-street-local').minzoom, 13, 'minor street names appear before detailed zoom');

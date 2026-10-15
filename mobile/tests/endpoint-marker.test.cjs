@@ -116,7 +116,7 @@ test('missing ETA keeps the pickup icon, and driver route distance/duration rema
   await h.update({ pickupEtaMinutes: Number.NaN });
   assert.equal(h.native().findAllByType('PickupIcon').length, 1);
   await h.update({ id: 'dropoff', field: 'dropoff', presentation: 'detailed', routeLabel: '44 км · 1 ч 10 мин', metrics: null });
-  assert.deepEqual(h.texts(), ['44 км', '1 ч 10 мин', 'Б']);
+  assert.deepEqual(h.texts(), ['Б', '44 км', '1 ч 10 мин']);
   assert.equal(h.native().findAllByType('Icon').length, 0, 'driver route keeps its original letter instead of the passenger flag');
   const icon = () => h.native().findByProps({ testID: 'dropoff-endpoint-icon' });
   const letter = () => h.native().findByProps({ testID: 'driver-destination-letter' });
@@ -146,15 +146,17 @@ test('focused bubble centers over its fixed ground and fits even a 320dp viewpor
   const h = await mount(t, { presentation: 'detailed' });
   const groundX = h.bitmap().props.style.width * h.native().props.anchor.x;
   const head = () => Object.assign({}, ...h.native().findByProps({ testID: 'pickup-endpoint-head' }).props.style.filter(Boolean));
-  assert.equal(head().left + 52 / 2, groundX, 'normal icon remains directly above the endpoint');
+  assert.equal(head().left + 44 / 2, groundX, 'normal icon remains directly above the endpoint');
   await h.update({ presentation: 'focused' });
-  assert.equal(head().left + head().width / 2, groundX, 'focused bubble centers the whole block above the endpoint');
+  const measuredWidth = 184;
+  await act(async () => h.native().findByProps({ testID: 'pickup-endpoint-head' }).props.onLayout({ nativeEvent: { layout: { width: measuredWidth } } }));
+  assert.equal(head().left + measuredWidth / 2, groundX, 'focused bubble centers the whole block above the endpoint');
   for (const viewportWidth of [320, 360, 412]) {
     const geographicScreenX = viewportWidth / 2;
     const left = geographicScreenX + head().left - groundX;
-    const right = left + head().width;
+    const right = left + measuredWidth;
     assert.ok(left - 4 >= 0 && right + 4 <= viewportWidth, `focused bubble and its halo fit ${viewportWidth}dp`);
   }
   await h.update({ presentation: 'compact' });
-  assert.equal(head().left + 52 / 2, groundX, 'compact icon returns without moving the geographic ground');
+  assert.equal(head().left + 44 / 2, groundX, 'compact icon returns without moving the geographic ground');
 });

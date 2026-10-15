@@ -531,7 +531,7 @@ test('a dense shortened feature window waits for route progress before requestin
   } finally { await app.close(); }
 });
 
-test('HUD shows distant sharp/slight direction, distinct arrows and the current speed limit', async () => {
+test('HUD shows distinct direction arrows and delegates signs to one right-hand alert stack', async () => {
   const navigation = compile('../src/navigation.ts', {});
   const { DriverNavigation } = compile('../src/DriverNavigation.tsx', {
     react: { default: React },
@@ -540,20 +540,21 @@ test('HUD shows distant sharp/slight direction, distinct arrows and the current 
     './navigation': navigation, './useDriverNavigation': {},
     './ui': { colors: {}, tr: () => value => value, Icon: () => null },
     './design/theme': { useTheme: () => ({ isDark: false, palette: {} }) },
-    './RoadFeatureAlerts': { RoadFeatureAlerts: () => null, SpeedLimitSign: props => React.createElement('SpeedLimitSign', props) },
+    './RoadFeatureAlerts': { RoadFeatureAlerts: props => React.createElement('RoadFeatureAlerts', props), SpeedLimitSign: props => React.createElement('SpeedLimitSign', props) },
   });
   const paths = [];
   for (const modifier of ['slight right', 'right', 'sharp right']) {
     const response = maneuverRoute('continue', modifier, 450);
     const instruction = navigation.maneuverText(response.steps[1]);
     const nav = { route: response, progress: { instruction, stepIndex: 1, maneuverDistance: 450, along: 0, offRouteMeters: 0 },
-      position: { accuracy: 5 }, loading: false, error: '', gpsStatus: '', voiceError: '', currentSpeedLimit: 40 };
+      position: { accuracy: 5 }, loading: false, error: '', gpsStatus: '', voiceError: '', currentSpeedLimit: 40, roadFeatures: [{ id: 'speed', kind: 'speed_limit', speedLimit: 40, along: 0 }] };
     let rendered;
     await act(async () => { rendered = create(React.createElement(DriverNavigation, { navigation: nav, top: 10 })); });
     try {
       assert.ok(rendered.root.findAllByType('Text').some(text => text.props.children === instruction));
       paths.push(rendered.root.findByType('Path').props.d);
-      assert.equal(rendered.root.findByType('SpeedLimitSign').props.speedLimit, 40);
+      assert.equal(rendered.root.findAllByType('SpeedLimitSign').length, 0, 'the left HUD must not duplicate the right-hand sign');
+      assert.equal(rendered.root.findByType('RoadFeatureAlerts').props.features[0].speedLimit, 40);
     } finally { await act(async () => rendered.unmount()); }
   }
   assert.equal(new Set(paths).size, 3, 'slight, normal and sharp bends have different arrow geometry');

@@ -6,7 +6,7 @@ import { useDriverNavigation } from './useDriverNavigation';
 import { colors, Icon, tr } from './ui';
 import type { Language } from './types';
 import { useTheme } from './design/theme';
-import { RoadFeatureAlerts, SpeedLimitSign } from './RoadFeatureAlerts';
+import { RoadFeatureAlerts } from './RoadFeatureAlerts';
 
 
 function TurnArrow({ maneuver, arrived, color = 'white' }: { maneuver?: NormalizedManeuver; arrived?: boolean; color?: string }) {
@@ -45,7 +45,6 @@ export function DriverNavigation({ navigation, top, onLocation, onHeight, langua
         <Text numberOfLines={2} style={[styles.title, theme.isDark && { color: theme.palette.muted, textShadowColor: '#000000' }]}>{title}</Text>
       </View>
     </View>
-    {ready && navigation.currentSpeedLimit != null && <View testID="current-speed-limit" accessible accessibilityLabel={language === 'en' ? `Speed limit ${navigation.currentSpeedLimit}` : language === 'ky' ? `Ылдамдык чектөөсү ${navigation.currentSpeedLimit}` : `Ограничение скорости ${navigation.currentSpeedLimit}`} style={styles.speedLimit}><SpeedLimitSign speedLimit={navigation.currentSpeedLimit} size={44}/></View>}
     {!!gpsStatus && <Pressable accessibilityRole="button" accessibilityLabel={t('Проверить местоположение')} onPress={() => { navigation.retry(); onLocation(); }} style={[styles.notice, theme.isDark && { backgroundColor: theme.palette.elevated }]}><Icon name="locate" color={theme.isDark ? theme.palette.ink : '#B57522'} size={16}/><Text numberOfLines={2} style={[styles.noticeText, theme.isDark && { color: theme.palette.ink }]}>{t(gpsStatus)}</Text></Pressable>}
     {!!error && <Pressable accessibilityRole="button" onPress={navigation.retry} style={[styles.notice, theme.isDark && { backgroundColor: theme.palette.elevated }]}><Icon name="refresh" color={theme.isDark ? theme.palette.ink : colors.blue} size={16}/><Text numberOfLines={2} style={[styles.noticeText, theme.isDark && { color: theme.palette.ink }]}>{t(error)} · {t('Повторить')}</Text></Pressable>}
     {!!navigation.voiceError && <Pressable accessibilityRole="button" onPress={navigation.testVoice} style={[styles.notice, theme.isDark && { backgroundColor: theme.palette.elevated }]}><Text numberOfLines={2} style={[styles.noticeText, theme.isDark && { color: theme.palette.ink }]}>{t(navigation.voiceError)} · {t('Проверить')}</Text></Pressable>}
@@ -58,7 +57,6 @@ const styles = StyleSheet.create({
   instruction: { flex: 1, gap: 1, backgroundColor: '#FFFFFF', borderRadius: 13, paddingHorizontal: 8, paddingVertical: 4 },
   distance: { fontSize: 28, lineHeight: 32, fontWeight: '800', color: '#152644', letterSpacing: -.8, fontVariant: ['tabular-nums'], textShadowColor: 'white', textShadowRadius: 6 },
   title: { fontSize: 12, lineHeight: 15, fontWeight: '600', color: '#3E5874', textShadowColor: 'white', textShadowRadius: 5 },
-  speedLimit: { alignSelf: 'flex-start', marginLeft: 4 },
   notice: { flexDirection: 'row', gap: 7, alignItems: 'center', paddingHorizontal: 9, paddingVertical: 7, borderRadius: 12, backgroundColor: 'rgba(255,255,255,.94)' },
   noticeText: { flex: 1, color: '#71512A', fontSize: 11, lineHeight: 14 },
 });

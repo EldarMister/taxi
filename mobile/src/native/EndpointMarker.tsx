@@ -1,4 +1,4 @@
-import React, { memo, useCallback, useEffect, useMemo, useRef } from 'react';
+import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { PointAnnotation, type PointAnnotationRef } from '@maplibre/maplibre-react-native';
@@ -47,7 +47,7 @@ export const EndpointMarker = memo(function EndpointMarker({
   const routeParts = routeLabel?.split(' · ');
   const routeDestination = field === 'dropoff' && !!routeLabel;
   const detail = routeParts?.length ? { label: routeParts[0], value: routeParts.slice(1).join(' · ') } : metrics;
-  const badgeWidth = focused ? 244 : presentation === 'detailed' && detail ? 198 : 52;
+  const [headWidth, setHeadWidth] = useState(200);
 
   const refreshBitmap = useCallback(() => {
     if (!mounted.current) return;
@@ -82,11 +82,22 @@ export const EndpointMarker = memo(function EndpointMarker({
       style={s.frame}>
       <View testID={`${field}-endpoint-shadow`} style={s.shadow}><View style={s.shadowMiddle}/><View style={s.shadowCore}/></View>
       <View testID={`${field}-endpoint-stem`} style={[s.stem, dark && s.darkStem]}/>
-      <View testID={`${field}-endpoint-head`} style={[s.head, focused && s.focusedHead]}>
+      <View testID={`${field}-endpoint-head`} onLayout={event => {
+        const width = event.nativeEvent.layout.width;
+        setHeadWidth(previous => previous === width ? previous : width);
+        refreshBitmap();
+      }} style={[s.head, focused && { left: ENDPOINT_FRAME.groundX - headWidth / 2 }]}>
         {/* Android offscreen View.draw does not include elevation shadows. These
             static translucent halos are captured into the same GL bitmap. */}
-        <View pointerEvents="none" style={[s.badgeShadowOuter, { width: badgeWidth + 8 }]}/>
-        <View pointerEvents="none" style={[s.badgeShadowInner, { width: badgeWidth + 4 }]}/>
+        <View pointerEvents="none" style={s.badgeShadowOuter}/>
+        <View pointerEvents="none" style={s.badgeShadowInner}/>
+        <View testID={`${field}-endpoint-icon`} style={routeDestination ? [s.icon, s.routeIcon, dark && s.darkRouteIcon] : s.icon}>
+          {timeOnly ? <><Text onTextLayout={refreshBitmap} maxFontSizeMultiplier={1.15} style={s.etaValue}>{eta}</Text>
+            <Text onTextLayout={refreshBitmap} maxFontSizeMultiplier={1.15} style={s.etaUnit}>{t('мин')}</Text></>
+            : routeDestination ? <Text testID="driver-destination-letter" onTextLayout={refreshBitmap} maxFontSizeMultiplier={1.2}
+              style={[s.routeLetter, dark && s.darkRouteLetter]}>Б</Text>
+            : field === 'pickup' ? <PickupIcon color="#FFFFFF" size={22}/> : <Icon name="flag" color="#FFFFFF" size={22}/>}
+        </View>
         {(focused || presentation === 'detailed' && detail) && <View testID={`${field}-endpoint-detail`}
           style={[s.detail, focused && s.focusedDetail, dark && s.darkDetail]}>
           <Text onTextLayout={refreshBitmap} numberOfLines={1} maxFontSizeMultiplier={1.2}
@@ -94,13 +105,6 @@ export const EndpointMarker = memo(function EndpointMarker({
           <Text onTextLayout={refreshBitmap} numberOfLines={1} maxFontSizeMultiplier={1.2}
             style={[s.detailValue, focused && s.focusedSubtitle, dark && s.darkText]}>{focused ? t('Изменить') : detail?.value}</Text>
         </View>}
-        <View testID={`${field}-endpoint-icon`} style={routeDestination ? [s.icon, s.routeIcon, dark && s.darkRouteIcon] : s.icon}>
-          {timeOnly ? <><Text onTextLayout={refreshBitmap} maxFontSizeMultiplier={1.15} style={s.etaValue}>{eta}</Text>
-            <Text onTextLayout={refreshBitmap} maxFontSizeMultiplier={1.15} style={s.etaUnit}>{t('мин')}</Text></>
-            : routeDestination ? <Text testID="driver-destination-letter" onTextLayout={refreshBitmap} maxFontSizeMultiplier={1.2}
-              style={[s.routeLetter, dark && s.darkRouteLetter]}>Б</Text>
-            : field === 'pickup' ? <PickupIcon color="#FFFFFF" size={24}/> : <Icon name="flag" color="#FFFFFF" size={24}/>}
-        </View>
       </View>
     </View>
   </PointAnnotation>;
@@ -108,22 +112,21 @@ export const EndpointMarker = memo(function EndpointMarker({
 
 const s = StyleSheet.create({
   frame: { width: ENDPOINT_FRAME.width, height: ENDPOINT_FRAME.height, alignSelf: 'flex-start' },
-  head: { position: 'absolute', left: ENDPOINT_FRAME.groundX - 26, top: 30, width: 244, height: 52 },
-  focusedHead: { left: ENDPOINT_FRAME.groundX - 244 / 2 },
-  badgeShadowOuter: { position: 'absolute', top: -2, left: -4, height: 60, borderRadius: 22, backgroundColor: 'rgba(14, 25, 40, .04)' },
-  badgeShadowInner: { position: 'absolute', top: 0, left: -2, height: 56, borderRadius: 20, backgroundColor: 'rgba(14, 25, 40, .07)' },
-  icon: { width: 52, height: 52, borderRadius: 18, borderWidth: 2, borderColor: '#FFFFFF', backgroundColor: colors.blue, alignItems: 'center', justifyContent: 'center' },
+  head: { position: 'absolute', left: ENDPOINT_FRAME.groundX - 22, top: 38, height: 44, flexDirection: 'row', alignItems: 'center' },
+  badgeShadowOuter: { position: 'absolute', top: -2, left: -4, right: -4, height: 52, borderRadius: 20, backgroundColor: 'rgba(14, 25, 40, .04)' },
+  badgeShadowInner: { position: 'absolute', top: 0, left: -2, right: -2, height: 48, borderRadius: 18, backgroundColor: 'rgba(14, 25, 40, .07)' },
+  icon: { width: 44, height: 44, borderRadius: 16, borderWidth: 2, borderColor: '#FFFFFF', backgroundColor: colors.blue, alignItems: 'center', justifyContent: 'center' },
   routeIcon: { backgroundColor: '#246BFD' },
   darkRouteIcon: { backgroundColor: '#FFFFFF' },
   routeLetter: { color: '#FFFFFF', fontSize: 22, lineHeight: 28, fontWeight: '800' },
   darkRouteLetter: { color: '#101010' },
-  detail: { position: 'absolute', top: 0, left: 28, width: 170, height: 52, paddingLeft: 31, paddingRight: 10, borderWidth: 2, borderColor: '#FFFFFF', borderTopRightRadius: 18, borderBottomRightRadius: 18, justifyContent: 'center', backgroundColor: '#FFFFFF' },
-  focusedDetail: { width: 216 },
+  detail: { height: 44, maxWidth: 116, marginLeft: -2, paddingLeft: 7, paddingRight: 10, borderTopRightRadius: 16, borderBottomRightRadius: 16, justifyContent: 'center', backgroundColor: '#FFFFFF' },
+  focusedDetail: { maxWidth: 166 },
   darkDetail: { backgroundColor: '#24272D' },
-  detailLabel: { color: '#20252B', fontSize: 12, lineHeight: 16 },
-  detailValue: { color: '#20252B', fontSize: 15, lineHeight: 20, fontWeight: '700' },
-  focusedTitle: { fontSize: 14, lineHeight: 19, fontWeight: '600' },
-  focusedSubtitle: { fontSize: 12, lineHeight: 17, fontWeight: '400' },
+  detailLabel: { color: '#20252B', fontSize: 11, lineHeight: 14 },
+  detailValue: { color: '#20252B', fontSize: 13, lineHeight: 18, fontWeight: '700' },
+  focusedTitle: { fontSize: 13, lineHeight: 17, fontWeight: '600' },
+  focusedSubtitle: { fontSize: 11, lineHeight: 15, fontWeight: '400' },
   darkText: { color: '#FFFFFF' },
   etaValue: { color: '#FFFFFF', fontSize: 20, lineHeight: 23, fontWeight: '700' },
   etaUnit: { color: '#FFFFFF', fontSize: 11, lineHeight: 13 },

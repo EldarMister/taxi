@@ -1,4 +1,5 @@
 import bright from './openfreemap-bright.json';
+import siteLabels from './site-labels.json';
 import type { Language } from '../types';
 
 type StyleLayer = { id: string; type: string; source?: string; 'source-layer'?: string; minzoom?: number; maxzoom?: number; filter?: unknown; paint?: Record<string, unknown>; layout?: Record<string, unknown> };
@@ -8,10 +9,10 @@ const road = '#FFFFFF';
 const roadEdge = '#D7E0EA';
 const majorRoad = '#FFF1CE';
 const majorEdge = '#E9D6AC';
-const localName = ['coalesce', ['get', 'name:ru'], ['get', 'name:ky'], ['get', 'name:nonlatin'], ['get', 'name'], ['get', 'name_en']];
+const localName = ['coalesce', ['get', 'name:ru'], ['get', 'name:ky'], ['get', 'name:nonlatin'], ['get', 'name'], ['get', 'name:en'], ['get', 'name_en']];
 const currentOsmName = ['coalesce', ['get', 'name_ru'], ['get', 'name'], ['get', 'name_ky'], ['get', 'name_en']];
 const kyrgyzOsmName = ['coalesce', ['get', 'name_ky'], ['get', 'name'], ['get', 'name_ru'], ['get', 'name_en']];
-const kyrgyzOpenMapTilesName = ['coalesce', ['get', 'name:ky'], ['get', 'name'], ['get', 'name:ru'], ['get', 'name:nonlatin'], ['get', 'name_en']];
+const kyrgyzOpenMapTilesName = ['coalesce', ['get', 'name:ky'], ['get', 'name'], ['get', 'name:ru'], ['get', 'name:nonlatin'], ['get', 'name:en'], ['get', 'name_en']];
 const currentOsmLabels = process.env.EXPO_PUBLIC_OSM_LABELS_TILEJSON_URL?.trim() || 'https://vector.openstreetmap.org/shortbread_v1/tilejson.json';
 const detailedOsmZoom = 14;
 // Remove only the generic word for a street. Prospects, lanes, squares and
@@ -265,6 +266,22 @@ const landmarkPoi = ['any',
   ['match', ['get', 'amenity'], ['bank', 'atm', 'hospital', 'clinic', 'school', 'kindergarten', 'university', 'college', 'pharmacy', 'fuel', 'police', 'place_of_worship'], true, false],
   ['match', ['get', 'leisure'], ['park', 'stadium', 'playground'], true, false],
 ];
+// Named OSM areas are not preserved in the external tiles. The small bundled
+// snapshot supplies their labels; the vector POI layer excludes these amenities.
+const detailedSiteNames: StyleLayer = {
+  id: 'site-names-detail', type: 'symbol', source: 'named_sites', minzoom: detailedOsmZoom,
+  layout: {
+    'icon-image': ['match', ['get', 'kind'], 'kindergarten', 'school', 'shop'],
+    'icon-size': 0.72, 'icon-padding': 3, 'icon-optional': true,
+    'text-field': localName, 'text-font': ['Noto Sans Regular'],
+    'text-size': ['interpolate', ['linear'], ['zoom'], 14, 10.5, 18, 12],
+    'text-max-width': 10, 'text-padding': 3,
+    'text-variable-anchor': ['top', 'right', 'left', 'bottom'], 'text-radial-offset': 0.9,
+    'text-justify': 'auto', 'text-optional': false,
+    'text-allow-overlap': false, 'icon-allow-overlap': false,
+  },
+  paint: { 'text-color': '#4D667E', 'text-halo-color': '#FFFFFF', 'text-halo-width': 1.5 },
+};
 const currentStreetNameLayers: StyleLayer[] = [
   // City-street names take priority over route shields. On the overview the
   // name is more useful than a highway number, especially inside Bishkek.
@@ -327,6 +344,7 @@ export const taxiMapStyle = {
   name: 'Atlas · City',
   sources: {
     ...bright.sources,
+    named_sites: { type: 'geojson', data: siteLabels },
     osm_current_labels: { type: 'vector', url: currentOsmLabels, attribution: '© OpenStreetMap contributors' },
     openmaptiles: {
       ...bright.sources.openmaptiles,
@@ -370,13 +388,14 @@ export const taxiMapStyle = {
       layout: { 'icon-image': ['match', ['get', 'kind'], ['station', 'halt', 'tram_stop'], 'railway', 'ferry_terminal', 'ferry', 'bus'], 'icon-size': 0.7, 'icon-padding': 4,
         'text-field': currentOsmName, 'text-font': ['Noto Sans Regular'], 'text-size': 10.5, 'text-anchor': 'top', 'text-offset': [0, 0.8], 'text-optional': true },
       paint: { 'text-color': '#526A82', 'text-halo-color': '#FFFFFF', 'text-halo-width': 1.3 } },
+    detailedSiteNames,
     { id: 'current-osm-pois', type: 'symbol', source: 'osm_current_labels', 'source-layer': 'pois', minzoom: 14,
       filter: ['all',
         ['!', ['match', ['get', 'highway'], ['bus_stop', 'platform'], true, false]],
-        ['!', ['match', ['get', 'amenity'], ['bus_station', 'ferry_terminal'], true, false]],
+        ['!', ['match', ['get', 'amenity'], ['bus_station', 'ferry_terminal', 'kindergarten', 'marketplace'], true, false]],
         ['step', ['zoom'], landmarkPoi, 14.5,
           ['any', landmarkPoi, ['has', 'name'], ['has', 'name_ru'], ['has', 'name_ky']], 16, true],
-        ['any', ['has', 'name'], ['has', 'shop'], ['match', ['get', 'amenity'], ['bank', 'atm', 'hospital', 'clinic', 'school', 'pharmacy', 'fuel', 'police', 'parking'], true, false], ['match', ['get', 'leisure'], ['park', 'playground'], true, false]]],
+        ['any', ['has', 'name'], ['has', 'name_ru'], ['has', 'name_ky'], ['has', 'shop'], ['match', ['get', 'amenity'], ['bank', 'atm', 'hospital', 'clinic', 'school', 'pharmacy', 'fuel', 'police', 'parking'], true, false], ['match', ['get', 'leisure'], ['park', 'playground'], true, false]]],
       layout: { 'icon-image': currentPoiIcon, 'icon-size': 0.72, 'icon-padding': 3, 'icon-optional': true,
         'text-field': currentOsmName, 'text-font': ['Noto Sans Regular'], 'text-size': ['interpolate', ['linear'], ['zoom'], 15, 10.5, 18, 12],
         'text-max-width': 8, 'text-padding': ['interpolate', ['linear'], ['zoom'], 14.5, 7, 15.5, 7, 16, 5, 17, 3],
