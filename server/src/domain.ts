@@ -9,9 +9,16 @@ export function haversine(a: Pick<Point,'latitude'|'longitude'>, b: Pick<Point,'
   const h = Math.sin(dLat/2)**2+Math.cos(a.latitude*rad)*Math.cos(b.latitude*rad)*Math.sin(dLon/2)**2;
   return Math.round(6371000*2*Math.atan2(Math.sqrt(h),Math.sqrt(Math.max(0,1-h))));
 }
-export function calculateFare(tariff: {basePrice:number;pricePerKm:number;pricePerMinute:number;minimumPrice:number;commissionBps:number}, distance:number,duration:number) {
+export function calculateFare(tariff: {basePrice:number;pricePerKm:number;pricePerMinute:number;minimumPrice:number;commissionBps:number;
+  kind?:string;longDistanceEnabled?:boolean;longDistanceThresholdKm?:number;longDistanceBasePrice?:number;longDistancePricePerKm?:number}, distance:number,duration:number) {
   if (!Number.isFinite(distance) || !Number.isFinite(duration) || distance < 1 || duration < 1 || distance > 500000 || duration > 86400) throw new BadRequestException('Маршрут недоступен или слишком длинный');
-  const price = Math.max(tariff.minimumPrice,Math.ceil(tariff.basePrice+distance/1000*tariff.pricePerKm+duration/60*tariff.pricePerMinute));
+  // Select the policy from the entire passenger route when quoting. Driver
+  // approach distance is never passed here; long trips use one boarding fee.
+  const longDistance = tariff.kind === 'RIDE' && tariff.longDistanceEnabled === true
+    && distance > (tariff.longDistanceThresholdKm ?? 5)*1000;
+  const price = longDistance
+    ? Math.ceil((tariff.longDistanceBasePrice ?? 100)+distance/1000*(tariff.longDistancePricePerKm ?? 40))
+    : Math.max(tariff.minimumPrice,Math.ceil(tariff.basePrice+distance/1000*tariff.pricePerKm+duration/60*tariff.pricePerMinute));
   return {price, commission:Math.ceil(price*tariff.commissionBps/10000)};
 }
 export function calculateWaiting(arrivedAt:Date, now:Date, policy:{waitingGraceMinutes:number;freeWaitingMinutes:number;waitingPricePerMinute:number}) {

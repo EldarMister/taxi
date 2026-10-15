@@ -44,6 +44,10 @@ export type Tariff = {
   basePrice: number;
   pricePerKm?: number;
   pricePerMinute?: number;
+  longDistanceEnabled?: boolean;
+  longDistanceThresholdKm?: number;
+  longDistanceBasePrice?: number;
+  longDistancePricePerKm?: number;
   waitingGraceMinutes?: number;
   freeWaitingMinutes?: number;
   waitingPricePerMinute?: number;

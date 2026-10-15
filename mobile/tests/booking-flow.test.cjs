@@ -68,6 +68,25 @@ test('a changed address label refreshes the order address without blanking its p
   assert.equal(h.value.quote.price, 150);
 });
 
+test('editing any long-distance tariff setting invalidates the old price and requests a fresh quote', async t => {
+  const h = await setup(t);
+  let updated = tariffs.map(item => ({ ...item, kind: 'RIDE', longDistanceEnabled: true, longDistanceThresholdKm: 5, longDistanceBasePrice: 100, longDistancePricePerKm: 40 }));
+  await h.change({ tariffs: updated }); await h.flush();
+  await h.resolve(0, 500); await h.resolve(1, 600);
+  let nextCall = 2;
+  for (const patch of [{ longDistanceBasePrice: 120 }, { longDistancePricePerKm: 50 }, { longDistanceThresholdKm: 8 }, { longDistanceEnabled: false }]) {
+    updated = updated.map(item => ({ ...item, ...patch }));
+    await h.change({ tariffs: updated });
+    assert.equal(h.value.quote, null);
+    assert.equal(h.value.previewQuote, null);
+    await h.flush();
+    assert.equal(h.calls.length, nextCall + 2);
+    await h.resolve(nextCall, 620); await h.resolve(nextCall + 1, 720);
+    assert.equal(h.value.quote.price, 620);
+    nextCall += 2;
+  }
+});
+
 test('a consumed or expired quote keeps its displayed price while a new quote is requested', async t => {
   const h = await setup(t); await h.flush(); await h.resolve(0, 150); await h.resolve(1, 180);
   await h.change({ enabled: false }); await h.refresh(); await h.change({ enabled: true });

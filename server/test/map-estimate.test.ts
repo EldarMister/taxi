@@ -9,13 +9,14 @@ import { calculateFare } from '../src/domain';
 const actor = {id:'client',role:'CLIENT'} as Actor;
 const pickup = {latitude:42.87,longitude:74.60,address:'Начало'};
 const dropoff = {latitude:42.88,longitude:74.61,address:'Конец'};
-const tariff = {id:'economy',active:true,kind:'RIDE',requiredClass:'ECONOMY',basePrice:40,minimumPrice:80,pricePerKm:15,pricePerMinute:3,commissionBps:1000};
+const tariff = {id:'economy',active:true,kind:'RIDE',requiredClass:'ECONOMY',basePrice:40,minimumPrice:80,pricePerKm:15,pricePerMinute:3,commissionBps:1000,
+  longDistanceEnabled:true,longDistanceThresholdKm:5,longDistanceBasePrice:100,longDistancePricePerKm:40};
 const driver = (userId:string, changes:Record<string,unknown> = {}) => ({userId,verified:true,online:true,deposit:500,transportClass:'ECONOMY',acceptsEconomy:true,
   acceptsComfort:false,acceptsDeliveryCar:false,acceptsDeliveryFood:false,acceptsDeliveryTruck:false,
   locationLatitude:42.865,locationLongitude:74.59,locationAccuracyM:10,locationMeasuredAt:new Date(),...changes});
 function harness(drivers:ReturnType<typeof driver>[] = []) {
   const queries:any[] = [],routes:any[] = [],limits:any[] = [];
-  const state = {busy:[] as string[],offered:[] as string[],tariff:tariff as typeof tariff|null,fail:false,failTrip:false,failPickup:false};
+  const state = {busy:[] as string[],offered:[] as string[],tariff:tariff as typeof tariff|null,fail:false,failTrip:false,failPickup:false,tripDistance:2400,pickupDistance:2400};
   const db = {
     tariff:{findFirst:async () => state.tariff},
     driverProfile:{findMany:async (query:any) => {queries.push(query);return drivers;}},
@@ -25,7 +26,7 @@ function harness(drivers:ReturnType<typeof driver>[] = []) {
   const routing = {route:async (from:any,to:any,timeout:any,language:any,options:any) => {
     routes.push({from,to,timeout,options});
     if (state.fail || state.failPickup && from.address === 'Водитель' || state.failTrip && from.address !== 'Водитель') throw new ServiceUnavailableException();
-    return {distanceMeters:2400,durationSeconds:from.address === 'Водитель' ? from.longitude === 74.59 ? 601 : 239 : 301,geometry:[from,to],provider:'osrm',steps:[]};
+    return {distanceMeters:from.address === 'Водитель' ? state.pickupDistance : state.tripDistance,durationSeconds:from.address === 'Водитель' ? from.longitude === 74.59 ? 601 : 239 : 301,geometry:[from,to],provider:'osrm',steps:[]};
   }};
   const service = new MapEstimateService(db as any,{minimumDeposit:100} as any,routing as any,{take:async (...args:any[])=>{limits.push(args);}} as any);
   return {service,state,queries,routes,limits};
@@ -62,6 +63,21 @@ test('unavailable, stale, invalid and incompatible drivers never produce a picku
   assert.deepEqual(h.queries[0].where.vehicle,{isNot:null});
   assert.equal(h.queries[0].where.online,true);
   assert.equal(h.queries[0].where.verified,true);
+});
+
+test('preview selects long-distance fare from the passenger route and never from driver approach', async () => {
+  const short = harness([driver('ready')]);
+  short.state.pickupDistance=20000;
+  const shortResult=await short.service.estimate(actor,{pickup,dropoff,tariffId:'economy'});
+  assert.equal(shortResult.trip?.price,calculateFare(tariff,2400,301).price);
+  assert.equal(shortResult.hasAvailableDrivers,true);
+  const long = harness([driver('ready')]);
+  long.state.tripDistance=10000;
+  long.state.pickupDistance=20000;
+  const longResult=await long.service.estimate(actor,{pickup,dropoff,tariffId:'economy'});
+  assert.equal(longResult.trip?.price,500);
+  assert.equal(longResult.trip?.distanceMeters,10000);
+  assert.equal(longResult.hasAvailableDrivers,true);
 });
 
 test('dispatchable idle drivers remain available while their pickup ETA awaits a fresh fix', async () => {

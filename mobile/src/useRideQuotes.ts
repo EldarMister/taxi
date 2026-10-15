@@ -31,7 +31,8 @@ export function useRideQuotes(pickup: Point | null, dropoff: Point | null, tarif
   const priceKey = JSON.stringify({
     pickup: pickup && [pickup.latitude, pickup.longitude],
     dropoff: dropoff && [dropoff.latitude, dropoff.longitude],
-    tariffs: tariffs.map(item => [item.id, item.basePrice, item.pricePerKm, item.pricePerMinute, item.minimumPrice]),
+    tariffs: tariffs.map(item => [item.id, item.basePrice, item.pricePerKm, item.pricePerMinute, item.minimumPrice,
+      item.kind, item.longDistanceEnabled, item.longDistanceThresholdKm, item.longDistanceBasePrice, item.longDistancePricePerKm]),
     accountId,
   });
   const requestKey = JSON.stringify({ priceKey, pickupAddress: pickup?.address, dropoffAddress: dropoff?.address });

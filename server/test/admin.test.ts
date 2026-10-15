@@ -35,6 +35,12 @@ test('admin guard and service deny customer and driver before any database acces
 test('tariff DTO rejects negative, fractional, unbounded and client-controlled fields',async()=>{
   const valid={id:'economy',name:'Эконом',description:'Поездки',basePrice:60,pricePerKm:14,pricePerMinute:2,waitingGraceMinutes:1,freeWaitingMinutes:5,waitingPricePerMinute:2,minimumPrice:100,commissionBps:1000,active:true};
   assert.equal((await validate(plainToInstance(AdminTariffDto,valid))).length,0);
+  const defaults=plainToInstance(AdminTariffDto,valid);
+  assert.deepEqual([defaults.longDistanceEnabled,defaults.longDistanceThresholdKm,defaults.longDistanceBasePrice,defaults.longDistancePricePerKm],[true,5,100,40]);
+  assert.equal((await validate(plainToInstance(AdminTariffPatchDto,{longDistanceEnabled:false,longDistanceThresholdKm:8,longDistanceBasePrice:120,longDistancePricePerKm:50}))).length,0);
+  for(const patch of [{longDistanceEnabled:'true'},{longDistanceThresholdKm:0},{longDistanceThresholdKm:500},{longDistanceThresholdKm:5.5},{longDistanceBasePrice:-1},{longDistancePricePerKm:1.5},{longDistancePricePerKm:1000001}]) {
+    assert.ok((await validate(plainToInstance(AdminTariffPatchDto,patch))).length,JSON.stringify(patch));
+  }
   for(const patch of [{basePrice:-1},{pricePerKm:1.5},{pricePerMinute:1000001},{waitingGraceMinutes:-1},{freeWaitingMinutes:181},{waitingPricePerMinute:1.5},{commissionBps:10001},{active:'true'},{role:'ADMIN'}]) {
     const errors=await validate(plainToInstance(AdminTariffPatchDto,patch),{whitelist:true,forbidNonWhitelisted:true});
     assert.ok(errors.length,JSON.stringify(patch));

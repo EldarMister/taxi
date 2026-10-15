@@ -11,6 +11,30 @@ test('route proximity uses metres and supports equal coordinates',()=>{
   assert.equal(haversine({latitude:42.875,longitude:74.603},{latitude:42.875,longitude:74.603}),0);
   assert.ok(haversine({latitude:42.875,longitude:74.603},{latitude:42.885,longitude:74.603})>1100);
 });
+
+test('long taxi routes select the full-route fare immediately above the threshold',()=>{
+  const tariff={kind:'RIDE',basePrice:60,pricePerKm:14,pricePerMinute:2,minimumPrice:100,commissionBps:1000,
+    longDistanceEnabled:true,longDistanceThresholdKm:5,longDistanceBasePrice:100,longDistancePricePerKm:40};
+  assert.deepEqual(calculateFare(tariff,5000,600),{price:150,commission:15});
+  assert.deepEqual(calculateFare(tariff,5001,600),{price:301,commission:31});
+  assert.deepEqual(calculateFare(tariff,5500,600),{price:320,commission:32});
+  assert.deepEqual(calculateFare(tariff,6000,600),{price:340,commission:34});
+  assert.deepEqual(calculateFare(tariff,10000,1200),{price:500,commission:50});
+  assert.deepEqual(calculateFare(tariff,15000,1800),{price:700,commission:70});
+  assert.equal(calculateFare(tariff,15001,1800).price,701);
+  assert.equal(calculateFare(tariff,20000,2400).price,900);
+  assert.equal(calculateFare({...tariff,pricePerMinute:100,minimumPrice:9999},10000,1200).price,500);
+});
+
+test('long-distance settings can change or disable the policy without affecting delivery',()=>{
+  const tariff={kind:'RIDE',basePrice:60,pricePerKm:14,pricePerMinute:2,minimumPrice:100,commissionBps:1000,
+    longDistanceEnabled:true,longDistanceThresholdKm:8,longDistanceBasePrice:120,longDistancePricePerKm:50};
+  assert.equal(calculateFare(tariff,8000,600).price,192);
+  assert.equal(calculateFare(tariff,10000,1200).price,620);
+  assert.equal(calculateFare({...tariff,longDistanceEnabled:false},10000,1200).price,240);
+  assert.equal(calculateFare({...tariff,longDistanceBasePrice:0,longDistancePricePerKm:0},10000,1200).price,0);
+  for(const kind of ['DELIVERY_CAR','DELIVERY_TRUCK'])assert.equal(calculateFare({...tariff,kind},10000,1200).price,240);
+});
 test('waiting starts after one minute, stays free for five, then bills started minutes',()=>{
   const arrival=new Date('2026-09-24T06:00:00Z');
   const policy={waitingGraceMinutes:1,freeWaitingMinutes:5,waitingPricePerMinute:4};

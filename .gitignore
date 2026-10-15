@@ -25,6 +25,7 @@ artifacts/
 .local/
 *.tgz
 *.apk
+*.aab
 
 # Retired app: keep local build artifacts and signing material out of source control.
 /restaurant-mobile/

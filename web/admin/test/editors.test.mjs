@@ -36,7 +36,7 @@ globalThis.FormData = class {
   has(name) { return this.entries.some(([key]) => key === name); }
 };
 
-const { restaurantEditor, menuDishEditor, menuOptionEditor, bannerEditor, readEditor, readMenuDish, readMenuOption, validateMenuDish } = await import('../dist/editors.js');
+const { tariffEditor, restaurantEditor, menuDishEditor, menuOptionEditor, bannerEditor, readEditor, readMenuDish, readMenuOption, validateMenuDish } = await import('../dist/editors.js');
 const { photo, bannerPreview } = await import('../dist/ui.js');
 
 const options = [
@@ -61,6 +61,18 @@ const catalog = { id: 'sushi-roll', name: 'Sushi & Roll', cuisine: 'Японск
   promotions: [{ id: 'sale', title: 'Скидка', type: 'PERCENT', value: 10, active: true, dishIds: ['philadelphia'], minSubtotal: 0 }],
 };
 const restaurant = { id: catalog.id, catalog, active: true, isDemo: true, sortOrder: 2, updatedAt: '2026-10-09T02:03:04.123Z' };
+
+test('tariff editor submits long-distance defaults and preserves custom and disabled values', () => {
+  const item = { id: 'economy', name: 'Эконом', description: 'Такси', basePrice: 60, pricePerKm: 14, pricePerMinute: 2, minimumPrice: 100 };
+  const defaults = readEditor('tariff', renderedForm(tariffEditor(item)), item);
+  assert.deepEqual([defaults.longDistanceEnabled, defaults.longDistanceThresholdKm, defaults.longDistanceBasePrice, defaults.longDistancePricePerKm], [true, 5, 100, 40]);
+  const custom = { ...item, longDistanceEnabled: false, longDistanceThresholdKm: 8, longDistanceBasePrice: 0, longDistancePricePerKm: 50 };
+  const saved = readEditor('tariff', renderedForm(tariffEditor(custom)), custom);
+  assert.deepEqual([saved.longDistanceEnabled, saved.longDistanceThresholdKm, saved.longDistanceBasePrice, saved.longDistancePricePerKm], [false, 8, 0, 50]);
+  const edited = readEditor('tariff', renderedForm(tariffEditor(item), { longDistanceBasePrice: 120, longDistancePricePerKm: 55 }), item);
+  assert.equal(edited.longDistanceBasePrice, 120);
+  assert.equal(edited.longDistancePricePerKm, 55);
+});
 
 test('rendered dish editor round-trips current photos, nutrition, groups and zero values', () => {
   const html = menuDishEditor(dish, catalog);

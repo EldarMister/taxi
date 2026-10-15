@@ -138,6 +138,10 @@ model Tariff {
   basePrice Int
   pricePerKm Int
   pricePerMinute Int
+  longDistanceEnabled Boolean @default(true)
+  longDistanceThresholdKm Int @default(5)
+  longDistanceBasePrice Int @default(100)
+  longDistancePricePerKm Int @default(40)
   waitingGraceMinutes Int @default(1)
   freeWaitingMinutes Int @default(5)
   waitingPricePerMinute Int @default(0)

@@ -24,6 +24,10 @@ export class AdminTariffDto {
   @IsInt() @Min(0) @Max(1000000) basePrice!:number;
   @IsInt() @Min(0) @Max(1000000) pricePerKm!:number;
   @IsInt() @Min(0) @Max(1000000) pricePerMinute!:number;
+  @IsBoolean() longDistanceEnabled=true;
+  @IsInt() @Min(1) @Max(499) longDistanceThresholdKm=5;
+  @IsInt() @Min(0) @Max(1000000) longDistanceBasePrice=100;
+  @IsInt() @Min(0) @Max(1000000) longDistancePricePerKm=40;
   @IsInt() @Min(0) @Max(60) waitingGraceMinutes!:number;
   @IsInt() @Min(0) @Max(180) freeWaitingMinutes!:number;
   @IsInt() @Min(0) @Max(1000000) waitingPricePerMinute!:number;
@@ -39,6 +43,10 @@ export class AdminTariffPatchDto {
   @IsOptional() @IsInt() @Min(0) @Max(1000000) basePrice?:number;
   @IsOptional() @IsInt() @Min(0) @Max(1000000) pricePerKm?:number;
   @IsOptional() @IsInt() @Min(0) @Max(1000000) pricePerMinute?:number;
+  @IsOptional() @IsBoolean() longDistanceEnabled?:boolean;
+  @IsOptional() @IsInt() @Min(1) @Max(499) longDistanceThresholdKm?:number;
+  @IsOptional() @IsInt() @Min(0) @Max(1000000) longDistanceBasePrice?:number;
+  @IsOptional() @IsInt() @Min(0) @Max(1000000) longDistancePricePerKm?:number;
   @IsOptional() @IsInt() @Min(0) @Max(60) waitingGraceMinutes?:number;
   @IsOptional() @IsInt() @Min(0) @Max(180) freeWaitingMinutes?:number;
   @IsOptional() @IsInt() @Min(0) @Max(1000000) waitingPricePerMinute?:number;

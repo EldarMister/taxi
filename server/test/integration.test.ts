@@ -74,7 +74,10 @@ before(async()=>{
     if(role==='DRIVER')await db.driverProfile.create({data:{userId:user.id,verified:true,deposit:1000,vehicle:{create:{make:'Toyota',color:'Белый',plate:phone}}}});
     if(role==='ADMIN')await db.adminCredential.create({data:{userId:user.id,username:'integration-owner',passwordHash:await hashAdminPassword(adminPassword)}});
   }
-  const module=await Test.createTestingModule({imports:[AppModule]}).overrideProvider(RoutingService).useValue({route:async(start:any,finish:any)=>parseOsrmRoute(osrmFixture(start,finish),start,finish)}).compile();
+  const module=await Test.createTestingModule({imports:[AppModule]}).overrideProvider(RoutingService).useValue({route:async(start:any,finish:any)=>{
+    const route=parseOsrmRoute(osrmFixture(start,finish),start,finish);
+    return finish.address==='Дальний маршрут 10 км'?{...route,distanceMeters:10000,durationSeconds:1200}:route;
+  }}).compile();
   app=module.createNestApplication({logger:false});app.setGlobalPrefix('api');app.useGlobalPipes(apiValidation());app.useGlobalFilters(new ApiExceptionFilter());
   await app.listen(0,'127.0.0.1');baseUrl=await app.getUrl();api=request(app.getHttpServer());
   client=await login('+996700123456');client2=await login('+996700123457');driver1=await login('+996700111111','driver');driver2=await login('+996700222222','driver');
@@ -774,6 +777,34 @@ test('admin tariff changes alter new quotes, retain prior fare and broadcast to 
   assert.equal(leaked,0);
   assert.ok(await db.adminAudit.findFirst({where:{actorId:admin.user.id,action:'tariff.update',entityId:'economy'}}));
   adminSocket.disconnect();riderSocket.disconnect();
+});
+
+test('admin long-distance settings reach quotes and preserve the booked full-route fare',async()=>{
+  const id='long-distance-test', destination={...dropoff,address:'Дальний маршрут 10 км'};
+  const created=(await api.post('/api/admin/tariffs').set(headers(admin)).send({id,name:'Дальний тест',description:'Проверка расчёта',
+    kind:'RIDE',requiredClass:'ECONOMY',basePrice:60,pricePerKm:14,pricePerMinute:2,minimumPrice:100,commissionBps:1000,
+    waitingGraceMinutes:1,freeWaitingMinutes:5,waitingPricePerMinute:2,active:true}).expect(201)).body;
+  assert.deepEqual([created.longDistanceEnabled,created.longDistanceThresholdKm,created.longDistanceBasePrice,created.longDistancePricePerKm],[true,5,100,40]);
+  const requestQuote=async()=>(await api.post('/api/orders/quote').set(headers(client)).send({pickup,dropoff:destination,tariffId:id}).expect(201)).body;
+  const before=await requestQuote();
+  assert.equal(before.distanceMeters,10000);assert.equal(before.price,500);assert.equal(before.commission,50);
+  const preview=(await api.post('/api/orders/map-estimate').set(headers(client)).send({pickup,dropoff:destination,tariffId:id}).expect(201)).body;
+  assert.equal(preview.trip.price,500);
+  const changed=(await api.patch(`/api/admin/tariffs/${id}`).set(headers(admin)).send({longDistanceBasePrice:120,longDistancePricePerKm:50}).expect(200)).body;
+  assert.equal(changed.longDistanceBasePrice,120);assert.equal(changed.longDistancePricePerKm,50);
+  assert.equal((await requestQuote()).price,620);
+  const order=(await api.post('/api/orders').set(headers(client)).send({quoteId:before.id,idempotencyKey:randomUUID()}).expect(201)).body;
+  assert.equal(order.price,500);assert.equal(order.distanceMeters,10000);
+  assert.equal((await db.order.findUniqueOrThrow({where:{id:order.id}})).commission,50);
+  await api.post(`/api/orders/${order.id}/cancel`).set(headers(client)).expect(201);
+  await api.patch(`/api/admin/tariffs/${id}`).set(headers(admin)).send({longDistanceThresholdKm:10}).expect(200);
+  assert.equal((await requestQuote()).price,240,'the threshold is inclusive for ordinary pricing');
+  await api.patch(`/api/admin/tariffs/${id}`).set(headers(admin)).send({longDistanceThresholdKm:5,longDistanceEnabled:false}).expect(200);
+  assert.equal((await requestQuote()).price,240);
+  for(const patch of [{longDistanceThresholdKm:0},{longDistancePricePerKm:-1},{longDistanceBasePrice:0.5}]) {
+    await api.patch(`/api/admin/tariffs/${id}`).set(headers(admin)).send(patch).expect(400);
+  }
+  await api.patch(`/api/admin/tariffs/${id}`).set(headers(admin)).send({active:false}).expect(200);
 });
 
 test('admin registers and edits drivers while protecting active trips and immutable deposit ledger',async()=>{
