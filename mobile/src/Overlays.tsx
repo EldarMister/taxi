@@ -9,6 +9,7 @@ import { ChatMessage, User } from './types';
 import { Icon, localize } from './ui';
 import { useTheme } from './design/theme';
 import { BottomPanel } from './BottomPanel';
+import { measureInScreen } from './measureInScreen';
 
 export { AddressPicker } from './AddressPicker';
 
@@ -46,7 +47,7 @@ export function ChatOverlay({ orderId, user, peerName, incoming, onClose, onErro
     if (Platform.OS !== 'android' || keyboardScreenY.current === null) return;
     const keyboardY = keyboardScreenY.current;
     const measurement = ++keyboardMeasurement.current;
-    chatHost.current?.measureInWindow((_x, y, _width, height) => {
+    measureInScreen(chatHost.current, (_x, y, _width, height) => {
       if (keyboardScreenY.current !== keyboardY || keyboardMeasurement.current !== measurement) return;
       // The modal may already resize. Lift only the overlap that remains.
       const overlap = Math.min(Math.max(0, height - 100), Math.max(0, y + height - keyboardY));

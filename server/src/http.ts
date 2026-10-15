@@ -4,7 +4,7 @@ import { ApiBearerAuth, ApiBody, ApiConsumes, ApiOperation, ApiTags } from '@nes
 import { Request, Response } from 'express';
 import { Prisma } from '@prisma/client';
 import sharp from 'sharp';
-import { Actor, AuthGuard, AuthService, RateLimits } from './auth';
+import { Actor, AuthGuard, AuthService, RateLimits, authRequestIp } from './auth';
 import { AppConfig } from './config';
 import { OtpFallback } from './otp-fallback';
 import { DriverService } from './driver';
@@ -19,6 +19,26 @@ export const MAX_AVATAR_BYTES=5*1024*1024;
 export const MAX_AVATAR_PIXELS=20_000_000;
 export const AVATAR_SIZE=720;
 const avatarMimes=new Set(['image/jpeg','image/png','image/webp']);
+
+/** Keep the legacy display name and explicit client identity in sync. */
+export function profileUpdateData(dto:ProfileDto,role:Actor['role']):Prisma.UserUpdateManyMutationInput {
+  const {firstName,lastName,name,...preferences}=dto;
+  const normalize=(value:string)=>value.trim().replace(/\s+/g,' ');
+  if(firstName!==undefined||lastName!==undefined) {
+    if(role!=='CLIENT')throw new ForbiddenException('Измените имя в личных данных водителя.');
+    if(typeof firstName!=='string'||typeof lastName!=='string')throw new BadRequestException('Укажите имя и фамилию.');
+    if(name!==undefined)throw new BadRequestException('Передайте имя и фамилию отдельными полями.');
+    const first=normalize(firstName),last=normalize(lastName),fullName=`${first} ${last}`;
+    if(!first||!last||first.length>80||last.length>80||fullName.length>80||/[\u0000-\u001f\u007f]/.test(firstName+lastName))throw new BadRequestException('Укажите имя и фамилию общей длиной до 80 символов.');
+    return {...preferences,firstName:first,lastName:last,name:fullName};
+  }
+  if(name!==undefined) {
+    if(typeof name!=='string')throw new BadRequestException('Укажите имя.');
+    const normalized=normalize(name);
+    return {...preferences,name:normalized,...(role==='CLIENT'?{firstName:'',lastName:''}:{})};
+  }
+  return preferences;
+}
 
 /** Removes cache keys used only by older mobile builds after a 304 response.
  * All other query keys remain subject to DTO validation. */
@@ -58,11 +78,11 @@ export async function normalizeAvatar(data:Buffer):Promise<Buffer> {
 export class AuthController {
   constructor(private readonly auth:AuthService,private readonly limits:RateLimits,private readonly fallback:OtpFallback) {}
   @Get('code-delivery/:id')
-  async deliveryStatus(@Param('id',ParseUUIDPipe) id:string,@Req() req:Request) {await this.limits.take(`otp-status:${req.ip??'unknown'}`,120,60);return this.fallback.status(id);}
+  async deliveryStatus(@Param('id',ParseUUIDPipe) id:string,@Req() req:Request) {await this.limits.take(`otp-status:${authRequestIp(req)}`,120,60);return this.fallback.status(id);}
   @Post('request-code') @ApiOperation({summary:'Запросить SMS-код; тестовый код доступен только в development'})
-  request(@Body() dto:PhoneDto,@Req() req:Request) {return this.auth.requestCode(dto.phone,req.ip??'unknown');}
-  @Post('verify-code') verify(@Body() dto:VerifyDto,@Req() req:Request) {return this.auth.verifyCode(dto.phone,dto.code,req.ip??'unknown');}
-  @Post('refresh') async refresh(@Body() dto:RefreshDto,@Req() req:Request) {await this.limits.take(`refresh:${req.ip??'unknown'}`,60,60);return this.auth.refresh(dto.refreshToken);}
+  request(@Body() dto:PhoneDto,@Req() req:Request) {return this.auth.requestCode(dto.phone,authRequestIp(req),dto.appVariant);}
+  @Post('verify-code') verify(@Body() dto:VerifyDto,@Req() req:Request) {return this.auth.verifyCode(dto.phone,dto.code,authRequestIp(req),dto.appVariant);}
+  @Post('refresh') async refresh(@Body() dto:RefreshDto,@Req() req:Request) {await this.limits.take(`refresh:${authRequestIp(req)}`,60,60);return this.auth.refresh(dto.refreshToken);}
   @Post('logout') @UseGuards(AuthGuard) @ApiBearerAuth()
   logout(@Body() dto:RefreshDto,@Req() req:AuthedRequest) {return this.auth.logout(dto.refreshToken,req.actor);}
 }
@@ -71,7 +91,7 @@ export class UsersController {
   constructor(private readonly db:PrismaService,private readonly auth:AuthService,private readonly limits:RateLimits) {}
   @Get('me') me(@Req() req:AuthedRequest) {return this.auth.user(req.actor.id);}
   @Patch('me') async update(@Req() req:AuthedRequest,@Body() dto:ProfileDto) {
-    const result=await this.db.user.updateMany({where:{id:req.actor.id,deletedAt:null},data:{...dto,...(dto.name!==undefined?{name:dto.name.trim()}:{})}});if(!result.count)throw new ForbiddenException('Аккаунт удалён.');return this.auth.user(req.actor.id);
+    const result=await this.db.user.updateMany({where:{id:req.actor.id,deletedAt:null},data:profileUpdateData(dto,req.actor.role)});if(!result.count)throw new ForbiddenException('Аккаунт удалён.');return this.auth.user(req.actor.id);
   }
   @Delete('me/avatar') async removeAvatar(@Req() req:AuthedRequest) {
     if(req.actor.role!=='DRIVER')throw new ForbiddenException('Страница доступна водителю.');
@@ -141,7 +161,8 @@ export class UsersController {
         // registered and make room for the replacement instead of rejecting it.
         if(tokens.length>=10) await tx.pushToken.deleteMany({where:{id:{in:tokens.slice(0,tokens.length-9).map(token=>token.id)}}});
       }
-      await tx.pushToken.upsert({where:{token:dto.token},create:{userId:req.actor.id,...dto},update:{userId:req.actor.id,platform:dto.platform}});
+      const driverOfferActions = dto.platform === 'android' && dto.driverOfferActions === true;
+      await tx.pushToken.upsert({where:{token:dto.token},create:{userId:req.actor.id,...dto,driverOfferActions},update:{userId:req.actor.id,platform:dto.platform,driverOfferActions}});
     });
     return {ok:true};
   }

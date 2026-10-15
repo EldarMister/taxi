@@ -4,6 +4,9 @@ node_modules/
 !.env.example
 !.env.*.example
 dist/
+# The admin is maintained directly as static website source.
+!web/admin/dist/
+!web/admin/dist/**
 coverage/
 .expo/
 .gradle/
@@ -22,3 +25,11 @@ artifacts/
 .local/
 *.tgz
 *.apk
+
+# Retired app: keep local build artifacts and signing material out of source control.
+/restaurant-mobile/
+
+# Local browser sessions and Python bytecode.
+.playwright-mcp/
+__pycache__/
+*.py[cod]

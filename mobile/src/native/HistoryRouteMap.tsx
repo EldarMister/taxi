@@ -11,6 +11,7 @@ import { darkRasterMapFallback, mapStyleForLanguage, rasterMapFallback } from '.
 export function HistoryRouteMap({ order, language, onError, onInteractionChange }: { order: Order; language: User['language']; onError: (message: string) => void; onInteractionChange?: (active: boolean) => void }) {
   const { isDark, palette } = useTheme();
   const camera = useRef<CameraRef>(null);
+  const interactionTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [size, setSize] = useState({ width: 0, height: 0 });
   const [ready, setReady] = useState(false);
   const [fallback, setFallback] = useState(false);
@@ -22,6 +23,26 @@ export function HistoryRouteMap({ order, language, onError, onInteractionChange 
   const dropoffValid = isMapPoint(order.dropoff);
   const frame = useMemo(() => routeFrame([...points, ...(pickupValid ? [order.pickup] : []), ...(dropoffValid ? [order.dropoff] : [])], size.width, size.height, 0), [points, pickupValid, dropoffValid, order.pickup, order.dropoff, size]);
   const line = useMemo<GeoJSON.LineString>(() => ({ type: 'LineString', coordinates: points.map(point => [point.longitude, point.latitude]) }), [points]);
+
+  function holdMapGesture() {
+    if (interactionTimer.current) clearTimeout(interactionTimer.current);
+    onInteractionChange?.(true);
+    interactionTimer.current = setTimeout(() => {
+      interactionTimer.current = null;
+      onInteractionChange?.(false);
+    }, 900);
+  }
+
+  function releaseMapGesture() {
+    if (interactionTimer.current) clearTimeout(interactionTimer.current);
+    interactionTimer.current = null;
+    onInteractionChange?.(false);
+  }
+
+  useEffect(() => () => {
+    if (interactionTimer.current) clearTimeout(interactionTimer.current);
+    onInteractionChange?.(false);
+  }, [onInteractionChange]);
 
   useEffect(() => {
     if (!ready || !frame || !size.width || !size.height) return;
@@ -38,7 +59,7 @@ export function HistoryRouteMap({ order, language, onError, onInteractionChange 
   const center = pickupValid ? order.pickup : dropoffValid ? order.dropoff : null;
   if (!center) return null;
   return <View style={[styles.container, { backgroundColor: palette.elevated }]} onLayout={({ nativeEvent: { layout } }) => setSize({ width: layout.width, height: layout.height })}
-    onTouchStart={() => onInteractionChange?.(true)} onTouchEnd={() => onInteractionChange?.(false)} onTouchCancel={() => onInteractionChange?.(false)}>
+    onTouchStart={holdMapGesture} onTouchMove={holdMapGesture} onTouchEnd={releaseMapGesture} onTouchCancel={releaseMapGesture}>
     <MapView
       key={fallback ? 'raster' : 'vector'}
       style={StyleSheet.absoluteFill}

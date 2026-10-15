@@ -4,12 +4,15 @@ import * as Notifications from 'expo-notifications';
 import * as SecureStore from 'expo-secure-store';
 import { AppState, Linking, Platform } from 'react-native';
 import { driverSounds } from './driverSounds';
+import { DRIVER_OFFER_CATEGORY, driverOfferButtons } from '../driverOfferNotification';
+import { selectedLanguage } from '../auth/languageStore';
 
 Notifications.setNotificationHandler({
   // Foreground driver audio is sequenced by the shared event ledger, not both push and socket.
   handleNotification: async () => ({ shouldShowBanner: true, shouldShowList: true, shouldPlaySound: !driverSounds.isDriver() || AppState.currentState !== 'active', shouldSetBadge: false }),
 });
 export async function configureNotificationChannels(): Promise<void> {
+  if (Platform.OS !== 'web') await Notifications.setNotificationCategoryAsync(DRIVER_OFFER_CATEGORY, driverOfferButtons(selectedLanguage()));
   if (Platform.OS !== 'android') return;
   const channels = [
     { id: 'orders', name: 'Заказы и поездки', sound: 'default' },
@@ -34,7 +37,7 @@ export async function getNotificationPermissionState(): Promise<NotificationPerm
   try {
     const permission = await Notifications.getPermissionsAsync();
     return { granted: permission.status === 'granted', canAskAgain: permission.canAskAgain, supported: true };
-  } catch { return { granted: false, canAskAgain: false, supported: false }; }
+  } catch { throw new Error('Не удалось проверить разрешение на уведомления. Попробуйте ещё раз.'); }
 }
 
 export async function openNotificationSettings(): Promise<void> {
@@ -46,9 +49,12 @@ export async function requestNotificationAccess(): Promise<NotificationPermissio
   try {
     await configureNotificationChannels();
     let permission = await Notifications.getPermissionsAsync();
-    if (permission.status !== 'granted' && permission.canAskAgain) permission = await Notifications.requestPermissionsAsync();
+    if (permission.status !== 'granted' && permission.canAskAgain) {
+      await Notifications.requestPermissionsAsync();
+      permission = await Notifications.getPermissionsAsync();
+    }
     return { granted: permission.status === 'granted', canAskAgain: permission.canAskAgain, supported: true };
-  } catch { return { granted: false, canAskAgain: false, supported: false }; }
+  } catch { throw new Error('Не удалось запросить разрешение на уведомления. Попробуйте ещё раз.'); }
 }
 
 export async function registerPushNotifications(): Promise<string | null> {
@@ -60,9 +66,9 @@ export async function registerPushNotifications(): Promise<string | null> {
 }
 
 async function registerPush(): Promise<string | null> {
-  await configureNotificationChannels();
-  if (Platform.OS === 'web') return null;
   const generation = pushGeneration;
+  await configureNotificationChannels();
+  if (Platform.OS === 'web' || generation !== pushGeneration) return null;
   const permission = await getNotificationPermissionState();
   if (!permission.granted || !Device.isDevice) return null;
   // The shared .env may contain the client's legacy project ID. The packaged
@@ -82,7 +88,8 @@ async function registerPush(): Promise<string | null> {
   if (!api.getTokens() || generation !== pushGeneration) return null;
   const previous = await SecureStore.getItemAsync(PUSH_TOKEN_KEY);
   if (generation !== pushGeneration) return null;
-  const operation = api.request('/users/me/push-token', { method: 'POST', body: JSON.stringify({ token: result.data, platform: Platform.OS }) });
+  const operation = api.request('/users/me/push-token', { method: 'POST', body: JSON.stringify({ token: result.data, platform: Platform.OS,
+    driverOfferActions: Platform.OS === 'android' && Constants.expoConfig?.android?.package === 'atlas.pro' }) });
   registrationNetwork = operation;
   try { await operation; }
   finally { if (registrationNetwork === operation) registrationNetwork = undefined; }
@@ -107,19 +114,38 @@ export async function unregisterPushNotifications(): Promise<void> {
   await SecureStore.deleteItemAsync(PUSH_TOKEN_KEY);
 }
 
-export function onNotificationOpened(handler: (orderId: string | undefined, data: Record<string, unknown>) => void): () => void {
+// The server has already erased the account and its tokens. No authenticated
+// request is needed; fence delayed token registration and clear device state.
+export async function forgetPushNotifications(): Promise<void> {
+  pushGeneration += 1;
+  await registration?.catch(() => undefined);
+  await SecureStore.deleteItemAsync(PUSH_TOKEN_KEY);
+  await Notifications.dismissAllNotificationsAsync();
+  await Notifications.clearLastNotificationResponseAsync();
+}
+
+export function onNotificationOpened(handler: (orderId: string | undefined, data: Record<string, unknown>, actionIdentifier?: string) => void): () => void {
   let active = true;
+  let liveResponseReceived = false;
+  const handled = new Set<string>();
+  const deliver = (response: Notifications.NotificationResponse) => {
+    if (!active) return;
+    const key = `${response.notification.request.identifier}:${response.actionIdentifier}`;
+    if (handled.has(key)) return;
+    handled.add(key);
+    if (handled.size > 64) handled.delete(handled.values().next().value!);
+    const data = response.notification.request.content.data;
+    handler(typeof data.orderId === 'string' ? data.orderId : undefined, data, response.actionIdentifier);
+  };
   void Notifications.getLastNotificationResponseAsync().then(response => {
-    if (!active || !response) return;
-    const data = response.notification.request.content.data;
-    const id = data.orderId;
-    handler(typeof id === 'string' ? id : undefined, data);
-    void Notifications.clearLastNotificationResponseAsync();
-  });
+    if (!active || !response || liveResponseReceived) return;
+    deliver(response);
+    void Notifications.clearLastNotificationResponseAsync().catch(() => undefined);
+  }).catch(() => undefined);
   const subscription = Notifications.addNotificationResponseReceivedListener((response) => {
-    const data = response.notification.request.content.data;
-    const id = data.orderId;
-    handler(typeof id === 'string' ? id : undefined, data);
+    liveResponseReceived = true;
+    deliver(response);
+    void Notifications.clearLastNotificationResponseAsync().catch(() => undefined);
   });
   return () => { active = false; subscription.remove(); };
 }

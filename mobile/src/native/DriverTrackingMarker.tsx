@@ -69,7 +69,7 @@ export const DriverTrackingMarker = React.memo(function DriverTrackingMarker({ p
   const id = passengerView ? 'client-driver' : 'driver-navigation';
   return <ShapeSource ref={source} id={`${id}-position`} shape={EMPTY_SHAPE} testID={`${id}-position`}>
     <SymbolLayer id={passengerView ? 'client-driver-car' : 'driver-navigation-arrow'} style={{
-      iconImage: passengerView ? require('../../assets/tracking-car-white.png') : require('../../assets/driver-navigation-arrow.png'),
+      iconImage: passengerView ? require('../../assets/tracking-car-white.webp') : require('../../assets/driver-navigation-arrow.png'),
       iconSize: passengerView ? .025 : .42,
       // Keep the original car and arrow even before a course exists. Zero is
       // only its initial visual orientation; measured course remains null.

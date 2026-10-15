@@ -27,10 +27,10 @@ type Props = {
 const INK = '#0D1119';
 const BG = '#FFFFFF';
 const CARDS = [
-  { key: 'taxi', title: 'Такси', image: require('../../assets/home/service-taxi.png'), tint: '#FFF5CF' },
-  { key: 'delivery', title: 'Доставка', image: require('../../assets/home/service-delivery.png'), tint: '#DCEEFF' },
-  { key: 'truck', title: 'Грузовой', image: require('../../assets/home/service-truck.png'), tint: '#E4ECFF' },
-  { key: 'food', title: 'Еда', image: require('../../assets/home/service-food.png'), tint: '#DBFAE9' },
+  { key: 'taxi', title: 'Такси', image: require('../../assets/home/service-taxi.webp'), tint: '#FFF5CF' },
+  { key: 'delivery', title: 'Доставка', image: require('../../assets/home/service-delivery.webp'), tint: '#DCEEFF' },
+  { key: 'truck', title: 'Грузовой', image: require('../../assets/home/service-truck.webp'), tint: '#E4ECFF' },
+  { key: 'food', title: 'Еда', image: require('../../assets/home/service-food.webp'), tint: '#DBFAE9' },
 ] as const;
 const WRITE_STEP_MS = 210;
 const BLINK_HALF_CYCLE_MS = 850;
@@ -188,7 +188,7 @@ export function ServiceHomeScreen({ userId, language = 'ru', currentAddress, onC
           onPress={() => onSavedPlace(place.kind)} onLongPress={() => onEditSavedPlace(place.kind)} pressScale={.95}
           containerStyle={styles.placeTouch} style={styles.place}>
           <View style={[styles.placeIcon, compact && styles.placeIconCompact, { backgroundColor: isDark ? palette.elevated : '#D9EBFB' }]}>
-            <Icon name={place.icon} size={27} color={isDark ? ink : '#1267B5'}/>
+            <Icon name={place.icon} size={27} color={isDark ? ink : '#1267B5'} purpose="action"/>
           </View>
           <Text style={[styles.placeTitle, { color: ink }]}>{place.title}</Text>
           {!!savedPlaces[place.kind] && <Text numberOfLines={1} style={[styles.placeAddress, { color: muted }]}>

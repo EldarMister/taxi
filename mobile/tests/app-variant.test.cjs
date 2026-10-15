@@ -30,7 +30,7 @@ test('the absent APP_VARIANT remains the existing client application', () => {
   assert.equal(resolved.identity.name, 'Atlas');
   assert.equal(resolved.identity.slug, 'taxi-go');
   assert.equal(resolved.identity.scheme, 'taxi-go');
-  assert.equal(resolved.identity.androidPackage, 'kg.taxigo.app');
+  assert.equal(resolved.identity.androidPackage, 'atlas.kg');
   assert.equal(resolved.identity.iosBundleIdentifier, 'kg.taxigo.app');
   assert.equal(resolved.identity.expectedRole, 'CLIENT');
   assert.equal(resolved.easProjectId, DEFAULT_CLIENT_EAS_PROJECT_ID);
@@ -47,7 +47,7 @@ test('the driver build has an independent install identity and credentials', () 
   assert.equal(resolved.identity.name, 'Atlas pro');
   assert.equal(resolved.identity.slug, 'taxi-go-driver');
   assert.equal(resolved.identity.scheme, 'taxi-go-driver');
-  assert.equal(resolved.identity.androidPackage, 'kg.taxigo.driver');
+  assert.equal(resolved.identity.androidPackage, 'atlas.pro');
   assert.equal(resolved.identity.iosBundleIdentifier, 'kg.taxigo.driver');
   assert.equal(resolved.identity.expectedRole, 'DRIVER');
   assert.equal(resolved.easProjectId, 'driver-project-id');
@@ -87,8 +87,11 @@ test('each binary accepts only its own account role and explains a cleared misma
   assert.equal(isRoleAllowed('driver', 'DRIVER'), true);
   assert.equal(isRoleAllowed('driver', 'CLIENT'), false);
   assert.match(roleMismatchCopy('client', 'ru').message, /Atlas pro.*очищена/);
-  assert.match(roleMismatchCopy('driver', 'ru').message, /клиентское приложение Atlas.*очищена/);
-  assert.match(roleMismatchCopy('driver', 'ky').action, /номер/);
+  assert.match(roleMismatchCopy('driver', 'ru').message, /клиентскому приложению Atlas.*очищена/);
+  assert.equal(roleMismatchCopy('driver', 'ru').action, 'Войти снова');
+  assert.match(roleMismatchCopy('driver', 'ky').message, /номериңиз/);
+  assert.equal(roleMismatchCopy('driver', 'en').action, 'Sign in again');
+  assert.match(roleMismatchCopy('client', 'en').message, /Atlas pro.*your phone number/);
 });
 
 test('restore, synchronization and OTP handoff all enforce the role gate', () => {
@@ -171,6 +174,11 @@ test('driver tabs stay hidden from a new offer through the active trip', () => {
   const result = {};
   vm.runInNewContext(compiled, { exports: result, isActive: types.isActive });
   const showTabs = result.showTabs;
+  for (const page of ['history', 'profile', 'settings', 'balance']) {
+    assert.equal(showTabs(null, undefined, page), true, page);
+    assert.equal(showTabs({ status: 'IN_PROGRESS' }, { id: 'new-offer' }, page), true, `${page} keeps navigation away from the trip screen`);
+  }
+  assert.match(source, /const showDriverTabs = shouldShowDriverTabs\(order, offer, page\)/);
   assert.equal(showTabs(null), true);
   assert.equal(showTabs(null, { id: 'new-offer' }), false);
   for (const status of ['ASSIGNED', 'ARRIVED', 'IN_PROGRESS']) {
@@ -199,11 +207,12 @@ test('Expo, EAS and the checked-in Android project use the same build variant', 
   assert.match(runner, /APP_ENV: process\.env\.APP_ENV \|\| 'development'/);
   assert.match(gradle, /System\.getenv\("APP_VARIANT"\)/);
   assert.match(gradle, /taxiAppName = taxiAppVariant == "driver" \? "Atlas pro" : "Atlas"/);
-  assert.match(gradle, /kg\.taxigo\.driver/);
+  assert.match(gradle, /atlas\.pro/);
   assert.match(gradle, /taxiAppVariant == "driver" \? "@drawable\/edu_drive_icon" : "@drawable\/edu_go_client_logo"/);
   assert.match(gradle, /taxiAppVariant == "driver" \? "@style\/Theme\.EduDrive\.SplashScreen" : "@style\/Theme\.EduGo\.SplashScreen"/);
   assert.match(manifest, /android:icon="\$\{taxiAppIcon\}"/);
   assert.match(gradle, /rename \{ "google-services\.json" \}/);
+  assert.match(gradle, /googleServicesJsonFiles\.set\(\[taxiGoogleServices\]\)/, 'Firebase inputs stay bound to the selected app variant');
   assert.match(manifest, /\$\{taxiAppScheme\}/);
   assert.equal(eas.build.preview.env.APP_VARIANT, 'client');
   assert.equal(eas.build['preview-driver'].env.APP_VARIANT, 'driver');

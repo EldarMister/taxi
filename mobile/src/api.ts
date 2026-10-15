@@ -6,11 +6,14 @@ const { resolveApiUrl } = require('../config/api.cjs') as { resolveApiUrl: (valu
 export class ApiError extends Error {
   readonly code?: string;
   readonly requestId?: string;
+  readonly retryAfterSeconds?: number;
   readonly fieldErrors: Array<{ field: string; code?: string; message: string }>;
-  constructor(public status: number, message: string, details?: { code?: unknown; requestId?: unknown; fieldErrors?: unknown }) {
+  constructor(public status: number, message: string, details?: { code?: unknown; requestId?: unknown; fieldErrors?: unknown; retryAfterSeconds?: unknown }) {
     super(message); this.name = 'ApiError';
     this.code = typeof details?.code === 'string' ? details.code : undefined;
     this.requestId = typeof details?.requestId === 'string' ? details.requestId : undefined;
+    this.retryAfterSeconds = typeof details?.retryAfterSeconds === 'number' && Number.isFinite(details.retryAfterSeconds) && details.retryAfterSeconds > 0
+      ? Math.ceil(details.retryAfterSeconds) : undefined;
     this.fieldErrors = Array.isArray(details?.fieldErrors) ? details.fieldErrors.flatMap(item => {
       if (!item || typeof item !== 'object') return [];
       const value = item as Record<string, unknown>;

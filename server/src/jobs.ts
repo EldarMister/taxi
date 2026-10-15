@@ -34,9 +34,12 @@ export class BackgroundJobs {
   async cleanup() {
     try {
       await this.db.rateLimit.deleteMany({where:{expiresAt:{lt:new Date(Date.now()-86400000)}}});
+      await this.db.smsChallenge.updateMany({where:{providerTokenCiphertext:{not:null},expiresAt:{lte:new Date()}},data:{providerTokenCiphertext:null}});
       await this.db.smsChallenge.deleteMany({where:{expiresAt:{lt:new Date(Date.now()-86400000)}}});
       await this.db.refreshSession.deleteMany({where:{expiresAt:{lt:new Date(Date.now()-90*86400000)}}});
       await this.db.pushJob.deleteMany({where:{sentAt:{lt:new Date(Date.now()-30*86400000)}}});
+      // This is our database audit journal, not Railway's stdout/HTTP logs.
+      await this.db.adminAudit.deleteMany({where:{createdAt:{lte:new Date(Date.now()-30*86400000)}}});
     } catch{this.logger.error('Retention cleanup failed');}
   }
 }

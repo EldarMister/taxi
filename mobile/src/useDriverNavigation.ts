@@ -9,8 +9,8 @@ import { ingestDriverLocation, requestDriverBackgroundAccess, setDriverTrackingR
 import { routeVoice } from './native/routeVoice';
 import { recordTrackingEvent } from './native/trackingRecorder';
 import type { Language, Order } from './types';
-import { DrivingRoute, GuidanceCue, NavigationFix, NavigationProgress, PreparedRoute, PreviousRouteProgress, bestVoiceForLanguage, distanceBetween, guidanceCue, navigationDestination, offRouteThreshold, prepareRoute, routeProgress, shouldReroute, unsupportedRouteOptions, usableNavigationFix } from './navigation';
-import { RoadFeature, roadFeatureAnnouncement, roadFeatureWindow, visibleRoadFeatures } from './roadFeatures';
+import { DrivingRoute, GuidanceCue, NavigationFix, NavigationProgress, PreparedRoute, PreviousRouteProgress, bestVoiceForLanguage, distanceBetween, guidanceCue, guidanceDistanceStillRelevant, navigationDestination, offRouteThreshold, prepareRoute, routeProgress, shouldReroute, unsupportedRouteOptions, usableNavigationFix } from './navigation';
+import { RoadFeature, currentRoadSpeedLimit, mergeRoadFeatureWindow, roadFeatureAnnouncement, roadFeatureWarningDistance, roadFeatureWindow, visibleRoadFeatures } from './roadFeatures';
 
 export function useDriverNavigation({ userId, order, enabled, locationEnabled, mapVisible = true, language = 'ru' }: { userId?: string; order: Order | null; enabled: boolean; locationEnabled: boolean; mapVisible?: boolean; language?: Language }) {
   const [foreground, setForeground] = useState(AppState.currentState === 'active');
@@ -53,6 +53,7 @@ export function useDriverNavigation({ userId, order, enabled, locationEnabled, m
   const [roadFeatures, setRoadFeatures] = useState<RoadFeature[]>([]);
   const featureRequestRef = useRef<AbortController | null>(null);
   const featureLoadedUntil = useRef(0);
+  const featureRefreshAfter = useRef(0);
   const featureRetryAfter = useRef(0);
   const [rerouteReason, setRerouteReason] = useState('');
   const destination = navigationDestination(order);
@@ -68,9 +69,9 @@ export function useDriverNavigation({ userId, order, enabled, locationEnabled, m
     return () => { live = false; };
   }, [tracking, userId, order?.id, order?.assignmentId, order?.status, voiceEnabled, language, foreground, retry]);
   const enableBackground = useCallback(async () => {
-    try { await requestDriverBackgroundAccess(); setRetry(value => value + 1); setBackgroundError(''); }
+    try { await requestDriverBackgroundAccess(language); setRetry(value => value + 1); setBackgroundError(''); }
     catch { setBackgroundError('Разрешите геолокацию «Всегда» в настройках телефона'); }
-  }, []);
+  }, [language]);
   const session = active ? `${userId}:${order?.id}:${order?.assignmentId || ''}:${order?.status}:${destination?.latitude}:${destination?.longitude}:${language}` : '';
   const sessionRef = useRef(session); sessionRef.current = session;
   const destinationRef = useRef(destination); destinationRef.current = destination;
@@ -150,7 +151,7 @@ export function useDriverNavigation({ userId, order, enabled, locationEnabled, m
           const atStart = progress && usableNavigationFix(fixRef.current) && Date.now() - fixRef.current!.timestamp <= 15_000
             ? guidanceCue(progress, language, routeVersionRef.current, legIndexRef.current) : null;
           return !!atStart && atStart.key === currentCue.key
-            && (currentCue.stage !== 100 || requestedDistance == null || Math.abs(progress!.maneuverDistance - requestedDistance) <= 20);
+            && (requestedDistance == null || guidanceDistanceStillRelevant(currentCue.stage, requestedDistance, progress!.maneuverDistance));
         },
         onStart: () => {
           if (version !== speechVersion.current) return;
@@ -270,7 +271,7 @@ export function useDriverNavigation({ userId, order, enabled, locationEnabled, m
     requestVersion.current++;
     requestRef.current?.abort(); requestRef.current = null;
     featureRequestRef.current?.abort(); featureRequestRef.current = null;
-    featureLoadedUntil.current = 0; featureRetryAfter.current = 0; setRoadFeatures([]);
+    featureLoadedUntil.current = 0; featureRefreshAfter.current = 0; featureRetryAfter.current = 0; setRoadFeatures([]);
     routeRef.current = null; progressRef.current = undefined; latestGuidanceRef.current = null; routeVersionRef.current = 0;
     setDriverTrackingRoute?.(null);
     setRoute(null); setProgress(null); setLoading(false); setRouteError('');
@@ -279,7 +280,7 @@ export function useDriverNavigation({ userId, order, enabled, locationEnabled, m
   }, [session, locationEnabled, retry, stopSpeech]);
   useEffect(() => {
     featureRequestRef.current?.abort(); featureRequestRef.current = null;
-    featureLoadedUntil.current = 0; featureRetryAfter.current = 0; setRoadFeatures([]);
+    featureLoadedUntil.current = 0; featureRefreshAfter.current = 0; featureRetryAfter.current = 0; setRoadFeatures([]);
     return () => { featureRequestRef.current?.abort(); featureRequestRef.current = null; };
   }, [routeVersion]);
   useEffect(() => {
@@ -348,7 +349,7 @@ export function useDriverNavigation({ userId, order, enabled, locationEnabled, m
     const prepared = routeRef.current;
     if (!active || !foreground || !usable || !prepared || !progress ||
       progress.offRouteMeters > offRouteThreshold(position?.accuracy ?? 20) || featureRequestRef.current ||
-      (featureLoadedUntil.current >= prepared.total || progress.along + 500 < featureLoadedUntil.current) ||
+      (featureLoadedUntil.current >= prepared.total || progress.along < featureRefreshAfter.current) ||
       Date.now() < featureRetryAfter.current) return;
     const window = roadFeatureWindow(prepared, progress.along);
     if (window.points.length < 2 || window.endAlong <= window.startAlong) return;
@@ -356,15 +357,13 @@ export function useDriverNavigation({ userId, order, enabled, locationEnabled, m
     featureRequestRef.current = controller;
     void api.request<{ features: RoadFeature[] }>('/routes/road-features', {
       method: 'POST', signal: controller.signal,
+      headers: { 'X-Atlas-Capabilities': 'road-features-v2' },
       body: JSON.stringify({ startAlong: window.startAlong, points: window.points }),
     }).then(result => {
       if (controller.signal.aborted || routeRef.current !== prepared) return;
       featureLoadedUntil.current = window.endAlong;
-      setRoadFeatures(previous => {
-        const byId = new Map(previous.filter(item => item.along >= window.startAlong - 10).map(item => [item.id, item]));
-        for (const item of result.features || []) if (item && typeof item.id === 'string' && Number.isFinite(item.along)) byId.set(item.id, item);
-        return [...byId.values()];
-      });
+      featureRefreshAfter.current = window.endAlong - Math.min(500, (window.endAlong - window.startAlong) * .45);
+      setRoadFeatures(previous => mergeRoadFeatureWindow(previous, result.features || [], window));
     }).catch(() => {
       if (!controller.signal.aborted) featureRetryAfter.current = Date.now() + 15000;
     }).finally(() => { if (featureRequestRef.current === controller) featureRequestRef.current = null; });
@@ -419,7 +418,7 @@ export function useDriverNavigation({ userId, order, enabled, locationEnabled, m
           && Date.now() - fixRef.current!.timestamp <= 15_000
           && latest.offRouteMeters <= offRouteThreshold(fixRef.current!.accuracy)
           && Math.abs(latest.along - requestedAlong) <= 20
-          && newlyVisible.every(feature => feature.along >= latest.along && feature.along - latest.along <= 100);
+          && newlyVisible.every(feature => feature.along >= latest.along && feature.along - latest.along <= roadFeatureWarningDistance(feature));
       });
   }, [active, foreground, usable, voiceEnabled, loading, progress?.along, progress?.offRouteMeters,
     position?.timestamp, position?.accuracy, roadFeatures, routeVersion, language, now, say]);
@@ -441,6 +440,8 @@ export function useDriverNavigation({ userId, order, enabled, locationEnabled, m
   return { active, position: enabled && locationEnabled ? position : null, route, progress, loading, error: routeError, gpsStatus: status,
     roadFeatures: usable && !loading && progress && progress.offRouteMeters <= offRouteThreshold(position?.accuracy ?? 20)
       ? visibleRoadFeatures(roadFeatures, progress.along) : [],
+    currentSpeedLimit: usable && !loading && progress && progress.offRouteMeters <= offRouteThreshold(position?.accuracy ?? 20)
+      ? currentRoadSpeedLimit(roadFeatures, progress.along) : null,
     voiceError, voiceEnabled, toggleVoice, setVoiceEnabled: changeVoice, testVoice, followDriver, setFollowDriver, retry: retryNavigation, destination,
     headingToPickup: order?.status === 'ASSIGNED', backgroundReady, backgroundError, enableBackground, routeVersion, rerouteReason,
     offRouteCount: offRouteCount.current };

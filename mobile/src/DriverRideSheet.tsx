@@ -24,10 +24,10 @@ export function sheetReveal(position: number, height: number) {
  * Reanimated 3 is required by this app's Paper architecture; runOnJS runs only
  * at gesture boundaries / settlement, never for each animation frame.
  */
-export function DriverRideSheet({ header, details, compactDetails, footer, style, handleStyle, handleTouchStyle, handleLabel, onExpanded, onHeight, inset, maxHeight, visible = true, testID = 'driver-ride-sheet' }: {
+export function DriverRideSheet({ header, details, compactDetails, footer, style, handleStyle, handleTouchStyle, handleLabel, showHandle = true, onExpanded, onHeight, inset, maxHeight, visible = true, testID = 'driver-ride-sheet' }: {
   header: React.ReactNode | ((expanded: boolean, toggle: () => void) => React.ReactNode); details: React.ReactNode; compactDetails?: React.ReactNode; footer: React.ReactNode;
   style: StyleProp<ViewStyle>; handleStyle: StyleProp<ViewStyle>; handleLabel: (expanded: boolean) => string;
-  handleTouchStyle?: StyleProp<ViewStyle>; testID?: string;
+  handleTouchStyle?: StyleProp<ViewStyle>; testID?: string; showHandle?: boolean;
   onExpanded: (expanded: boolean) => void; onHeight: (height: number) => void;
   inset?: SharedValue<number>; maxHeight?: number; visible?: boolean;
 }) {
@@ -94,11 +94,11 @@ export function DriverRideSheet({ header, details, compactDetails, footer, style
   const counterStyle = useAnimatedStyle(() => ({ transform: [{ translateY: reveal.get() - detailHeight.get() }] }));
   const detailStyle = useAnimatedStyle(() => ({
     transform: [{ translateY: detailHeight.get() - reveal.get() }],
-    opacity: detailHeight.get() ? Math.max(0, Math.min(1, reveal.get() / detailHeight.get() * 1.5)) : 0,
+    opacity: detailHeight.get() ? Math.max(0, Math.min(1, reveal.get() / detailHeight.get() * 1.5)) : targetExpanded.get() ? 1 : 0,
   }));
   const compactStyle = useAnimatedStyle(() => ({
     transform: [{ translateY: detailHeight.get() - reveal.get() }],
-    opacity: detailHeight.get() ? Math.min(1, Math.max(0, 1 - reveal.get() / detailHeight.get() * 2)) : 1,
+    opacity: detailHeight.get() ? Math.min(1, Math.max(0, 1 - reveal.get() / detailHeight.get() * 2)) : targetExpanded.get() ? 0 : 1,
   }));
   const gesture = useMemo(() => Gesture.Pan().enabled(visible).activeOffsetY([-8, 8]).failOffsetX([-10, 10])
     .onStart(event => { if (!shown.get() || !ready.get()) return; cancelAnimation(reveal); origin.set(reveal.get() + event.translationY); dragging.set(true); })
@@ -113,16 +113,16 @@ export function DriverRideSheet({ header, details, compactDetails, footer, style
   [visible, reveal, origin, dragging, detailHeight, settle, shown, ready, targetExpanded]);
 
   const toggle = () => settle(!targetExpanded.get());
-  return <Animated.View testID={testID} onLayout={event => setMeasuredHeight(event.nativeEvent.layout.height)} style={[style, styles.envelope, surfaceStyle]}>
-    <View testID="driver-sheet-background" pointerEvents="none" style={[style, styles.background]}/>
+  const headerContent = typeof header === 'function' ? header(expanded, toggle) : header;
+  return <Animated.View testID={testID} onLayout={event => setMeasuredHeight(event.nativeEvent.layout.height)} style={[style, styles.envelope, !showHandle && styles.envelopeWithoutHandle, surfaceStyle]}>
+    <View testID="driver-sheet-background" pointerEvents="none" style={[style, styles.background, !showHandle && styles.backgroundWithoutHandle]}/>
     <GestureDetector gesture={gesture}>
-      <View testID="driver-sheet-drag-area" collapsable={false} style={styles.dragArea}>
-        <Pressable testID="driver-panel-handle" hitSlop={{ top: 14, bottom: 4, left: 16, right: 16 }} accessibilityRole="button" accessibilityState={{ expanded }} accessibilityLabel={handleLabel(expanded)}
-          onPress={toggle} style={[styles.handleTouch, handleTouchStyle]}><View style={handleStyle}/></Pressable>
-        {typeof header === 'function' ? header(expanded, toggle) : header}
+      <View testID="driver-sheet-drag-area" collapsable={false} style={showHandle ? styles.dragArea : [styles.dragArea, styles.dragAreaWithoutHandle]}>
+        {showHandle ? <><Pressable testID="driver-panel-handle" hitSlop={{ top: 14, bottom: 4, left: 16, right: 16 }} accessibilityRole="button" accessibilityState={{ expanded }} accessibilityLabel={handleLabel(expanded)}
+          onPress={toggle} style={[styles.handleTouch, handleTouchStyle]}><View style={handleStyle}/></Pressable>{headerContent}</> : <Pressable testID="driver-sheet-header-toggle" accessibilityRole="button" accessibilityState={{ expanded }} accessibilityLabel={handleLabel(expanded)} onPress={toggle}>{headerContent}</Pressable>}
       </View>
     </GestureDetector>
-    <Animated.View pointerEvents="box-none" style={[styles.clip, counterStyle]} onLayout={event => setMeasuredDetails(event.nativeEvent.layout.height)}>
+    <Animated.View pointerEvents="box-none" style={[styles.clip, { minHeight: measuredCompact }, counterStyle]} onLayout={event => setMeasuredDetails(event.nativeEvent.layout.height)}>
       <Animated.View pointerEvents={expanded ? 'auto' : 'none'} accessibilityElementsHidden={!expanded} importantForAccessibility={expanded ? 'auto' : 'no-hide-descendants'} style={detailStyle}>
         {availableDetails == null ? details : <GestureDetector gesture={nativeScroll}>
           <Animated.ScrollView testID="driver-sheet-details-scroll" style={{ maxHeight: availableDetails, flexGrow: 0 }} showsVerticalScrollIndicator={false} nestedScrollEnabled bounces={false} keyboardShouldPersistTaps="handled">{details}</Animated.ScrollView>
@@ -136,8 +136,11 @@ export function DriverRideSheet({ header, details, compactDetails, footer, style
 const styles = StyleSheet.create({
   // Extend the native drag area above the surface without adding flow height.
   envelope: { backgroundColor: 'transparent', paddingTop: 40, shadowOpacity: 0, elevation: 0 },
+  envelopeWithoutHandle: { paddingTop: 16 },
   background: { position: 'absolute', top: 24, left: 0, right: 0, bottom: 0, marginTop: 0 },
+  backgroundWithoutHandle: { top: 0 },
   dragArea: { marginTop: -38, paddingTop: 38 },
+  dragAreaWithoutHandle: { marginTop: 0, paddingTop: 0 },
   handleTouch: { position: 'absolute', top: 0, left: 0, right: 0, height: 24, alignItems: 'center', justifyContent: 'center', zIndex: 2 },
   clip: { overflow: 'hidden' },
   compactDetails: { position: 'absolute', top: 0, left: 0, right: 0 },

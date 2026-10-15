@@ -15,6 +15,7 @@ import { dishLinePrice, dishOptionsValid, initialDishOptions, toggleDishOption }
 import { NumberTicker } from './NumberTicker';
 import type { FoodDish, FoodRestaurant } from './types';
 import { useFoodT } from './i18n';
+import { useTheme } from '../design/theme';
 
 export function DishScreen({ dish, restaurant, onBack, onAdd, onDish, onQuickAdd, onDecrease, dishQuantities = {} }: {
   dish: FoodDish;
@@ -29,6 +30,7 @@ export function DishScreen({ dish, restaurant, onBack, onAdd, onDish, onQuickAdd
   dishQuantities?: Record<string, number>;
 }) {
   const t = useFoodT();
+  const theme = useTheme();
   const s = useFoodStyles(styles);
   const c = useFoodColors();
   const insets = useSafeAreaInsets();
@@ -118,7 +120,7 @@ export function DishScreen({ dish, restaurant, onBack, onAdd, onDish, onQuickAdd
         return <SpringPressable key={option.id} accessibilityRole={group.maxSelected === 1 ? 'radio' : 'checkbox'} accessibilityState={{ checked: selected, disabled: atLimit }} disabled={atLimit}
           accessibilityLabel={`${option.name}, ${option.price ? `плюс ${money(option.price)}` : 'бесплатно'}`} onPress={() => setSelectedOptions(current => toggleDishOption(current, option.id, group))}
           pressScale={.995} style={[s.optionRow, atLimit && { opacity: .45 }]}>
-          <View style={[s.optionCircle, selected && s.optionSelected]}>{selected && <Ionicons name="checkmark" color="#202020" size={22}/>}</View>
+          <View style={[s.optionCircle, { borderWidth: 1, borderColor: theme.isDark ? '#4B515C' : '#E3E3DF' }, theme.isDark && { backgroundColor: '#25282D' }, selected && { backgroundColor: palette.blue, borderColor: palette.blue }]}>{selected && <Ionicons name="checkmark" color="#FFFFFF" size={22}/>}</View>
           <View style={[s.optionCopy, index > 0 && s.optionDivider]}>
             <View style={s.optionTitleRow}><Text style={s.optionName}>{option.name}</Text><Text style={s.optionPrice}>+{money(option.price)}</Text></View>
             {option.priceScope === 'PER_ITEM' && <Text style={s.optionScope}>{t('На всю позицию')}</Text>}
@@ -160,7 +162,6 @@ const styles = StyleSheet.create({
   optionHeading: { marginBottom: 4, color: '#999999', fontFamily: fonts.regular, fontSize: 13, lineHeight: 20 },
   optionRow: { flexDirection: 'row', alignItems: 'center', gap: 14, minHeight: 59 },
   optionCircle: { width: 25, height: 25, borderRadius: 13, alignItems: 'center', justifyContent: 'center', backgroundColor: '#F1F1EF' },
-  optionSelected: { backgroundColor: '#FFE500' },
   optionCopy: { flex: 1, minHeight: 59, justifyContent: 'center', paddingVertical: 12 },
   optionDivider: { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: '#EEEEEE' },
   optionTitleRow: { flexDirection: 'row', alignItems: 'baseline', flexWrap: 'wrap', columnGap: 10 },

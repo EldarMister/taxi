@@ -22,6 +22,9 @@ const deferred = () => {
   const promise = new Promise((yes, no) => { resolve = yes; reject = no; });
   return { promise, resolve, reject };
 };
+class MockApiError extends Error {
+  constructor(status, message, details = {}) { super(message); this.status = status; this.retryAfterSeconds = details.retryAfterSeconds; }
+}
 
 const textOf = node => typeof node === 'string' || typeof node === 'number'
   ? String(node) : (node?.children || []).map(textOf).join(' ');
@@ -34,6 +37,8 @@ const flattenStyle = style => Array.isArray(style) ? Object.assign({}, ...style.
 
 async function setup(t, options = {}) {
   const calls = [], logins = [], intervals = new Map(), timeouts = new Map(), backHandlers = new Set(), keyboardHandlers = new Map(), motionHandlers = new Set(), animations = [], scrolls = [];
+  const otpListeners = new Set(), otpBegins = [], otpEnds = [];
+  let otpSerial = 0, otpPending = null, activeOtp = null;
   let clock = 1000000, timerId = 0, renderer;
   class TestDate extends Date { static now() { return clock; } }
   const native = {
@@ -78,9 +83,24 @@ async function setup(t, options = {}) {
       if (id === 'react-native') return native;
       if (id === 'react-native-safe-area-context') return { SafeAreaView: 'SafeAreaView', useSafeAreaInsets: () => ({ top: 24, bottom: 24, left: 0, right: 0 }) };
       if (id === 'expo-status-bar') return { StatusBar: 'StatusBar' };
+      if (id === './appVariant') return { appVariant: options.appVariant || 'client' };
       if (id === './auth/languageStore') return {
         readSelectedLanguage: async () => options.savedLanguage || 'ru',
         writeSelectedLanguage: async language => { options.savedLanguage = language; },
+      };
+      if (id === './auth/whatsappOtp') return {
+        beginWhatsAppOtp: async phone => {
+          if (!options.whatsapp) return null;
+          activeOtp = { id: `handshake-${++otpSerial}`, phone }; otpPending = null;
+          otpBegins.push(activeOtp); return activeOtp.id;
+        },
+        endWhatsAppOtp: async id => { otpEnds.push(id); if (activeOtp?.id === id) { activeOtp = null; otpPending = null; } },
+        takeWhatsAppOtp: async id => {
+          if (options.takeOtp) return options.takeOtp(id);
+          if (activeOtp?.id !== id) return null;
+          const value = otpPending; otpPending = null; return value;
+        },
+        subscribeWhatsAppOtp: callback => { otpListeners.add(callback); return () => otpListeners.delete(callback); },
       };
       if (id === './auth/AuthMotion') {
         const motionExports = {};
@@ -92,8 +112,10 @@ async function setup(t, options = {}) {
       if (id === './design/typography') return { fonts: { regular: 'Inter_400Regular', medium: 'Inter_500Medium', semibold: 'Inter_600SemiBold', bold: 'Inter_700Bold' } };
       if (id === './auth/design') return { useAuthDesign: () => { const current = theme.useTheme(); return { ...current, palette: current.isDark ? current.palette : { ...current.palette, background: '#FBFBFD', surface: '#FBFBFD', elevated: '#F4F5F8', ink: '#1E2028', muted: '#737B8C', line: '#E2E4EC', accent: '#3478F6', accentText: '#FFFFFF' } }; } };
       if (id === './ui') return ui;
+      if (id === './LegalDocumentLink') return { LegalDocumentLink: props => React.createElement('Pressable', { ...props, accessibilityRole: 'link' }, props.children) };
       if (id.endsWith('.png')) return id;
       if (id === './api') return {
+        ApiError: MockApiError,
         api: { request: async endpoint => options.get ? options.get(endpoint) : {}, post: async (endpoint, body) => {
           calls.push({ endpoint, body: JSON.parse(JSON.stringify(body)) });
           return options.post ? options.post(endpoint, body) : { retryAfterSeconds: 60 };
@@ -109,9 +131,13 @@ async function setup(t, options = {}) {
       if (options.onLogin) await options.onLogin(session, language);
     } }), { createNodeMock: element => ({ focus() {}, blur() {}, scrollTo(value) { scrolls.push(value); }, measure(callback) { const host = element.props.testID === 'auth-keyboard-host'; callback(0, 0, 342, host ? (options.hostHeight ?? 720) : 62, 24, host ? 24 : 700); }, measureInWindow(callback) { callback(24, 700, 342, 62); } }) });
   });
-  t.after(async () => { await act(async () => renderer.unmount()); assert.equal(intervals.size, 0); assert.equal(timeouts.size, 0); assert.equal(backHandlers.size, 0); assert.equal(keyboardHandlers.size, 0); assert.equal(motionHandlers.size, 0); });
+  t.after(async () => { await act(async () => renderer.unmount()); assert.equal(intervals.size, 0); assert.equal(timeouts.size, 0); assert.equal(backHandlers.size, 0); assert.equal(keyboardHandlers.size, 0); assert.equal(motionHandlers.size, 0); assert.equal(otpListeners.size, 0); });
   const h = {
-    calls, logins, animations, scrolls, renderer,
+    calls, logins, animations, scrolls, renderer, otpBegins, otpEnds,
+    otp: async (code, overrides = {}) => act(async () => {
+      otpPending = { requestId: activeOtp?.id, phone: activeOtp?.phone, code, ...overrides };
+      for (const callback of otpListeners) callback();
+    }),
     hasInput: id => renderer.root.findAllByProps({ testID: id }).length > 0,
     input: id => renderer.root.findByProps({ testID: id }),
     button: () => renderer.root.findByProps({ testID: 'auth-continue' }),
@@ -161,7 +187,22 @@ test('initial screen accepts only a complete national phone number and normalize
   assert.equal(h.input('auth-phone').props.value, '700 123 456');
   assert.equal(h.button().props.disabled, false);
   await h.submit();
-  assert.deepEqual(h.calls, [{ endpoint: '/auth/request-code', body: { phone: '+996700123456' } }]);
+  assert.deepEqual(h.calls, [{ endpoint: '/auth/request-code', body: { phone: '+996700123456', appVariant: 'client' } }]);
+});
+
+test('both apps bind code request and verification to their own account identity', async t => {
+  for (const appVariant of ['client', 'driver']) {
+    const session = { accessToken: `access-${appVariant}`, refreshToken: `refresh-${appVariant}`, user: { id: `id-${appVariant}`, role: appVariant === 'driver' ? 'DRIVER' : 'CLIENT' } };
+    const h = await setup(t, { appVariant, post: async endpoint => endpoint.endsWith('verify-code') ? session : { retryAfterSeconds: 60 } });
+    await h.change('auth-phone', '700123456');
+    await h.submit();
+    await h.change('auth-code', '123456');
+    assert.deepEqual(h.calls, [
+      { endpoint: '/auth/request-code', body: { phone: '+996700123456', appVariant } },
+      { endpoint: '/auth/verify-code', body: { phone: '+996700123456', code: '123456', appVariant } },
+    ]);
+    assert.equal(h.logins[0].session.user.id, `id-${appVariant}`);
+  }
 });
 
 test('dark login keeps phone and SMS code fields legible', async t => {
@@ -233,7 +274,7 @@ test('WhatsApp response names the actual channel and keeps resend/confirmation o
   assert.doesNotMatch(h.text(), /Отправили SMS/);
   assert.equal(h.input('auth-code').props.accessibilityLabel, 'Код подтверждения');
   await h.change('auth-code', '654321');
-  assert.deepEqual(h.calls[1], { endpoint: '/auth/verify-code', body: { phone: '+996700123456', code: '654321' } });
+  assert.deepEqual(h.calls[1], { endpoint: '/auth/verify-code', body: { phone: '+996700123456', code: '654321', appVariant: 'client' } });
 });
 
 test('WhatsApp channel description follows the selected interface language', async t => {
@@ -292,7 +333,7 @@ test('the sixth code digit automatically verifies and passes the session and sel
   assert.equal(h.calls.length, 1);
   await h.change('auth-code', '1234567');
   assert.equal(h.input('auth-code').props.value, '123456');
-  assert.deepEqual(h.calls[1], { endpoint: '/auth/verify-code', body: { phone: '+996555123456', code: '123456' } });
+  assert.deepEqual(h.calls[1], { endpoint: '/auth/verify-code', body: { phone: '+996555123456', code: '123456', appVariant: 'client' } });
   assert.deepEqual(h.logins, [{ session, language: 'ky' }]);
 });
 
@@ -378,7 +419,7 @@ test('Android back retains the phone and reuses the pending SMS; changing the ph
   await h.press('Изменить номер телефона');
   await h.change('auth-phone', '555654321'); await h.submit();
   assert.equal(h.calls.length, 2);
-  assert.deepEqual(h.calls[1].body, { phone: '+996555654321' });
+  assert.deepEqual(h.calls[1].body, { phone: '+996555654321', appVariant: 'client' });
   assert.match(h.text(), /\+996 555 654 321/);
 });
 
@@ -417,10 +458,10 @@ test('rapid duplicate submissions issue only one request and cannot navigate bac
   assert.equal(h.logins.length, 1);
 });
 
-test('development code is labelled as a test login and is never shown without the development flag', async t => {
+test('test hint requires an explicit server confirmation bound to the requested phone', async t => {
   let requests = 0;
   const h = await setup(t, { post: async () => ++requests === 1
-    ? { retryAfterSeconds: 1, development: true, developmentCode: '654321' }
+    ? { retryAfterSeconds: 1, channel: 'development', development: true, developmentCode: '654321', testPhone: '+996700123456' }
     : { retryAfterSeconds: 1, developmentCode: '999999' } });
   await h.change('auth-phone', '700123456'); await h.submit();
   assert.match(h.text(), /Тестовый вход для номера/);
@@ -429,6 +470,60 @@ test('development code is labelled as a test login and is never shown without th
   await h.advance(1); await h.press('Отправить ещё раз');
   assert.doesNotMatch(h.text(), /654321|999999|Тестовый код/);
   assert.match(h.text(), /Отправили SMS на номер/);
+});
+
+test('ordinary numbers never show test text or codes from unconfirmed or mismatched responses', async t => {
+  for (const response of [
+    { development: true, developmentCode: '123456' },
+    { channel: 'development', development: true, developmentCode: '123456' },
+    { channel: 'development', development: true, developmentCode: '123456', testPhone: '+996700111111' },
+    { channel: 'sms', development: true, developmentCode: '123456', testPhone: '+996555222333' },
+    { channel: 'development', development: false, developmentCode: '123456', testPhone: '+996555222333' },
+    { channel: 'development', development: true, developmentCode: '12345x', testPhone: '+996555222333' },
+  ]) {
+    const h = await setup(t, { post: async () => response });
+    await h.change('auth-phone', '555222333'); await h.submit();
+    assert.doesNotMatch(h.text(), /123456|12345x|Тестовый код|Тестовый вход/);
+  }
+});
+
+test('changing from an approved test number to an ordinary number clears the hint', async t => {
+  const h = await setup(t, { post: async (_, body) => body.phone === '+996700111111'
+    ? { channel: 'development', development: true, developmentCode: '123456', testPhone: body.phone, retryAfterSeconds: 60 }
+    : { channel: 'sms', retryAfterSeconds: 60 } });
+  await h.change('auth-phone', '700111111'); await h.submit();
+  assert.match(h.text(), /Тестовый код.*123456/);
+  await h.press('Изменить номер телефона'); await h.change('auth-phone', '555222333'); await h.submit();
+  assert.match(h.text(), /Отправили SMS на номер/);
+  assert.doesNotMatch(h.text(), /Тестовый код|Тестовый вход|123456/);
+});
+
+test('rate limited code request shows the server countdown and blocks repeated requests for that phone', async t => {
+  let calls = 0;
+  const h = await setup(t, { post: async () => {
+    if (++calls === 1) throw new MockApiError(429, 'Слишком много запросов. Попробуйте позже.', { retryAfterSeconds: 61 });
+    return { channel: 'sms', retryAfterSeconds: 60 };
+  } });
+  await h.change('auth-phone', '555222333'); await h.submit();
+  assert.equal(h.hasInput('auth-code'), false);
+  assert.equal(h.button().props.disabled, true);
+  assert.match(h.text(), /Повторить через 61 с/);
+  await act(async () => h.input('auth-phone').props.onSubmitEditing());
+  assert.equal(calls, 1);
+  await h.advance(60); assert.match(h.text(), /Повторить через 1 с/);
+  await h.advance(1); await h.submit();
+  assert.equal(calls, 2); assert.equal(h.hasInput('auth-code'), true);
+});
+
+test('a rate limit for one number does not block entry with a different number', async t => {
+  const h = await setup(t, { post: async (_, body) => {
+    if (body.phone === '+996555222333') throw new MockApiError(429, 'Слишком много запросов.', { retryAfterSeconds: 60 });
+    return { channel: 'sms', retryAfterSeconds: 60 };
+  } });
+  await h.change('auth-phone', '555222333'); await h.submit();
+  await h.change('auth-phone', '555222334');
+  assert.equal(h.button().props.disabled, false); await h.submit();
+  assert.equal(h.calls.length, 2); assert.equal(h.hasInput('auth-code'), true);
 });
 
 test('Android auth keeps the code input focused and shows the logo only on the phone step', async t => {
@@ -517,7 +612,99 @@ test('pasting a full formatted code replaces partial entry and verifies that cod
   await h.change('auth-code', '12');
   await h.change('auth-code', '12 654 321');
   assert.equal(h.input('auth-code').props.value, '654321');
-  assert.deepEqual(h.calls[1].body, { phone: '+996700123456', code: '654321' });
+  assert.deepEqual(h.calls[1].body, { phone: '+996700123456', code: '654321', appVariant: 'client' });
   assert.equal(h.calls.length, 2);
+  assert.equal(h.logins.length, 1);
+});
+
+test('WhatsApp zero-tap fills the code and verifies exactly once against the server', async t => {
+  const h = await setup(t, { whatsapp: true, post: async endpoint => endpoint.endsWith('request-code') ? { channel: 'whatsapp' } : { accessToken: 'verified' } });
+  await h.change('auth-phone', '700123456'); await h.submit();
+  assert.equal(h.otpBegins.length, 1);
+  await h.otp('654321'); await h.otp('654321');
+  assert.equal(h.input('auth-code').props.value, '654321');
+  assert.equal(h.logins.length, 1);
+  assert.deepEqual(h.calls.filter(call => call.endpoint.endsWith('verify-code')), [{ endpoint: '/auth/verify-code', body: { phone: '+996700123456', code: '654321', appVariant: 'client' } }]);
+  assert.deepEqual(h.otpEnds, ['handshake-1']);
+});
+
+test('WhatsApp code arriving before request-code completes stays buffered until server acceptance', async t => {
+  const request = deferred();
+  const h = await setup(t, { whatsapp: true, post: endpoint => endpoint.endsWith('request-code') ? request.promise : { accessToken: 'verified' } });
+  await h.change('auth-phone', '700123456');
+  await act(async () => { void h.button().props.onPress(); });
+  await h.otp('654321');
+  assert.equal(h.calls.filter(call => call.endpoint.endsWith('verify-code')).length, 0);
+  await act(async () => request.resolve({ channel: 'whatsapp' }));
+  assert.equal(h.logins.length, 1);
+  assert.equal(h.input('auth-code').props.value, '654321');
+});
+
+test('wrong handshake, different phone and malformed native values cannot trigger verification', async t => {
+  const h = await setup(t, { whatsapp: true, post: async () => ({ channel: 'whatsapp' }) });
+  await h.change('auth-phone', '700123456'); await h.submit();
+  await h.otp('654321', { requestId: 'previous-handshake' });
+  await h.otp('654321', { phone: '+996700654321' });
+  await h.otp('12345a'); await h.otp('1234567');
+  assert.equal(h.input('auth-code').props.value, '');
+  assert.equal(h.calls.length, 1);
+});
+
+test('resending replaces the native handshake and rejects a late response for the previous request', async t => {
+  const h = await setup(t, { whatsapp: true, post: async () => ({ channel: 'whatsapp' }) });
+  await h.change('auth-phone', '700123456'); await h.submit();
+  await h.advance(61); await h.press('Отправить ещё раз');
+  assert.equal(h.otpBegins.length, 2);
+  assert.deepEqual(h.otpEnds, ['handshake-1']);
+  await h.otp('123456', { requestId: 'handshake-1' });
+  assert.equal(h.calls.filter(call => call.endpoint.endsWith('verify-code')).length, 0);
+  await h.otp('654321');
+  assert.equal(h.logins.length, 1);
+});
+
+test('changing the number cancels autofill and rejects codes for the old phone', async t => {
+  const h = await setup(t, { whatsapp: true, post: async () => ({ channel: 'whatsapp' }) });
+  await h.change('auth-phone', '700123456'); await h.submit();
+  await h.press('Изменить номер телефона');
+  await h.otp('123456');
+  assert.equal(h.calls.length, 1);
+  await h.change('auth-phone', '700654321'); await h.submit();
+  await h.otp('123456', { requestId: 'handshake-1', phone: '+996700123456' });
+  assert.equal(h.input('auth-code').props.value, '');
+  await h.otp('654321');
+  assert.equal(h.calls.at(-1).body.phone, '+996700654321');
+});
+
+test('Telegram fallback cancels WhatsApp autofill without breaking manual entry', async t => {
+  const h = await setup(t, { whatsapp: true, post: async endpoint => endpoint.endsWith('request-code') ? { channel: 'whatsapp', deliveryId: 'delivery' } : { accessToken: 'verified' }, get: async () => ({ channel: 'telegram', state: 'telegram_accepted' }) });
+  await h.change('auth-phone', '700123456'); await h.submit();
+  await h.advance(3); await h.otp('654321');
+  assert.equal(h.input('auth-code').props.value, '');
+  assert.equal(h.calls.length, 1);
+  assert.deepEqual(h.otpEnds, ['handshake-1']);
+  await h.change('auth-code', '654321');
+  assert.equal(h.logins.length, 1);
+});
+
+test('failed request discards an early native OTP instead of signing in', async t => {
+  const request = deferred();
+  const h = await setup(t, { whatsapp: true, post: () => request.promise });
+  await h.change('auth-phone', '700123456');
+  await act(async () => { void h.button().props.onPress(); });
+  await h.otp('654321');
+  await act(async () => request.reject(new Error('Delivery failed')));
+  assert.equal(h.hasInput('auth-phone'), true);
+  assert.equal(h.calls.length, 1);
+  assert.equal(h.logins.length, 0);
+  assert.deepEqual(h.otpEnds, ['handshake-1']);
+});
+
+test('native OTP arriving during an incorrect manual verification is not lost', async t => {
+  const verify = deferred();
+  const h = await setup(t, { whatsapp: true, post: (endpoint, body) => endpoint.endsWith('request-code') ? { channel: 'whatsapp' } : body.code === '111111' ? verify.promise : { accessToken: 'verified' } });
+  await h.change('auth-phone', '700123456'); await h.submit();
+  await h.change('auth-code', '111111'); await h.otp('654321');
+  await act(async () => verify.reject(new Error('Incorrect code')));
+  assert.deepEqual(h.calls.filter(call => call.endpoint.endsWith('verify-code')).map(call => call.body.code), ['111111', '654321']);
   assert.equal(h.logins.length, 1);
 });

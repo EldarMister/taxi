@@ -1,16 +1,19 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ActivityIndicator, Alert, BackHandler, Image, Keyboard, KeyboardAvoidingView, Linking, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View, useWindowDimensions } from 'react-native';
+import { ActivityIndicator, Alert, BackHandler, Image, Keyboard, KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View, useWindowDimensions } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
-import { api, messageOf } from './api';
+import { api, ApiError, messageOf } from './api';
+import { appVariant } from './appVariant';
 import { Icon, s, tr } from './ui';
 import type { Language, Session } from './types';
 import { CodeCells, useReducedMotion } from './auth/AuthMotion';
 import { readSelectedLanguage, writeSelectedLanguage } from './auth/languageStore';
 import { useAuthDesign } from './auth/design';
+import { LegalDocumentLink } from './LegalDocumentLink';
 import { fonts } from './design/typography';
+import { beginWhatsAppOtp, endWhatsAppOtp, subscribeWhatsAppOtp, takeWhatsAppOtp, type WhatsAppOtpCode } from './auth/whatsappOtp';
 
-type CodeResponse = { retryAfterSeconds?: number; channel?: 'whatsapp' | 'telegram' | 'sms' | 'development'; deliveryId?: string; development?: boolean; developmentCode?: string };
+type CodeResponse = { retryAfterSeconds?: number; channel?: 'whatsapp' | 'telegram' | 'sms' | 'development'; deliveryId?: string; development?: boolean; developmentCode?: string; testPhone?: string };
 
 export function AuthScreen({ onLogin }: { onLogin: (session: Session, language: Language) => Promise<void> }) {
   const { isDark, palette } = useAuthDesign();
@@ -34,10 +37,15 @@ export function AuthScreen({ onLogin }: { onLogin: (session: Session, language: 
   const [deliveryChannel, setDeliveryChannel] = useState<CodeResponse['channel']>('sms');
   const [deliveryId, setDeliveryId] = useState('');
   const [retryAt, setRetryAt] = useState(0);
+  const [retryPhone, setRetryPhone] = useState('');
   const [secondsLeft, setSecondsLeft] = useState(0);
   const [codeFocused, setCodeFocused] = useState(false);
   const submitting = useRef(false);
   const mounted = useRef(true);
+  const autofillAttempt = useRef<{ id: string; phone: string; expiresAt: number } | null>(null);
+  const pendingAutofill = useRef<WhatsAppOtpCode | null>(null);
+  const readingAutofill = useRef<string | null>(null);
+  const checkAutofill = useRef<() => void>(() => undefined);
   const cancelHandoff = useRef<(() => void) | null>(null);
   const codeRevision = useRef(0);
   const attemptedCodeRevision = useRef(-1);
@@ -53,12 +61,51 @@ export function AuthScreen({ onLogin }: { onLogin: (session: Session, language: 
   const t = tr(language);
   const text = (ru: string, ky: string, en: string) => language === 'ky' ? ky : language === 'en' ? en : ru;
   const normalizedPhone = `+996${phone}`;
+  const requestSecondsLeft = retryPhone === normalizedPhone ? secondsLeft : 0;
+  const requestBlocked = requestSecondsLeft > 0 && normalizedPhone !== sentPhone;
   const displayPhone = (digits: string) => digits.replace(/(\d{3})(?=\d)/g, '$1 ');
 
   useEffect(() => {
     mounted.current = true;
-    return () => { mounted.current = false; cancelHandoff.current?.(); };
+    const unsubscribe = subscribeWhatsAppOtp(() => checkAutofill.current());
+    return () => { mounted.current = false; cancelHandoff.current?.(); unsubscribe(); stopAutofill(); };
   }, []);
+  function stopAutofill() {
+    const attempt = autofillAttempt.current;
+    autofillAttempt.current = null;
+    pendingAutofill.current = null;
+    if (attempt) void endWhatsAppOtp(attempt.id);
+  }
+  useEffect(() => {
+    let cancelled = false;
+    if (verified || (step === 'code' && deliveryChannel !== 'whatsapp')) stopAutofill();
+    const apply = () => {
+      const value = pendingAutofill.current, attempt = autofillAttempt.current;
+      if (cancelled || !mounted.current || step !== 'code' || busy || submitting.current || verified || deliveryChannel !== 'whatsapp') return;
+      pendingAutofill.current = null;
+      if (!value || !attempt || value.requestId !== attempt.id || value.phone !== sentPhone || attempt.phone !== sentPhone
+        || Date.now() >= attempt.expiresAt || !/^[0-9]{6}$/.test(value.code)) return;
+      // A native event must not submit again after the same manually entered code.
+      if (value.code === code && attemptedCodeRevision.current === codeRevision.current) return;
+      ++codeRevision.current; setError(''); setCode(value.code);
+    };
+    const check = async () => {
+      const attempt = autofillAttempt.current;
+      if (cancelled || !mounted.current || !attempt || step !== 'code' || busy || submitting.current || verified || deliveryChannel !== 'whatsapp') return;
+      if (pendingAutofill.current) { apply(); return; }
+      if (readingAutofill.current === attempt.id) return;
+      readingAutofill.current = attempt.id;
+      const value = await takeWhatsAppOtp(attempt.id);
+      if (readingAutofill.current === attempt.id) readingAutofill.current = null;
+      if (!value || !mounted.current || autofillAttempt.current?.id !== attempt.id) return;
+      pendingAutofill.current = value;
+      if (cancelled) checkAutofill.current(); else apply();
+    };
+    const notify = () => { void check(); };
+    checkAutofill.current = notify;
+    notify(); // Also drains a code received before the request-code response or while backgrounded.
+    return () => { cancelled = true; if (checkAutofill.current === notify) checkAutofill.current = () => undefined; };
+  }, [step, sentPhone, busy, verified, deliveryChannel, code]);
   useEffect(() => {
     void readSelectedLanguage().then(value => { if (mounted.current && !languageChanged.current) setLanguage(value); });
   }, []);
@@ -76,6 +123,7 @@ export function AuthScreen({ onLogin }: { onLogin: (session: Session, language: 
   }
   function back() {
     if (submitting.current) return;
+    stopAutofill();
     Keyboard.dismiss(); setStep('phone'); setCode(''); setError(''); setVerified(false);
   }
   useEffect(() => {
@@ -110,7 +158,7 @@ export function AuthScreen({ onLogin }: { onLogin: (session: Session, language: 
         if (cancelled || !mounted.current) return;
         if (result.channel === 'telegram' && result.state === 'telegram_accepted') setDeliveryChannel('telegram');
         if (['telegram_accepted','whatsapp_delivered','failed','expired','stopped'].includes(result.state)) finished = true;
-        if (result.state === 'failed') setError(text('Не удалось доставить код в WhatsApp и Telegram. Запросите новый код.', 'Код WhatsApp жана Telegram аркылуу жеткирилген жок. Жаңы код сураңыз.', 'The code could not be sent via WhatsApp or Telegram. Request a new code.'));
+        if (result.state === 'failed') setError(text('Не удалось доставить код. Запросите новый код.', 'Код жеткирилген жок. Жаңы код сураңыз.', 'The code could not be delivered. Request a new code.'));
       } catch { /* A status request failure must not invalidate a received code. */ }
       finally { checking = false; }
     };
@@ -156,21 +204,35 @@ export function AuthScreen({ onLogin }: { onLogin: (session: Session, language: 
 
   async function send() {
     if (submitting.current || phone.length !== 9) return;
-    if (normalizedPhone === sentPhone && secondsLeft > 0 && step === 'phone') {
+    if (normalizedPhone === sentPhone && requestSecondsLeft > 0 && step === 'phone') {
       Keyboard.dismiss(); setError(''); setStep('code'); return;
     }
-    if (step === 'code' && secondsLeft > 0) return;
+    if (requestSecondsLeft > 0) return;
     submitting.current = true; setBusy(true); setError(''); setVerified(false);
     try {
-      const result = await api.post<CodeResponse>('/auth/request-code', { phone: normalizedPhone });
+      stopAutofill();
+      const handshakeId = await beginWhatsAppOtp(normalizedPhone);
+      if (!mounted.current) { if (handshakeId) void endWhatsAppOtp(handshakeId); return; }
+      if (handshakeId) autofillAttempt.current = { id: handshakeId, phone: normalizedPhone, expiresAt: Date.now() + 300000 };
+      const result = await api.post<CodeResponse>('/auth/request-code', { phone: normalizedPhone, appVariant });
       if (!mounted.current) return;
+      if (result.channel !== 'whatsapp') stopAutofill();
+      ++codeRevision.current;
       Keyboard.dismiss(); setSentPhone(normalizedPhone); setCode('');
-      setDevelopmentCode(result.development ? result.developmentCode || '' : '');
+      setDevelopmentCode(result.development === true && result.channel === 'development' && result.testPhone === normalizedPhone && /^[0-9]{6}$/.test(result.developmentCode ?? '') ? result.developmentCode! : '');
       setDeliveryChannel(result.channel ?? 'sms');
       setDeliveryId(result.deliveryId ?? '');
-      setRetryAt(Date.now() + (result.retryAfterSeconds ?? 60) * 1000);
+      setRetryPhone(normalizedPhone); setRetryAt(Date.now() + (result.retryAfterSeconds ?? 60) * 1000);
       setStep('code');
-    } catch (e) { if (mounted.current) setError(messageOf(e)); }
+    } catch (e) {
+      stopAutofill();
+      if (mounted.current) {
+        if (e instanceof ApiError && e.status === 429 && e.retryAfterSeconds) {
+          setRetryPhone(normalizedPhone); setRetryAt(Date.now() + e.retryAfterSeconds * 1000);
+        }
+        setError(messageOf(e));
+      }
+    }
     finally { submitting.current = false; if (mounted.current) setBusy(false); }
   }
   async function login(candidate = code, revision = codeRevision.current) {
@@ -178,9 +240,9 @@ export function AuthScreen({ onLogin }: { onLogin: (session: Session, language: 
     attemptedCodeRevision.current = revision;
     submitting.current = true; setBusy(true); setError('');
     try {
-      const result = await api.post<Session>('/auth/verify-code', { phone: sentPhone, code: candidate });
+      const result = await api.post<Session>('/auth/verify-code', { phone: sentPhone, code: candidate, appVariant });
       if (!mounted.current) return;
-      setVerified(true); Keyboard.dismiss();
+      stopAutofill(); setVerified(true); Keyboard.dismiss();
       if (!reducedMotion) {
         // Complete the confirmed state before the parent replaces the screen.
         const finished = await new Promise<boolean>(resolve => {
@@ -235,10 +297,10 @@ export function AuthScreen({ onLogin }: { onLogin: (session: Session, language: 
                   </View>
                 </View>
                 {error ? <Text accessibilityRole="alert" style={a.error}>{t(error)}</Text> : null}
-                <Pressable ref={continueButton} testID="auth-continue" accessibilityRole="button" accessibilityState={{ disabled: phone.length !== 9 || busy, busy }} disabled={phone.length !== 9 || busy} onPress={() => void send()} style={[a.continueButton, phone.length === 9 && a.continueActive]}>
-                  {busy ? <ActivityIndicator color={palette.accentText} /> : <Text style={[a.continueText, phone.length === 9 && a.continueTextActive]}>{t('Продолжить')}</Text>}
+                <Pressable ref={continueButton} testID="auth-continue" accessibilityRole="button" accessibilityState={{ disabled: phone.length !== 9 || busy || requestBlocked, busy }} disabled={phone.length !== 9 || busy || requestBlocked} onPress={() => void send()} style={[a.continueButton, phone.length === 9 && !requestBlocked && a.continueActive]}>
+                  {busy ? <ActivityIndicator color={palette.accentText} /> : <Text style={[a.continueText, phone.length === 9 && !requestBlocked && a.continueTextActive]}>{requestBlocked ? text(`Повторить через ${requestSecondsLeft} с`, `${requestSecondsLeft} сек кийин кайталоо`, `Try again in ${requestSecondsLeft}s`) : t('Продолжить')}</Text>}
                 </Pressable>
-                <Text style={a.footnote}>{text('Отправим код подтверждения\nна ваш номер телефона', 'Телефон номериңизге\nырастоо кодун жөнөтөбүз', 'We will send a confirmation code\nto your phone number')}</Text>
+
                 <View style={a.formSpacer} />
                 <LegalLinks language={language} />
                 <View ref={languageSelector} collapsable={false} style={a.selectorAnchor}>
@@ -260,8 +322,8 @@ export function AuthScreen({ onLogin }: { onLogin: (session: Session, language: 
               </Pressable>
               {error ? <Text accessibilityRole="alert" style={a.error}>{t(error)}</Text> : null}
               {developmentCode ? <Text style={a.demoCode}>{text('Тестовый код', 'Сыноо коду', 'Test code')}: {developmentCode}</Text> : null}
-              <Pressable accessibilityRole="button" disabled={busy || secondsLeft > 0} onPress={() => void send()} style={[a.resend, a.resendFirst]}>
-                <Text style={[a.resendText, secondsLeft > 0 && { color: palette.muted }]}>{secondsLeft > 0 ? text(`Отправить код ещё раз через ${secondsLeft} с`, `Кодду ${secondsLeft} сек кийин кайра жөнөтүү`, `Resend code in ${secondsLeft}s`) : t('Отправить ещё раз')}</Text>
+              <Pressable accessibilityRole="button" disabled={busy || requestSecondsLeft > 0} onPress={() => void send()} style={[a.resend, a.resendFirst]}>
+                <Text style={[a.resendText, requestSecondsLeft > 0 && { color: palette.muted }]}>{requestSecondsLeft > 0 ? text(`Отправить код ещё раз через ${requestSecondsLeft} с`, `Кодду ${requestSecondsLeft} сек кийин кайра жөнөтүү`, `Resend code in ${requestSecondsLeft}s`) : t('Отправить ещё раз')}</Text>
               </Pressable>
               <Pressable accessibilityRole="button" onPress={back} disabled={busy} style={a.resend}><Text style={a.resendText}>{text('Изменить номер телефона', 'Телефон номерин өзгөртүү', 'Change phone number')}</Text></Pressable>
               <View style={a.formSpacer} />
@@ -289,16 +351,13 @@ export function AuthScreen({ onLogin }: { onLogin: (session: Session, language: 
 
 function LegalLinks({ language }: { language: Language }) {
   const a = useAuthStyles();
-  const privacyUrl = process.env.EXPO_PUBLIC_PRIVACY_URL;
-  const termsUrl = process.env.EXPO_PUBLIC_TERMS_URL;
   const en = language === 'en';
   const ky = language === 'ky';
-  const unavailable = () => Alert.alert(en ? 'Document unavailable' : ky ? 'Документ азырынча жеткиликсиз' : 'Документ пока недоступен');
   return <View style={a.legal}>
     <Text style={a.legalIntro}>{en ? 'By tapping “Continue”, you agree\nwith our' : ky ? '«Улантуу» баскычын басуу менен\nсиз биздин шарттарга макул болосуз' : 'Нажимая «Продолжить», вы соглашаетесь\nс нашими'}</Text>
     <View style={[a.legalLinks, a.legalLinksInline, !en && !ky && a.legalLinksRussian]}>
-      <Pressable accessibilityRole="link" style={a.legalLinkCompact} onPress={() => privacyUrl ? void Linking.openURL(privacyUrl) : unavailable()}><Text style={[a.privacy, !en && !ky && a.privacyRussian]} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={.85}>{en ? 'Privacy Policy' : ky ? 'Купуялык саясаты' : 'Политикой конфиденциальности'}</Text></Pressable>
-      <Pressable accessibilityRole="link" style={a.legalLinkCompact} onPress={() => termsUrl ? void Linking.openURL(termsUrl) : unavailable()}><Text style={[a.privacy, !en && !ky && a.privacyRussian]} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={.85}>{en ? 'Terms of Use' : ky ? 'Колдонуу шарттары' : 'Условиями использования'}</Text></Pressable>
+      <LegalDocumentLink document="privacy" language={language} style={a.legalLinkCompact}><Text style={[a.privacy, !en && !ky && a.privacyRussian]} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={.85}>{en ? 'Privacy Policy' : ky ? 'Купуялык саясаты' : 'Политикой конфиденциальности'}</Text></LegalDocumentLink>
+      <LegalDocumentLink document="terms" language={language} style={a.legalLinkCompact}><Text style={[a.privacy, !en && !ky && a.privacyRussian]} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={.85}>{en ? 'Terms of Use' : ky ? 'Колдонуу шарттары' : 'Условиями использования'}</Text></LegalDocumentLink>
     </View>
   </View>;
 }

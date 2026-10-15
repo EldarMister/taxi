@@ -6,7 +6,6 @@ import { DriverPositionDto, DriverPreferencesDto, DriverRegisterDto, TopupDto, V
 import { PrismaService } from './prisma.service';
 import { AdminAuditService } from './admin.security';
 import { RealtimeEvents } from './events';
-import { ACTIVE_FOOD_STATUSES } from './food-domain';
 import { LIGHT_COURIER_METHODS, PerformerRoleValue, registrationCapabilityCeiling } from './registration-domain';
 
 @Injectable()
@@ -55,22 +54,6 @@ export class DriverService {
   }
   async register(actor:Actor,dto:DriverRegisterDto,vehiclePhoto:Buffer,profilePhoto?:Buffer) {
     throw new GoneException('Используйте новую пошаговую регистрацию исполнителя: /driver/registration');
-    /* c8 ignore start -- retained temporarily for source compatibility while old clients migrate. */
-    if(actor.role!=='CLIENT')throw new ForbiddenException('Заявку может подать новый водитель');
-    const name=`${dto.firstName.trim()} ${dto.lastName.trim()}`;
-    const plate=dto.carPlate.trim().toUpperCase();
-    const id=await this.db.$transaction(async tx=>{
-      await tx.$queryRaw`SELECT "id" FROM "User" WHERE "id"=${actor.id}::uuid FOR UPDATE`;
-      const user=await tx.user.findUniqueOrThrow({where:{id:actor.id},select:{role:true}});
-      if(user.role!=='CLIENT')throw new ConflictException('Заявка уже подана');
-      if(await tx.order.findFirst({where:{clientId:actor.id,status:{in:ACTIVE_STATUSES}}})||await tx.foodOrder.findFirst({where:{clientId:actor.id,status:{in:ACTIVE_FOOD_STATUSES}}}))throw new ConflictException('Сначала завершите активный заказ');
-      await tx.user.update({where:{id:actor.id},data:{role:'DRIVER',name,...(profilePhoto?{avatarData:Uint8Array.from(profilePhoto),avatarMime:'image/jpeg',avatarUpdatedAt:new Date()}:{})}});
-      await tx.driverProfile.create({data:{userId:actor.id,verified:false,online:false,requestedTransportClass:dto.requestedTransportClass,transportClass:'ECONOMY',acceptsEconomy:dto.requestedTransportClass==='ECONOMY',acceptsDeliveryTruck:false,vehicle:{create:{make:dto.carMake.trim(),color:dto.carColor?.trim()||'Не указан',plate,photoData:Uint8Array.from(vehiclePhoto),photoMime:'image/jpeg',photoUpdatedAt:new Date()}}}});
-      return actor.id;
-    });
-    this.events.adminChanged('drivers',id);
-    return this.auth.user(id);
-    /* c8 ignore stop */
   }
   async position(actor:Actor,dto:DriverPositionDto) {
     this.assertDriver(actor);
@@ -115,12 +98,10 @@ export class DriverService {
       await tx.$queryRaw`SELECT "id" FROM "User" WHERE "id"=${userId}::uuid FOR UPDATE`;
       await tx.$queryRaw`SELECT "userId" FROM "DriverProfile" WHERE "userId"=${userId}::uuid FOR UPDATE`;
       const user=await tx.user.findUnique({where:{id:userId},select:{role:true}});
-      if(!user||user.role==='ADMIN') throw new BadRequestException('Нельзя изменить этот профиль');
+      if(!user||user.role!=='DRIVER') throw new BadRequestException('Выберите профиль из приложения водителя');
       const existingProfile=await tx.driverProfile.findUnique({where:{userId},select:{registrationManaged:true}});
       if(existingProfile?.registrationManaged)throw new ConflictException('Профиль управляется через проверку анкеты исполнителя');
       if(await tx.order.findFirst({where:{OR:[{clientId:userId},{driverId:userId}],status:{in:ACTIVE_STATUSES}}})) throw new ConflictException('У пользователя активный заказ');
-      if(user.role==='CLIENT'&&await tx.foodOrder.findFirst({where:{clientId:userId,status:{in:ACTIVE_FOOD_STATUSES}}}))throw new ConflictException('У пользователя активный заказ еды');
-      await tx.user.update({where:{id:userId},data:{role:'DRIVER'}});
       await tx.driverProfile.upsert({where:{userId},create:{userId,verified:dto.verified},update:{verified:dto.verified,online:false,locationLatitude:null,locationLongitude:null,locationAccuracyM:null,locationMeasuredAt:null}});
       await tx.vehicle.upsert({where:{driverId:userId},create:{driverId:userId,make:dto.carMake,color:dto.carColor,plate:dto.carPlate},update:{make:dto.carMake,color:dto.carColor,plate:dto.carPlate}});
       await this.audit.record(tx,actor,'driver.verify','drivers',userId,{verified:dto.verified,carMake:dto.carMake,carColor:dto.carColor,carPlate:dto.carPlate});

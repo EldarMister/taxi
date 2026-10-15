@@ -22,7 +22,7 @@ const config: ExpoConfig = {
   slug: identity.slug,
   scheme: identity.scheme,
   icon: variant === 'driver' ? './assets/edu-drive-icon.png' : './assets/logo.png',
-  version: '1.1.94',
+  version: '1.2.36',
   orientation: 'portrait',
   userInterfaceStyle: 'automatic',
   newArchEnabled: false,
@@ -37,10 +37,10 @@ const config: ExpoConfig = {
   },
   android: {
     package: identity.androidPackage,
-    versionCode: 105,
+    versionCode: 148,
     adaptiveIcon: { foregroundImage: variant === 'driver' ? './assets/edu-drive-icon.png' : './assets/logo.png', backgroundColor: '#FFFFFF' },
     googleServicesFile,
-    permissions: ['ACCESS_COARSE_LOCATION', 'ACCESS_FINE_LOCATION', 'POST_NOTIFICATIONS', 'CAMERA', ...(variant === 'client' ? ['READ_CONTACTS'] : [])],
+    permissions: ['ACCESS_COARSE_LOCATION', 'ACCESS_FINE_LOCATION', 'POST_NOTIFICATIONS', 'CAMERA', ...(variant === 'client' ? ['READ_CONTACTS'] : ['SYSTEM_ALERT_WINDOW'])],
     blockedPermissions: [
       'android.permission.RECORD_AUDIO',
       'android.permission.READ_EXTERNAL_STORAGE',
@@ -51,14 +51,17 @@ const config: ExpoConfig = {
   },
   plugins: [
     'expo-asset',
+    './plugins/with-system-permissions.cjs',
     '@maplibre/maplibre-react-native',
     ['expo-build-properties', {
-      android: { minSdkVersion: 26, usesCleartextTraffic: process.env.APP_ENV !== 'production' },
+      android: { minSdkVersion: 26, usesCleartextTraffic: process.env.APP_ENV !== 'production', useLegacyPackaging: true },
       ios: { deploymentTarget: '15.1', buildReactNativeFromSource: true },
     }],
     ['expo-location', {
-      locationWhenInUsePermission: 'Местоположение нужно, чтобы найти адрес подачи и показать вас на карте.',
-      locationAlwaysAndWhenInUsePermission: 'Во время поездки геолокация в фоне нужна для навигации и положения машины у вашего пассажира.',
+      locationWhenInUsePermission: variant === 'driver'
+        ? 'Atlas pro использует местоположение для поиска заказов рядом, построения маршрута и показа вашей позиции клиенту во время заказа.'
+        : 'Местоположение нужно, чтобы найти адрес подачи и показать вас на карте.',
+      locationAlwaysAndWhenInUsePermission: 'Когда вы на линии или выполняете заказ, Atlas pro использует местоположение в фоне, в том числе с выключенным экраном, для поиска заказов рядом, навигации и показа вашей позиции клиенту во время заказа.',
       isIosBackgroundLocationEnabled: variant === 'driver',
       isAndroidBackgroundLocationEnabled: variant === 'driver',
       isAndroidForegroundServiceEnabled: variant === 'driver',
@@ -72,6 +75,8 @@ const config: ExpoConfig = {
     'expo-document-picker',
     ...(variant === 'client' ? [['expo-contacts', { contactsPermission: 'Выберите пассажира из контактов для заказа поездки другому человеку.' }] as [string, { contactsPermission: string }]] : []),
     ['expo-audio', { microphonePermission: false, recordAudioAndroid: false }],
+    // Android manifest mods unwind in reverse order: keep Atlas metadata last.
+    './plugins/with-notification-branding.cjs',
     ['expo-notifications', { defaultChannel: 'orders', color: '#246BFD', sounds: [
       './assets/sounds/driver_new_order.wav',
       './assets/sounds/driver_passenger_message.wav',

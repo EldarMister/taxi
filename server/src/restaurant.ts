@@ -139,7 +139,7 @@ export class RestaurantService {
   }
   async orders(actor:RestaurantActor,id:string) {
     await this.access(actor,id,'orders.read');
-    const orders=await this.db.foodOrder.findMany({where:{restaurantId:id},include:{client:{select:{name:true,phone:true}},atlasDelivery:{select:{id:true,status:true,price:true}}},orderBy:{createdAt:'desc'},take:200});
+    const orders=await this.db.foodOrder.findMany({where:{restaurantId:id},include:{client:{select:{name:true,phone:true}},atlasDelivery:{select:{id:true,status:true,price:true,driver:{select:{name:true,phone:true}}}},history:{select:{id:true,status:true,reason:true,createdAt:true},orderBy:{createdAt:'asc'}}},orderBy:{createdAt:'desc'},take:200});
     return {orders:orders.map(order=>({...order,deliveryLat:(order.deliveryPoint as {latitude?:number}|null)?.latitude??null,deliveryLng:(order.deliveryPoint as {longitude?:number}|null)?.longitude??null,atlasOrderId:order.atlasDelivery?.id??null,atlasStatus:order.atlasDelivery?.status??null,deliveryPrice:order.atlasDelivery?.price??null}))};
   }
   async changeOrder(actor:RestaurantActor,id:string,orderId:string,dto:RestaurantOrderActionDto) {

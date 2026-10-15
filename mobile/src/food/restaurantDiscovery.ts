@@ -25,8 +25,19 @@ const cuisineAliases: Record<string, string[]> = {
   Местная: ['местная', 'национальная', 'кыргыз', 'киргиз', 'домашняя'],
   Европа: ['европ', 'француз', 'немец', 'испан'], Япония: ['япон', 'суши', 'роллы'],
   Италия: ['итал', 'пицца', 'паста'], Грузинская: ['грузин', 'хинкали', 'хачапури'],
-  Восток: ['восточ', 'узбек', 'турец', 'плов'],
+  Восток: ['восток', 'восточ', 'узбек', 'турец', 'плов'],
 };
+
+/** Use the same cuisine groups as the sheet; retain custom merchant cuisines. */
+export function restaurantCuisines(restaurants: FoodRestaurant[]) {
+  return [...new Set(restaurants.flatMap(restaurant => {
+    const label = restaurant.cuisine.trim();
+    if (!isFoodFilterCategoryAllowed(label)) return [];
+    const normalized = label.toLocaleLowerCase('ru');
+    const groups = Object.entries(cuisineAliases).filter(([, aliases]) => aliases.some(alias => normalized.includes(alias))).map(([name]) => name);
+    return groups.length ? groups : [label];
+  }))];
+}
 
 /** Categories and their photographs come from the current merchants, never a demo list. */
 export function restaurantCategories(restaurants: FoodRestaurant[]) {

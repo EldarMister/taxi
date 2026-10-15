@@ -126,4 +126,12 @@ export async function signIn(username, password, remember = true) {
 }
 export async function signOut() { const saved = current; try { if (saved) await request('/auth/logout', { method: 'POST', body: { refreshToken: saved.refreshToken }, token: saved.accessToken }); } finally { clearSession(); } }
 export async function upload(file) { if (!file || file.size > 5 * 1024 * 1024) throw new Error('Выберите изображение до 5 МБ.'); const body = new FormData(); body.append('image', file); return api('/admin/media', { method: 'POST', body }); }
-export function mediaUrl(value) { if (!value) return ''; if (String(value).startsWith('/')) return `${API}${value}`; try { const u = new URL(value, new URL(API).origin); return ['http:', 'https:'].includes(u.protocol) ? u.href : ''; } catch { return ''; } }
+export function mediaUrl(value) {
+  if (!value) return '';
+  const path = String(value).trim();
+  if (!path || path.startsWith('//')) return '';
+  try {
+    const url = new URL(path.startsWith('/content/media/') ? `/api${path}` : path, `${window.location.origin}/`);
+    return ['http:', 'https:'].includes(url.protocol) && !url.username && !url.password ? url.href : '';
+  } catch { return ''; }
+}

@@ -50,3 +50,9 @@ test('keeps a useful fallback for empty and administrative-only values', () => {
 test('keeps a named-place heading compact', () => {
   assert.equal(shortAddress('Asia Mall · торговый центр, Кыргызстан, Бишкек, проспект Чингиза Айтматова, 3'), 'Asia Mall · торговый центр, проспект Чингиза Айтматова, 3, Бишкек');
 });
+
+test('geocoder venue headings remain first in selected addresses and in towns beyond Bishkek', () => {
+  assert.equal(shortAddress('Азия Молл · проспект Чынгыза Айтматова, 3, Бишкек'), 'Азия Молл · проспект Чынгыза Айтматова, 3, Бишкек');
+  assert.equal(shortAddress('Глобус · улица Ленина, 25, Шамалды-Сай'), 'Глобус · улица Ленина, 25, Шамалды-Сай');
+  assert.equal(shortAddress('Глобус · Чалагыз Иманкулов көчөсү, Новопавловка'), 'Глобус · Чалагыз Иманкулов көчөсү, Новопавловка');
+});

@@ -7,8 +7,10 @@ COPY src ./src
 COPY public ./public
 COPY privacy ./privacy
 COPY terms ./terms
+COPY delete-account ./delete-account
 COPY drivers ./drivers
 COPY scripts ./scripts
+COPY admin/dist ./admin/dist
 ARG VITE_CLIENT_APP_STORE_URL
 ARG VITE_CLIENT_GOOGLE_PLAY_URL
 ARG VITE_DRIVER_APP_STORE_URL

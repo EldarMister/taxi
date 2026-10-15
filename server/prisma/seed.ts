@@ -14,11 +14,11 @@ async function main() {
   await db.tariff.upsert({where:{id:'comfort'},create:{id:'comfort',name:'Комфорт',description:'Больше места и комфорта',basePrice:90,pricePerKm:19,pricePerMinute:3,waitingPricePerMinute:3,minimumPrice:150,commissionBps:1000,requiredClass:'COMFORT'},update:{requiredClass:'COMFORT'}});
   await db.tariff.upsert({where:{id:'delivery-car'},create:{id:'delivery-car',name:'Доставка',description:'Небольшие чистые грузы на легковой машине',basePrice:22,pricePerKm:16,pricePerMinute:2,waitingPricePerMinute:2,minimumPrice:22,commissionBps:1000,kind:'DELIVERY_CAR'},update:{kind:'DELIVERY_CAR',requiredClass:'ECONOMY'}});
   await db.tariff.upsert({where:{id:'delivery-truck'},create:{id:'delivery-truck',name:'Грузовой',description:'Крупные и тяжёлые грузы',basePrice:257,pricePerKm:35,pricePerMinute:4,waitingPricePerMinute:4,minimumPrice:257,commissionBps:1000,kind:'DELIVERY_TRUCK',requiredClass:'TRUCK'},update:{kind:'DELIVERY_TRUCK',requiredClass:'TRUCK'}});
-  await db.user.upsert({where:{phone:'+996700123456'},create:{phone:'+996700123456',name:'Айдана',role:'CLIENT'},update:{}});
-  await db.user.upsert({where:{phone:'+996700999999'},create:{phone:'+996700999999',name:'Администратор',role:'ADMIN'},update:{}});
+  await db.user.upsert({where:{phone_role:{phone:'+996700123456',role:'CLIENT'}},create:{phone:'+996700123456',name:'Айдана',role:'CLIENT'},update:{}});
+  await db.user.upsert({where:{phone_role:{phone:'+996700999999',role:'ADMIN'}},create:{phone:'+996700999999',name:'Администратор',role:'ADMIN'},update:{}});
   for(const data of [{phone:'+996700111111',name:'Азамат',make:'Toyota Camry',color:'Белый',plate:'01 KG 777 AAA',latitude:42.8756,longitude:74.6040},{phone:'+996700222222',name:'Бакыт',make:'Hyundai Sonata',color:'Серебристый',plate:'01 KG 888 BBB',latitude:42.8742,longitude:74.6015}]) {
     await db.$transaction(async tx=>{
-      const user=await tx.user.upsert({where:{phone:data.phone},create:{phone:data.phone,name:data.name,role:'DRIVER'},update:{}});
+      const user=await tx.user.upsert({where:{phone_role:{phone:data.phone,role:'DRIVER'}},create:{phone:data.phone,name:data.name,role:'DRIVER'},update:{}});
       await tx.driverProfile.upsert({where:{userId:user.id},create:{userId:user.id,verified:true,deposit:1000},update:{}});
       await tx.vehicle.upsert({where:{driverId:user.id},create:{driverId:user.id,make:data.make,color:data.color,plate:data.plate},update:{}});
       await tx.ledgerEntry.upsert({where:{idempotencyKey:`seed:${user.id}`},create:{driverId:user.id,kind:'TOPUP',amount:1000,balanceAfter:1000,idempotencyKey:`seed:${user.id}`,note:'Тестовое пополнение депозита'},update:{}});

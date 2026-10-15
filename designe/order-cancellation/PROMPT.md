@@ -1,0 +1,8 @@
+# Иллюстрация отмены заказа
+
+Создана встроенным инструментом image_gen по уточнению пользователя: простой объёмный красный круг с белым крестиком. Прозрачный PNG: `mobile/assets/order-cancelled-red-3d.png`. Версия для приложения: `mobile/assets/order-cancelled-red-3d.webp`.
+
+## Финальный запрос
+
+Use case: stylized-concept. Asset type: standalone transparent 3D cancellation icon for the Atlas mobile order-cancelled modal. User's exact preference: simply a red circular X icon, no other objects. Subject: one softly rounded red circular disk, a substantial sculpted 3D button with a gently convex face and rounded beveled edge, with a large raised white X centered perfectly on the red face. White X made of two broad clean rounded bars with no border. Color palette: fresh coral red #EF5359, clean white #FFFFFF, subtle darker red thickness. Style: crisp premium 3D product render, smooth polished satin resin, soft realistic studio highlights and contact shadows, beautiful clearly readable silhouette even at 100 pixels. Composition: single icon centered on a square canvas, mild three-quarter tilt (only 10 to 15 degrees) while the circular face and X remain fully readable; icon fills about 76% of canvas with ample transparent margins. Background: genuine transparent alpha, no ground plane or backdrop, only a subtle compact shadow if needed. Mood: calm clear confirmation of cancellation. Text: none. Constraints: exactly one red round icon and one white X; no map, location pin, road, car, parcels, characters, confetti, glow, particles, words, logos, watermarks, or extra badges. High-definition edges and all surfaces clean.
+

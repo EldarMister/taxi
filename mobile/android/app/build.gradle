@@ -7,7 +7,7 @@ def taxiAppVariant = (System.getenv("APP_VARIANT") ?: "client").trim().toLowerCa
 if (!(taxiAppVariant in ["client", "driver"])) {
     throw new GradleException("APP_VARIANT must be client or driver; use restaurant-mobile for Atlas Restaurant")
 }
-def taxiApplicationId = taxiAppVariant == "driver" ? "kg.taxigo.driver" : "kg.taxigo.app"
+def taxiApplicationId = taxiAppVariant == "driver" ? "atlas.pro" : "atlas.kg"
 def taxiAppName = taxiAppVariant == "driver" ? "Atlas pro" : "Atlas"
 def taxiAppIcon = taxiAppVariant == "driver" ? "@drawable/edu_drive_icon" : "@drawable/edu_go_client_logo"
 def taxiAppRoundIcon = taxiAppIcon
@@ -20,12 +20,21 @@ def taxiGoogleServices = taxiGoogleServicesValue
     : new File(projectRoot, taxiAppVariant == "driver" ? "google-services.driver.json" : "google-services.json")
 
 if (taxiGoogleServices.exists()) {
+    def firebaseConfiguration = new groovy.json.JsonSlurper().parse(taxiGoogleServices)
+    if (!firebaseConfiguration.client.any { it.client_info.android_client_info.package_name == taxiApplicationId }) {
+        throw new GradleException("Firebase configuration does not contain ${taxiApplicationId}. Download updated google-services.json for the selected Atlas app.")
+    }
     copy {
         from taxiGoogleServices
         into projectDir
         rename { "google-services.json" }
     }
     apply plugin: "com.google.gms.google-services"
+    // Bind each task to its selected app configuration. The shared checkout's
+    // google-services.json can be replaced when another variant is configured.
+    tasks.withType(com.google.gms.googleservices.GoogleServicesTask).configureEach {
+        googleServicesJsonFiles.set([taxiGoogleServices])
+    }
 }
 
 // Environment variables are inlined by Expo. Gradle must rebundle when the
@@ -167,8 +176,8 @@ android {
         ]
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 105
-        versionName "1.1.94"
+        versionCode 148
+        versionName "1.2.36"
 
           // Include phones and the x86_64 emulator in the direct-install APK.
         ndk {
@@ -233,6 +242,10 @@ android {
 }
 
 dependencies {
+    implementation 'com.google.firebase:firebase-messaging:24.0.1'
+    implementation 'com.whatsapp.otp:whatsapp-otp-android-sdk:1.0.0'
+    testImplementation 'junit:junit:4.13.2'
+    testImplementation 'org.robolectric:robolectric:4.17'
     // The version of react-native is set by the React Native Gradle Plugin
     implementation("com.facebook.react:react-android")
 
@@ -259,4 +272,10 @@ dependencies {
     } else {
         implementation jscFlavor
     }
+}
+
+android.testOptions.unitTests.includeAndroidResources = true
+android.testOptions.unitTests.all {
+    jvmArgs '--add-opens=java.base/java.lang=ALL-UNNAMED', '--add-opens=java.base/java.util=ALL-UNNAMED', '--add-opens=java.base/java.io=ALL-UNNAMED', '--add-opens=java.base/jdk.internal.access=ALL-UNNAMED'
+    systemProperty 'robolectric.dependency.repo.url', 'https://repo.maven.apache.org/maven2'
 }

@@ -7,6 +7,7 @@ const deferred = () => { let resolve!: () => void; const promise = new Promise<v
 function setup(role = 'CLIENT') {
   const jobs: any[] = [];
   const db = {
+    orderOffer: { findFirst: async () => null as any },
     pushJob: {
       findMany: async ({ where }: any) => jobs.filter(job => !job.sentAt && job.availableAt <= new Date()
         && !(where.userId?.notIn || []).includes(job.userId)).map(job => ({ ...job })),
@@ -23,10 +24,32 @@ function setup(role = 'CLIENT') {
   };
   const add = (id: string, userId = id, event = 'chat:message') => jobs.push({ id, userId, event, orderId: 'order', payload: null,
     createdAt: new Date(), availableAt: new Date(), sentAt: null, attempts: 0 });
-  return { jobs, add, service: new PushService(db as never, { pushProvider: 'expo' } as never),
+  return { jobs, add, db, service: new PushService(db as never, { pushProvider: 'expo' } as never),
     secondWorker: () => new PushService(db as never, { pushProvider: 'expo' } as never) };
 }
 const accepted = () => new Response(JSON.stringify({ data: { status: 'ok', id: 'ticket' } }), { status: 200 });
+
+test('available driver offers carry the action category, bounded details and account / expiry binding', async t => {
+  const h = setup('DRIVER'); const sent: any[] = [];
+  const expiresAt = new Date(Date.now() + 60000);
+  h.db.orderOffer.findFirst = async () => ({ expiresAt, order: { kind: 'RIDE', pickup: { address: 'Откуда' }, dropoff: { address: 'Куда' }, distanceMeters: 7000, durationSeconds: 1200, price: 400, passengerPhone: 'private-phone' } });
+  t.mock.method(globalThis, 'fetch', async (_url: unknown, init: any) => { sent.push(JSON.parse(init.body)); return accepted(); });
+  h.add('offer', 'driver', 'order:offer'); await h.service.deliverPending();
+  assert.equal(sent.length, 1); assert.equal(sent[0].categoryId, 'atlas-driver-offer-v1');
+  assert.match(sent[0].body, /7 км/); assert.match(sent[0].title, /400 сом/);
+  assert.deepEqual(sent[0].data, { event: 'order:offer', eventId: 'offer', orderId: 'order', recipientId: 'driver', offerExpiresAt: expiresAt.toISOString() });
+  assert.equal(JSON.stringify(sent).includes('private-phone'), false);
+  assert.ok(sent[0].ttl <= 60 && sent[0].ttl > 0);
+});
+
+test('withdrawn offers and offers addressed to a client never leak route data or go to a provider', async t => {
+  let requests = 0; t.mock.method(globalThis, 'fetch', async () => { requests++; return accepted(); });
+  for (const role of ['CLIENT', 'DRIVER']) {
+    const h = setup(role); h.add('offer', 'user', 'order:offer'); await h.service.deliverPending();
+    assert.ok(h.jobs[0].sentAt);
+  }
+  assert.equal(requests, 0);
+});
 
 test('a slow phone cannot block other recipients or later polling cycles', async t => {
   const h = setup(), slow = deferred(), sent: string[] = [];

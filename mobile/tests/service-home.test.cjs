@@ -30,7 +30,7 @@ test('home reference controls change address, split delivery cards, and show unr
     clearTimeout: id => timers.delete(id),
     require: id => {
       if (id === 'react' || id === 'react/jsx-runtime') return require(id);
-      if (id.endsWith('.png')) return 1;
+      if (/\.(png|webp)$/.test(id)) return 1;
       if (id === 'react-native') return { AccessibilityInfo: { isReduceMotionEnabled: async () => false,
           addEventListener: () => ({ remove() {} }) }, AppState: { currentState: 'active', addEventListener: () => ({ remove() {} }) },
         Animated: { Value: AnimatedValue, Text: 'AnimatedText', timing: (_value, config) => {

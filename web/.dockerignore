@@ -5,3 +5,5 @@ dist
 *.log
 design
 # admin/dist is maintained website source and must be included.
+!admin/dist/
+!admin/dist/**

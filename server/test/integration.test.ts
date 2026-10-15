@@ -1,6 +1,6 @@
 import 'reflect-metadata';
 import assert from 'node:assert/strict';
-import { after, before, test } from 'node:test';
+import { after, before, beforeEach, test } from 'node:test';
 import { createHash, createHmac, randomUUID } from 'node:crypto';
 import request from 'supertest';
 import { io, Socket } from 'socket.io-client';
@@ -27,9 +27,9 @@ const headers=(session:Session)=>({Authorization:`Bearer ${session.accessToken}`
 const pickup={latitude:42.8756,longitude:74.6040,address:'Площадь Ала-Тоо'};
 const dropoff={latitude:42.8528,longitude:74.5840,address:'Парк Ататюрк'};
 const pngAvatar=Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=','base64');
-async function login(phone:string) {
-  await api.post('/api/auth/request-code').send({phone}).expect(201);
-  const response=await api.post('/api/auth/verify-code').send({phone,code:process.env.DEV_OTP_CODE??'123456'}).expect(201);
+async function login(phone:string,appVariant:'client'|'driver'='client') {
+  await api.post('/api/auth/request-code').send({phone,appVariant}).expect(201);
+  const response=await api.post('/api/auth/verify-code').send({phone,appVariant,code:process.env.DEV_OTP_CODE??'123456'}).expect(201);
   return response.body as Session;
 }
 async function quoted(session:Session) {
@@ -52,9 +52,14 @@ async function socket(session:Session) {
   await new Promise<void>((resolve,reject)=>{connection.once('session:ready',()=>resolve());connection.once('connect_error',reject);setTimeout(()=>reject(new Error('Socket timeout')),5000).unref();});
   return connection;
 }
-function once(connection:Socket,event:string) {
-  return new Promise<any>((resolve,reject)=>{const timer=setTimeout(()=>reject(new Error(`${event} timeout`)),5000);connection.once(event,value=>{clearTimeout(timer);resolve(value);});});
+function once(connection:Socket,event:string,matches:(value:any)=>boolean=()=>true) {
+  return new Promise<any>((resolve,reject)=>{
+    const listener=(value:any)=>{if(matches(value)){clearTimeout(timer);connection.off(event,listener);resolve(value);}};
+    const timer=setTimeout(()=>{connection.off(event,listener);reject(new Error(event+' timeout'));},5000);
+    connection.on(event,listener);
+  });
 }
+
 before(async()=>{
   if(process.env.TEST_DATABASE_RESET!=='true'||!process.env.DATABASE_URL?.includes('taxi_test'))throw new Error('Use a disposable taxi_test database and TEST_DATABASE_RESET=true');
   await db.$executeRawUnsafe('TRUNCATE TABLE "AdminAudit", "AdminCredential", "Banner", "MediaAsset", "FoodStatusHistory", "FoodOrder", "FoodRestaurant", "PushJob", "PushToken", "RateLimit", "SmsChallenge", "RefreshSession", "Rating", "Message", "StatusHistory", "OrderOffer", "LedgerEntry", "Order", "Quote", "Vehicle", "DriverProfile", "Tariff", "User" CASCADE');
@@ -72,11 +77,14 @@ before(async()=>{
   const module=await Test.createTestingModule({imports:[AppModule]}).overrideProvider(RoutingService).useValue({route:async(start:any,finish:any)=>parseOsrmRoute(osrmFixture(start,finish),start,finish)}).compile();
   app=module.createNestApplication({logger:false});app.setGlobalPrefix('api');app.useGlobalPipes(apiValidation());app.useGlobalFilters(new ApiExceptionFilter());
   await app.listen(0,'127.0.0.1');baseUrl=await app.getUrl();api=request(app.getHttpServer());
-  client=await login('+996700123456');client2=await login('+996700123457');driver1=await login('+996700111111');driver2=await login('+996700222222');
+  client=await login('+996700123456');client2=await login('+996700123457');driver1=await login('+996700111111','driver');driver2=await login('+996700222222','driver');
   admin=(await api.post('/api/admin/auth/login').send({username:'integration-owner',password:adminPassword}).expect(201)).body;
   await setOnline(driver1);await setOnline(driver2);
 });
 after(async()=>{for(const connection of sockets)connection.disconnect();await app?.close();await db.$disconnect();});
+// Each scenario has an independent allowance. Real phone/IP throttling has its
+// own integration suite; fast execution must not couple unrelated scenarios.
+beforeEach(async()=>{await db.rateLimit.deleteMany();});
 
 test('DTOs reject client price, role escalation and malformed nested route',async()=>{
   await api.patch('/api/users/me').set(headers(client)).send({role:'ADMIN'}).expect(400);
@@ -153,7 +161,7 @@ test('legacy self-registration is closed; an approved truck driver receives only
   await api.post('/api/driver/register').set(headers(legacyApplicant)).expect(410);
   const driverPhone='+996700444445';
   const registered=(await api.post('/api/admin/drivers').set(headers(admin)).send({phone:driverPhone,name:'Талант Айдоочев',carMake:'Mercedes Sprinter',carPlate:'01 KG 444 CCC',carColor:'Белый',transportClass:'TRUCK',verified:false}).expect(201)).body;
-  const applicant=await login(driverPhone);
+  const applicant=await login(driverPhone,'driver');
   assert.equal(registered.id,applicant.user.id);assert.equal(registered.verified,false);assert.equal(registered.transportClass,'TRUCK');
   await api.patch('/api/driver/online').set(headers(applicant)).send({online:true}).expect(403);
   const approved=(await api.patch(`/api/admin/drivers/${applicant.user.id}`).set(headers(admin)).send({verified:true}).expect(200)).body;
@@ -183,7 +191,7 @@ test('a car delivery can be scheduled from the simplified delivery panel',async(
   await api.post(`/api/orders/${delivery.id}/cancel`).set(headers(client2)).expect(201);
 });
 test('an operational approved role can be activated while another role remains under review',async()=>{
-  const applicant=await login('+996700555555'),now=new Date();
+  const applicant=await login('+996700555555','driver'),now=new Date();
   await db.performerApplication.create({data:{
     userId:applicant.user.id,status:'UNDER_REVIEW',currentStep:'REVIEW',data:{},submittedAt:now,
     roles:{create:[
@@ -203,12 +211,12 @@ test('an operational approved role can be activated while another role remains u
   assert.equal(activationPush.orderId,null);
   assert.deepEqual(activationPush.payload,{applicationId:activated.application.id});
 });
-test('additional vehicle slots survive correction replacement, expiry patch and resubmit',async()=>{
-  const applicant=client;
+test('additional vehicle photos survive correction replacement and resubmit; photos reject document expiry',async()=>{
+  const applicant=await login('+996700556556','driver');
   const vehicle={ownership:'OWN',brand:'Toyota',model:'Prius',year:'2022',color:'Белый',plateNumber:'01 556 ABC',tariffs:['ECONOMY']};
   const extra={...vehicle,clientId:'v-second',usage:'TAXI',plateNumber:'01 557 ABC',equipment:{loadingTypes:[]}};
   const data={
-    personal:{firstName:'Асан',lastName:'Ибраев',birthDate:'10.03.1990',city:'Бишкек'},
+    personal:{firstName:'Асан',lastName:'Ибраев',birthDate:'10.03.1990',city:'Шамалды-Сай'},
     identity:{number:'ID-556',issuedAt:'01.01.2020',expiresAt:'01.01.2030',issuedBy:'МКК'},
     driverLicense:{number:'DL-556',categories:['B'],expiresAt:'01.01.2030'},taxiVehicle:vehicle,vehicles:[extra],documentExpiries:{},
   };
@@ -216,23 +224,22 @@ test('additional vehicle slots survive correction replacement, expiry patch and 
   assert.equal(patched.data.vehicles[0].clientId,'v-second');
   assert.equal(patched.config,undefined);
   assert.equal((await api.get('/api/driver/registration/config').set(headers(applicant)).expect(200)).body.upload.maxFiles,128);
-  const slot='vehicle_v-second_insurance',pdf1=Buffer.from('%PDF-1.4 insurance one'),pdf2=Buffer.from('%PDF-1.4 insurance replacement');
-  const uploaded=await api.post(`/api/driver/registration/uploads/${slot}`).set(headers(applicant)).field('kind','VEHICLE_DOCUMENT').field('role','TAXI_DRIVER').field('expiresAt','01.01.2030').attach('file',pdf1,{filename:'insurance.pdf',contentType:'application/pdf'}).expect(201);
-  await api.post('/api/driver/registration/uploads/vehicle_v-second_unknown').set(headers(applicant)).field('kind','VEHICLE_DOCUMENT').field('role','TAXI_DRIVER').attach('file',pdf1,{filename:'unknown.pdf',contentType:'application/pdf'}).expect(400);
-  await api.post(`/api/driver/registration/uploads/${slot}`).set(headers(applicant)).field('kind','VEHICLE_DOCUMENT').field('role','CARGO_DRIVER').attach('file',pdf1,{filename:'wrong.pdf',contentType:'application/pdf'}).expect(400);
+  const slot='vehicle_v-second_photo_front',photo1=pngAvatar,photo2=await sharp({create:{width:2,height:2,channels:3,background:'#3460db'}}).png().toBuffer();
+  const uploaded=await api.post(`/api/driver/registration/uploads/${slot}`).set(headers(applicant)).field('kind','VEHICLE_PHOTO').field('role','TAXI_DRIVER').attach('file',photo1,{filename:'front.png',contentType:'image/png'}).expect(201);
+  await api.post('/api/driver/registration/uploads/vehicle_v-second_unknown').set(headers(applicant)).field('kind','VEHICLE_PHOTO').field('role','TAXI_DRIVER').attach('file',photo1,{filename:'unknown.png',contentType:'image/png'}).expect(400);
+  await api.post(`/api/driver/registration/uploads/${slot}`).set(headers(applicant)).field('kind','VEHICLE_PHOTO').field('role','CARGO_DRIVER').attach('file',photo1,{filename:'wrong.png',contentType:'image/png'}).expect(400);
 
   const stored=await db.performerApplication.findUniqueOrThrow({where:{userId:applicant.user.id},include:{roles:true}}),taxiRole=stored.roles.find(role=>role.role==='TAXI_DRIVER')!;
   await db.$transaction([
     db.performerApplication.update({where:{id:stored.id},data:{status:'CORRECTION_REQUIRED',canResubmit:true}}),
-    db.performerApplicationRole.update({where:{id:taxiRole.id},data:{status:'CORRECTION_REQUIRED',canResubmit:true,correctionFields:[`documentExpiries.${slot}`]}}),
+    db.performerApplicationRole.update({where:{id:taxiRole.id},data:{status:'CORRECTION_REQUIRED',canResubmit:true,correctionFields:[`uploads.${slot}`]}}),
     db.performerUpload.update({where:{id:uploaded.body.id},data:{status:'CORRECTION_REQUIRED',canReupload:true}}),
   ]);
   await api.delete(`/api/driver/registration/uploads/${slot}`).set(headers(applicant)).expect(403);
-  const replacement=await api.post(`/api/driver/registration/uploads/${slot}`).set(headers(applicant)).field('kind','VEHICLE_DOCUMENT').field('role','TAXI_DRIVER').attach('file',pdf2,{filename:'replacement.pdf',contentType:'application/pdf'}).expect(201);
-  const replay=await api.post(`/api/driver/registration/uploads/${slot}`).set(headers(applicant)).field('kind','VEHICLE_DOCUMENT').field('role','TAXI_DRIVER').attach('file',pdf2,{filename:'replacement.pdf',contentType:'application/pdf'}).expect(201);
+  const replacement=await api.post(`/api/driver/registration/uploads/${slot}`).set(headers(applicant)).field('kind','VEHICLE_PHOTO').field('role','TAXI_DRIVER').attach('file',photo2,{filename:'replacement.png',contentType:'image/png'}).expect(201);
+  const replay=await api.post(`/api/driver/registration/uploads/${slot}`).set(headers(applicant)).field('kind','VEHICLE_PHOTO').field('role','TAXI_DRIVER').attach('file',photo2,{filename:'replacement.png',contentType:'image/png'}).expect(201);
   assert.equal(replay.body.id,replacement.body.id);
-  const withExpiry=(await api.patch('/api/driver/registration').set(headers(applicant)).send({version:patched.version,data:{documentExpiries:{[slot]:'01.01.2031'}}}).expect(200)).body.application;
-  assert.equal(withExpiry.data.documentExpiries[slot],'01.01.2031');
+  await api.patch('/api/driver/registration').set(headers(applicant)).send({version:patched.version,data:{documentExpiries:{[slot]:'01.01.2031'}}}).expect(400);
 
   for(const spec of registrationUploadSlotSpecs(['TAXI_DRIVER'],data)) {
     if(spec.slotKey===slot)continue;
@@ -242,7 +249,7 @@ test('additional vehicle slots survive correction replacement, expiry patch and 
   const resubmitted=(await api.post('/api/driver/registration/resubmit').set(headers(applicant)).send({truthConfirmed:true,termsAccepted:true,acceptedConsentIds:['truth-confirmation','performer-terms'],legalTermsVersion:'performer-terms-2026-09-22'}).expect(201)).body.application;
   assert.equal(resubmitted.roleStatuses.find((item:any)=>item.role==='TAXI_DRIVER').status,'SUBMITTED');
   const storedReplacement=await db.performerUpload.findUniqueOrThrow({where:{applicationId_slotKey:{applicationId:stored.id,slotKey:slot}}});
-  assert.equal(storedReplacement.status,'UNDER_REVIEW');assert.equal(storedReplacement.expiresAt?.toISOString(),'2031-01-01T23:59:59.999Z');
+  assert.equal(storedReplacement.status,'UNDER_REVIEW');assert.equal(storedReplacement.expiresAt,null);
 });
 test('driver tracking is scoped to the assigned passenger, rejects replay and ends with the trip', async()=>{
   await setOnline(driver1); await setOnline(driver2);
@@ -305,7 +312,8 @@ test('driver tracking is scoped to the assigned passenger, rejects replay and en
   const cancelled=await create(); await api.post(`/api/orders/${cancelled.id}/accept`).set(headers(driver1)).expect(201);
   await api.patch(`/api/orders/${cancelled.id}/driver-location`).set(headers(driver1)).send({...fix,timestamp:Date.now()}).expect(200);
   await api.post(`/api/orders/${cancelled.id}/cancel`).set(headers(driver1)).expect(201);
-  await api.post(`/api/orders/${cancelled.id}/accept`).set(headers(driver2)).expect(201);
+  await api.post(`/api/orders/${cancelled.id}/accept`).set(headers(driver2)).expect(409);
+  assert.equal((await api.get(`/api/orders/${cancelled.id}`).set(headers(client)).expect(200)).body.status,'CANCELLED');
   assert.equal((await api.get(`/api/orders/${cancelled.id}/driver-location`).set(headers(client)).expect(200)).body.location,null);
   await api.patch(`/api/orders/${cancelled.id}/driver-location`).set(headers(driver1)).send({...fix,timestamp:Date.now()}).expect(403);
   await api.post(`/api/orders/${cancelled.id}/cancel`).set(headers(client)).expect(201);
@@ -387,18 +395,47 @@ test('one driver cannot accept two different client orders concurrently',async()
   await api.post(`/api/orders/${one.id}/cancel`).set(headers(client)).expect(201);
   await api.post(`/api/orders/${two.id}/cancel`).set(headers(client2)).expect(201);
 });
-test('driver cancellation returns to search; client cancellation is permanent',async()=>{
+test('driver cancellation is permanent and releases the assignment without redispatch',async()=>{
   await setOnline(driver1);await setOnline(driver2);const order=await create();
   await api.post(`/api/orders/${order.id}/accept`).set(headers(driver1)).expect(201);
   await api.post(`/api/orders/${order.id}/messages`).set(headers(driver1)).send({text:'Сообщение предыдущего водителя',clientMessageId:randomUUID()}).expect(201);
   const cancelled=(await api.post(`/api/orders/${order.id}/cancel`).set(headers(driver1)).expect(201)).body;
-  assert.equal(cancelled.status,'SEARCHING');assert.equal(cancelled.driver,null);
-  await api.post(`/api/orders/${order.id}/accept`).set(headers(driver1)).expect(403);
-  await api.post(`/api/orders/${order.id}/accept`).set(headers(driver2)).expect(201);
-  await api.get(`/api/orders/${order.id}/messages`).set(headers(driver1)).expect(403);
-  assert.equal((await api.get(`/api/orders/${order.id}/messages`).set(headers(driver2))).body.length,0);
-  await api.post(`/api/orders/${order.id}/cancel`).set(headers(client)).expect(201);
+  assert.equal(cancelled.status,'CANCELLED');assert.equal(cancelled.driver.id,driver1.user.id);
+  assert.equal((await api.get(`/api/orders/${order.id}`).set(headers(client)).expect(200)).body.status,'CANCELLED');
+  await api.post(`/api/orders/${order.id}/accept`).set(headers(driver2)).expect(409);
+  await api.get(`/api/orders/${order.id}/messages`).set(headers(driver2)).expect(403);
+  for(const session of [client,driver1]) {
+    assert.equal((await api.get('/api/orders/active').set(headers(session)).expect(200)).body,null);
+    assert.equal((await api.post(`/api/orders/${order.id}/cancel`).set(headers(session)).expect(201)).body.status,'CANCELLED');
+  }
+  await app.get(OrdersService).dispatchOrder(order.id);
+  assert.equal((await db.order.findUniqueOrThrow({where:{id:order.id}})).status,'CANCELLED');
+  assert.equal(await db.statusHistory.count({where:{orderId:order.id,status:'CANCELLED'}}),1);
+  assert.equal(await db.orderOffer.count({where:{orderId:order.id,skipped:false}}),0);
+  assert.equal((await api.get('/api/driver/offers').set(headers(driver2)).expect(200)).body.some((offer:any)=>offer.id===order.id),false);
   await api.post(`/api/orders/${order.id}/accept`).set(headers(driver1)).expect(409);
+});
+test('started trip cancellation is driver-only, notifies the client and charges no commission',async()=>{
+  await setOnline(driver1);await setOnline(driver2);
+  const order=await create();
+  await api.post(`/api/orders/${order.id}/accept`).set(headers(driver1)).expect(201);
+  await api.post(`/api/orders/${order.id}/arrive`).set(headers(driver1)).expect(201);
+  await api.post(`/api/orders/${order.id}/start`).set(headers(driver1)).expect(201);
+  await api.post(`/api/orders/${order.id}/cancel`).set(headers(client)).expect(400);
+  await api.post(`/api/orders/${order.id}/cancel`).set(headers(driver2)).expect(403);
+  const before=await db.driverProfile.findUniqueOrThrow({where:{userId:driver1.user.id}});
+  const riderSocket=await socket(client),driverSocket=await socket(driver1);
+  const riderUpdate=once(riderSocket,'order:updated'),driverUpdate=once(driverSocket,'order:updated');
+  const results=await Promise.all(Array.from({length:3},()=>api.post(`/api/orders/${order.id}/cancel`).set(headers(driver1))));
+  results.forEach(response=>{assert.equal(response.status,201);assert.equal(response.body.status,'CANCELLED');});
+  assert.equal((await riderUpdate).status,'CANCELLED');assert.equal((await driverUpdate).status,'CANCELLED');
+  assert.equal(await db.statusHistory.count({where:{orderId:order.id,status:'CANCELLED',actorId:driver1.user.id,reason:'DRIVER_CANCELLED'}}),1);
+  assert.equal(await db.ledgerEntry.count({where:{orderId:order.id,kind:'COMMISSION'}}),0);
+  assert.equal((await db.driverProfile.findUniqueOrThrow({where:{userId:driver1.user.id}})).deposit,before.deposit);
+  await api.post(`/api/orders/${order.id}/complete`).set(headers(driver1)).expect(400);
+  const next=await create();
+  await api.post(`/api/orders/${next.id}/accept`).set(headers(driver1)).expect(201);
+  await api.post(`/api/orders/${next.id}/cancel`).set(headers(client)).expect(201);
 });
 test('arrival, coming, chat, restoration, cash income and idempotent commission',async()=>{
   await setOnline(driver1);const order=await create();await api.post(`/api/orders/${order.id}/accept`).set(headers(driver1)).expect(201);
@@ -417,12 +454,13 @@ test('arrival, coming, chat, restoration, cash income and idempotent commission'
   assert.equal((await messageEvent).text,'Сейчас выйду');
   await api.post(`/api/orders/${order.id}/messages`).set(headers(client)).send({text:'Сейчас выйду',clientMessageId:chatId}).expect(201);
   assert.equal(await db.message.count({where:{orderId:order.id}}),1);
-  const replyEvent=once(riderSocket,'chat:message');
-  await api.post(`/api/orders/${order.id}/messages`).set(headers(driver1)).send({text:'Жду у входа',clientMessageId:randomUUID()}).expect(201);
+  const replyId=randomUUID();
+  const replyEvent=once(riderSocket,'chat:message',message=>message.clientMessageId===replyId);
+  await api.post(`/api/orders/${order.id}/messages`).set(headers(driver1)).send({text:'Жду у входа',clientMessageId:replyId}).expect(201);
   assert.equal((await replyEvent).text,'Жду у входа');
   assert.deepEqual((await db.pushJob.findMany({where:{orderId:order.id,event:'chat:message'},select:{userId:true}})).map(job=>job.userId).sort(),[client.user.id,driver1.user.id].sort());
   const chatPhoto=await sharp({create:{width:32,height:24,channels:3,background:'#2266bb'}}).png().toBuffer();
-  const photoId=randomUUID();const photoEvent=once(driverSocket,'chat:message');
+  const photoId=randomUUID();const photoEvent=once(driverSocket,'chat:message',message=>message.clientMessageId===photoId);
   const sentPhoto=await api.post(`/api/orders/${order.id}/messages/photo`).set(headers(client))
     .field('clientMessageId',photoId).field('text','')
     .attach('image',chatPhoto,{filename:'photo.png',contentType:'image/png'}).expect(201);
@@ -466,7 +504,7 @@ test('arrival, coming, chat, restoration, cash income and idempotent commission'
 });
 
 test('taxi and truck waiting policies are snapshotted and charged when the trip starts',async()=>{
-  const truck=await login('+996700444445');
+  const truck=await login('+996700444445','driver');
   for(const scenario of [
     {tariffId:'economy',customer:client,driver:driver1,rate:7,delivery:false},
     {tariffId:'delivery-truck',customer:client2,driver:truck,rate:9,delivery:true},

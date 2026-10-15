@@ -247,30 +247,22 @@ export class OrdersService {
     await this.publish(id);return this.serialize(id,false,actor.id);
   }
   async cancel(actor:Actor,id:string) {
-    let previousDriver:string|undefined;
-    let cancelledByDriver=false;
     await this.db.$transaction(async tx=>{
       const order = await this.lockOrder(tx,id);
       if(order.clientId !== actor.id && order.driverId !== actor.id) throw new ForbiddenException();
       if(isRestaurantDelivery(order)&&actor.role==='CLIENT')throw new ForbiddenException('Доставкой еды управляет ресторан');
-      if(order.status==='CANCELLED'&&order.clientId===actor.id) return;
-      if(!['SEARCHING','ASSIGNED','ARRIVED'].includes(order.status)) throw new BadRequestException('После начала поездки отмена недоступна');
-      previousDriver=order.driverId??undefined;
-      const byDriver=order.driverId===actor.id;
-      cancelledByDriver=byDriver;
-      if(byDriver) {
-        await tx.orderOffer.updateMany({where:{orderId:id,driverId:actor.id},data:{skipped:true}});
-        // Other drivers may receive a fresh offer after a driver cancellation.
-        await tx.orderOffer.deleteMany({where:{orderId:id,driverId:{not:actor.id},skipped:false}});
-      }
-      const status = byDriver?'SEARCHING':'CANCELLED';
-      await tx.order.update({where:{id},data:{status,driverLocation:Prisma.DbNull,...(byDriver?{driverId:null,arrivedAt:null,searchExpiresAt:new Date(Date.now()+OFFER_SECONDS*1000)}:{}),history:{create:{status,actorId:actor.id,reason:byDriver?'DRIVER_CANCELLED':'CLIENT_CANCELLED'}}}});
-      await syncRestaurantFoodStatus(tx,order,status,actor.id);
+      if(order.status==='CANCELLED') return;
+      const byDriver=actor.role==='DRIVER'&&order.driverId===actor.id;
+      if(!['SEARCHING','ASSIGNED','ARRIVED'].includes(order.status)&&!(byDriver&&order.status==='IN_PROGRESS')) throw new BadRequestException('На этом этапе отмена недоступна');
+      await tx.orderOffer.updateMany({where:{orderId:id},data:{skipped:true}});
+      // Keep the assignment for history and access to the final cancellation.
+      // A cancelled trip is terminal and must never restart dispatch.
+      await tx.order.update({where:{id},data:{status:'CANCELLED',driverLocation:Prisma.DbNull,history:{create:{status:'CANCELLED',actorId:actor.id,reason:byDriver?'DRIVER_CANCELLED':'CLIENT_CANCELLED'}}}});
+      await syncRestaurantFoodStatus(tx,order,'CANCELLED',actor.id);
       await this.push(tx,this.participants(order),'order:updated',id);
     });
-    await this.publish(id,previousDriver?[previousDriver]:[]);await this.dispatchOrder(id);
-    const snapshot=await this.serialize(id);
-    return cancelledByDriver?{...snapshot,status:'SEARCHING',driver:null,client:undefined}:snapshot;
+    await this.publish(id);
+    return this.serialize(id,false,actor.id);
   }
   async coming(actor:Actor,id:string) {
     const order = await this.authorize(actor,id);

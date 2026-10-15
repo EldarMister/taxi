@@ -1,6 +1,11 @@
 import React, { useState } from 'react';
+import { OnboardingVehicleForm } from './OnboardingVehicleForm';
+import { VehiclePhotoCard } from './VehiclePhotoCard';
+import { uploadedPhoto } from './photoUploads';
+import { cityOptionsFor, withWorkCity } from './workCities';
+import { NativeNumberInput } from './NativeNumberInput';
 import { Image, Pressable, StyleSheet, View } from 'react-native';
-import { useTheme } from '../design/theme';
+import { useRegistrationDesign as useTheme } from './design';
 import { Icon } from '../ui';
 import { LocalizedText as Text } from '../auth/LocalizedText';
 import { additionalVehicleUploadSlotsForStep, additionalVehiclesForUsage, buildRegistrationSteps, configuredUploadSlotsForStep, correctionExpiryAllowed, correctionUploadDeleteAllowed, correctionVehicleFieldAllowed, performerRoleForVehicleUsage, registrationUploadSlotsForStep, validateRegistrationStep, type ConfiguredUploadSlot } from './flow';
@@ -19,6 +24,7 @@ type Props = {
   onData: (updater: (data: RegistrationData) => RegistrationData) => void;
   onUpload: (slotKey: string, kind: UploadKind, title: string, image?: boolean, profile?: boolean, role?: PerformerRole, expiresAt?: string) => void;
   onDeleteUpload: (slotKey: string) => void;
+  onViewUpload?: (slotKey: string, title: string) => void;
   onRequestLocation: () => void;
   onGoTo: (step: RegistrationStepId) => void;
   correctionFields?: string[];
@@ -26,9 +32,9 @@ type Props = {
 
 const roleIcons: Record<PerformerRole, React.ComponentProps<typeof Icon>['name']> = { TAXI_DRIVER: 'car-sport-outline', CARGO_DRIVER: 'bus-outline', COURIER: 'bicycle-outline' };
 const roleImages: Record<PerformerRole, number> = {
-  TAXI_DRIVER: require('../../assets/registration/role-taxi-3d.png'),
-  CARGO_DRIVER: require('../../assets/registration/role-cargo-3d.png'),
-  COURIER: require('../../assets/registration/role-courier-3d.png'),
+  TAXI_DRIVER: require('../../assets/home/service-taxi.webp'),
+  CARGO_DRIVER: require('../../assets/home/service-truck.webp'),
+  COURIER: require('../../assets/registration/role-courier-3d.webp'),
 };
 const courierModeLabels: Record<string, string> = { FOOT: 'Пешком', BICYCLE: 'Велосипед', E_BICYCLE: 'Электровелосипед', MOPED: 'Мопед', SCOOTER: 'Скутер', MOTORCYCLE: 'Мотоцикл', CAR: 'Легковой автомобиль', TRUCK: 'Грузовой автомобиль' };
 const orderTypeLabels: Record<string, string> = { DOCUMENTS: 'Документы', PARCELS: 'Посылки', GROCERIES: 'Продукты', MEALS: 'Готовая еда', MEDICINE: 'Лекарства', LARGE: 'Крупные заказы' };
@@ -87,7 +93,8 @@ function stepHasCorrection(step: RegistrationStepId, application: RegistrationAp
 export function RegistrationStepContent(props: Props) {
   const { step, application: a, config, errors, onData, onRoles, onUpload, onDeleteUpload, onRequestLocation, onGoTo, correctionFields } = props; const d = a.data; const { palette } = useTheme();
   const [picker, setPicker] = useState<{ title: string; options: { value: string; label: string }[]; selected?: string; choose: (value: string) => void } | null>(null);
-  const roleOptions = config.roles.map(option => ({ role: option.id, title: option.title, description: option.description, icon: roleIcons[option.id], image: roleImages[option.id] }));
+  const workCityOptions = cityOptionsFor(config);
+  const roleOptions = config.roles.filter(option => option.id !== 'COURIER').map(option => ({ role: option.id, title: option.id === 'TAXI_DRIVER' ? 'Такси и доставка' : option.title, description: option.description, icon: roleIcons[option.id], image: roleImages[option.id] }));
   const courierModes = config.courierTransportModes.map(value => ({ value, label: courierModeLabels[value] || value }));
   const orderTypes = config.courierOrderTypes.map(value => ({ value, label: orderTypeLabels[value] || value }));
   const loadingTypes = config.loadingTypes.map(value => ({ value, label: loadingTypeLabels[value] || value }));
@@ -97,7 +104,7 @@ export function RegistrationStepContent(props: Props) {
   const birthDateMinimum = new Date(birthDateMaximum.getFullYear() - 72, 0, 1, 12);
   const canEdit = (path: string) => scopeAllows(correctionFields, path);
   const patch = <K extends keyof RegistrationData>(key: K, value: Partial<RegistrationData[K]>) => {
-    const allowed = Object.fromEntries(Object.entries(value as Record<string, unknown>).filter(([field]) => key === 'agreements' || canEdit(`${String(key)}.${field}`) || key === 'documentExpiries' && correctionUploadAllowed(correctionFields, field, d.uploads[field]))) as Partial<RegistrationData[K]>;
+    const allowed = Object.fromEntries(Object.entries(value as Record<string, unknown>).filter(([field]) => key === 'agreements' || canEdit(`${String(key)}.${field === 'plate' ? 'plateNumber' : field}`) || key === 'documentExpiries' && correctionUploadAllowed(correctionFields, field, d.uploads[field]))) as Partial<RegistrationData[K]>;
     if (!Object.keys(allowed as object).length) return;
     onData(data => ({ ...data, [key]: { ...(data[key] as object), ...allowed } }));
   };
@@ -132,16 +139,16 @@ export function RegistrationStepContent(props: Props) {
   let content: React.ReactNode;
   switch (step) {
     case 'ROLES': content = <>
-      <View style={s.roleIntro}><View style={s.roleIntroCopy}><SectionTitle title="Как хотите работать?" description="Можно выбрать несколько направлений — общие сведения заполняются только один раз."/></View><Image source={require('../../assets/registration/roles-checklist-3d.png')} resizeMode="contain" style={s.roleHero}/></View>
+      <SectionTitle title="Как хотите работать?" description="Можно выбрать несколько направлений — общие сведения заполняются только один раз."/>
       <View style={s.stack}>{roleOptions.map(option => <ChoiceCard key={option.role} {...option} selected={a.roles.includes(option.role)} disabled={!canEdit('roles')} onPress={() => onRoles(a.roles.includes(option.role) ? a.roles.filter(role => role !== option.role) : [...a.roles, option.role])}/>)}</View>
       {errors.roles ? <Text style={s.error}>{errors.roles}</Text> : null}
       <InfoCard title="Можно совмещать" text="Выберите одно или несколько направлений. Следующие шаги автоматически подстроятся под ваш выбор."/>
     </>; break;
     case 'PERSONAL_DATA': content = <>
       <SectionTitle title="Личные данные" description="Укажите данные как в удостоверении личности. Они используются для всех направлений."/>
-      <View style={s.twoColumns}><View style={s.half}><FormInput label="Имя" value={d.personal.firstName} onChangeText={firstName => patch('personal', { firstName })} error={errors.firstName} disabled={!canEdit('personal.firstName')}/></View><View style={s.half}><FormInput label="Фамилия" value={d.personal.lastName} onChangeText={lastName => patch('personal', { lastName })} error={errors.lastName} disabled={!canEdit('personal.lastName')}/></View></View>
+      <View style={s.twoColumns}><View style={s.half}><FormInput label="Имя" value={d.personal.firstName} onChangeText={firstName => patch('personal', { firstName })} error={errors.firstName} disabled={!canEdit('personal.firstName')} clearable/></View><View style={s.half}><FormInput label="Фамилия" value={d.personal.lastName} onChangeText={lastName => patch('personal', { lastName })} error={errors.lastName} disabled={!canEdit('personal.lastName')} clearable/></View></View>
       <NativeDateInput label="Дата рождения" value={d.personal.birthDate} onChange={birthDate => patch('personal', { birthDate })} minimumDate={birthDateMinimum} maximumDate={birthDateMaximum} error={errors.birthDate} disabled={!canEdit('personal.birthDate')}/>
-      <SelectInput label="Город работы" value={d.personal.city} placeholder="Выберите город" error={errors.city} disabled={!canEdit('personal.city')} onPress={() => select('Город работы', config.cities.map(value => ({ value, label: value })), d.personal.city, city => { patch('personal', { city }); if (!d.work.city) patch('work', { city }); if (!d.courier.city) patch('courier', { city }); })}/>
+      <SelectInput label="Город работы" value={d.personal.city} placeholder="Выберите город" error={errors.city} disabled={!canEdit('personal.city')} onPress={() => select('Город работы', workCityOptions, d.personal.city, city => onData(data => withWorkCity(data, city, config.cities)))}/>
     </>; break;
     case 'PROFILE_PHOTO': content = <>
       <SectionTitle title="Фотография профиля" description="Фото увидят клиенты после назначения заказа."/>
@@ -175,8 +182,8 @@ export function RegistrationStepContent(props: Props) {
     </>; break;
     case 'TAXI_DOCUMENTS': content = <><DocumentList step="TAXI_DOCUMENTS" application={a} role="TAXI_DRIVER" prefix="taxi" title="Документы основного автомобиля" vehicle={d.taxiVehicle} data={d} config={config} errors={errors} correctionFields={correctionFields} onData={onData} onUpload={onUpload} onDelete={onDeleteUpload}/><AdditionalVehicleUploads step="TAXI_DOCUMENTS" application={a} data={d} errors={errors} correctionFields={correctionFields} onData={onData} onUpload={onUpload} onDelete={onDeleteUpload}/></>; break;
     case 'CARGO_DOCUMENTS': content = <><DocumentList step="CARGO_DOCUMENTS" application={a} role="CARGO_DRIVER" prefix="cargo" title="Документы основного грузового транспорта" vehicle={d.cargoVehicle} data={d} config={config} errors={errors} correctionFields={correctionFields} onData={onData} onUpload={onUpload} onDelete={onDeleteUpload}/><AdditionalVehicleUploads step="CARGO_DOCUMENTS" application={a} data={d} errors={errors} correctionFields={correctionFields} onData={onData} onUpload={onUpload} onDelete={onDeleteUpload}/></>; break;
-    case 'TAXI_PHOTOS': content = <><PhotoList title="Фотографии основного автомобиля" role="TAXI_DRIVER" slots={configuredUploadSlotsForStep('TAXI_PHOTOS', a, config)} uploads={d.uploads} errors={errors} correctionFields={correctionFields} onUpload={onUpload} onDelete={onDeleteUpload}/><AdditionalVehicleUploads step="TAXI_PHOTOS" application={a} data={d} errors={errors} correctionFields={correctionFields} onData={onData} onUpload={onUpload} onDelete={onDeleteUpload}/></>; break;
-    case 'CARGO_PHOTOS': content = <><PhotoList title="Фотографии основного транспорта" role="CARGO_DRIVER" slots={configuredUploadSlotsForStep('CARGO_PHOTOS', a, config)} uploads={d.uploads} errors={errors} correctionFields={correctionFields} onUpload={onUpload} onDelete={onDeleteUpload}/><AdditionalVehicleUploads step="CARGO_PHOTOS" application={a} data={d} errors={errors} correctionFields={correctionFields} onData={onData} onUpload={onUpload} onDelete={onDeleteUpload}/></>; break;
+    case 'TAXI_PHOTOS': content = <><PhotoList title="Фотографии основного автомобиля" role="TAXI_DRIVER" slots={configuredUploadSlotsForStep('TAXI_PHOTOS', a, config)} uploads={d.uploads} errors={errors} correctionFields={correctionFields} onUpload={onUpload} onDelete={onDeleteUpload} onView={props.onViewUpload}/><AdditionalVehicleUploads step="TAXI_PHOTOS" application={a} data={d} errors={errors} correctionFields={correctionFields} onData={onData} onUpload={onUpload} onDelete={onDeleteUpload}/></>; break;
+    case 'CARGO_PHOTOS': content = <><PhotoList title="Фотографии основного транспорта" role="CARGO_DRIVER" slots={configuredUploadSlotsForStep('CARGO_PHOTOS', a, config)} uploads={d.uploads} errors={errors} correctionFields={correctionFields} onUpload={onUpload} onDelete={onDeleteUpload} onView={props.onViewUpload}/><AdditionalVehicleUploads step="CARGO_PHOTOS" application={a} data={d} errors={errors} correctionFields={correctionFields} onData={onData} onUpload={onUpload} onDelete={onDeleteUpload}/></>; break;
     case 'CARGO_EQUIPMENT': content = <><CargoEquipmentForm title="Оснащение основного транспорта" description="Укажите возможности основной машины — они влияют на доступные заказы." equipment={d.cargoEquipment} path="cargoEquipment" loadingTypes={loadingTypes} errors={errors} canEdit={canEdit} onChange={value => patch('cargoEquipment', value)}/>{additionalVehiclesForUsage(d, 'CARGO').map(vehicle => { const index = d.vehicles.findIndex(item => item.clientId === vehicle.clientId); const prefix = `vehicle_${vehicle.clientId}_`; return <View key={vehicle.clientId} style={[s.additionalCard, { borderColor: palette.line, backgroundColor: palette.surface }]}><CargoEquipmentForm title={`${vehicle.brand} ${vehicle.model}`.trim() || 'Дополнительный грузовой транспорт'} description={vehicle.plateNumber || `ID: ${vehicle.clientId}`} equipment={vehicle.equipment} path={`vehicles.${vehicle.clientId}.equipment`} loadingTypes={loadingTypes} errors={{ loadingTypes: errors[`${prefix}loadingTypes`], palletCount: errors[`${prefix}palletCount`], temperature: errors[`${prefix}temperature`], loaderCount: errors[`${prefix}loaderCount`] }} canEdit={path => correctionVehicleFieldAllowed(correctionFields, vehicle.clientId, index, path)} onChange={value => updateAdditionalVehicle(vehicle.clientId, current => ({ ...current, equipment: { ...current.equipment, ...value } }))}/></View>; })}</>; break;
     case 'COURIER_SETTINGS': content = <>
       <SectionTitle title="Параметры доставки" description="Расскажите, какие заказы вам подходят."/>
@@ -184,14 +191,14 @@ export function RegistrationStepContent(props: Props) {
       <Text style={[s.label, { color: palette.muted }]}>Типы заказов *</Text><MultiSelect options={orderTypes} values={d.courier.orderTypes} onChange={values => patch('courier', { orderTypes: values })} error={errors.orderTypes} disabled={!canEdit('courier.orderTypes')}/>
       <FormInput label="Максимальный вес" value={d.courier.maxWeightKg} onChangeText={maxWeightKg => patch('courier', { maxWeightKg })} placeholder="кг" keyboardType="decimal-pad" error={errors.maxWeightKg} disabled={!canEdit('courier.maxWeightKg')}/>
       <ToggleRow title="Принимать наличные" value={d.courier.acceptsCash} onValueChange={acceptsCash => patch('courier', { acceptsCash })} disabled={!canEdit('courier.acceptsCash')}/>
-      <SelectInput label="Город работы" value={d.courier.city || d.personal.city} placeholder="Выберите город" error={errors.courierCity} disabled={!canEdit('courier.city')} onPress={() => select('Город работы', config.cities.map(value => ({ value, label: value })), d.courier.city, city => patch('courier', { city, districts: [] }))}/>
+      <SelectInput label="Город работы" value={d.courier.city || d.personal.city} placeholder="Выберите город" error={errors.courierCity} disabled={!canEdit('courier.city')} onPress={() => select('Город работы', workCityOptions, d.courier.city, city => patch('courier', { city, districts: [] }))}/>
       <Text style={[s.label, { color: palette.muted }]}>Районы · необязательно</Text><MultiSelect options={(config.districts[d.courier.city || d.personal.city] || []).map(value => ({ value, label: value }))} values={d.courier.districts} onChange={districts => patch('courier', { districts })} disabled={!canEdit('courier.districts')}/>
       {d.courier.orderTypes.some(type => ['GROCERIES', 'MEALS'].includes(type)) ? <UploadCard title="Санитарная книжка" upload={d.uploads.courier_health_book} disabled={!correctionUploadAllowed(correctionFields, 'courier_health_book', d.uploads.courier_health_book)} onPress={() => onUpload('courier_health_book', 'ADDITIONAL_DOCUMENT', 'Санитарная книжка', true, false, 'COURIER')} onDelete={d.uploads.courier_health_book && correctionUploadDeleteAllowed(correctionFields) ? () => onDeleteUpload('courier_health_book') : undefined}/> : null}
       {config.documents.filter(item => item.role === 'COURIER').flatMap(item => Array.from({ length: Math.max(1, item.sides || 1) }, (_, index) => ({ item, slot: `courier_additional_${item.id}${item.sides > 1 ? index === 0 ? '_front' : index === 1 ? '_back' : `_side_${index + 1}` : ''}`, side: index }))).map(({ item, slot, side }) => { const disabled = !correctionUploadAllowed(correctionFields, slot, d.uploads[slot]); return <View key={slot} style={s.uploadField}><UploadCard title={item.sides > 1 ? `${item.title} · ${side === 0 ? 'лицевая сторона' : side === 1 ? 'обратная сторона' : `сторона ${side + 1}`}` : item.title} required={item.required} upload={d.uploads[slot]} hint={item.description || (item.required ? 'Обязательный документ' : 'Необязательно')} disabled={disabled} onPress={() => onUpload(slot, 'ADDITIONAL_DOCUMENT', item.title, true, false, 'COURIER', item.requiresExpiry ? d.documentExpiries[slot] : undefined)} onDelete={d.uploads[slot] && correctionUploadDeleteAllowed(correctionFields) ? () => onDeleteUpload(slot) : undefined}/>{errors[slot] ? <Text style={s.error}>{errors[slot]}</Text> : null}{item.requiresExpiry ? <FormInput label="Действителен до" value={d.documentExpiries[slot] || ''} onChangeText={value => patch('documentExpiries', { [slot]: value })} placeholder="ДД.ММ.ГГГГ" keyboardType="numbers-and-punctuation" error={errors[`expiry_${slot}`]} disabled={!correctionExpiryAllowed(correctionFields, slot)}/> : null}</View>; })}
     </>; break;
     case 'WORK_PREFERENCES': content = <>
       <SectionTitle title="График и территория" description="Необязательный раздел. Настройки можно изменить позже."/>
-      <SelectInput label="Город" value={d.work.city || d.personal.city} placeholder="Выберите город" disabled={!canEdit('work.city')} onPress={() => select('Город', config.cities.map(value => ({ value, label: value })), d.work.city, city => patch('work', { city, districts: [] }))}/>
+      <SelectInput label="Город" value={d.work.city || d.personal.city} placeholder="Выберите город" disabled={!canEdit('work.city')} onPress={() => select('Город', workCityOptions, d.work.city, city => patch('work', { city, districts: [] }))}/>
       <Text style={[s.label, { color: palette.muted }]}>Районы</Text><MultiSelect options={(config.districts[d.work.city || d.personal.city] || []).map(value => ({ value, label: value }))} values={d.work.districts} onChange={districts => patch('work', { districts })} disabled={!canEdit('work.districts')}/>
       <Text style={[s.label, { color: palette.muted }]}>График</Text><MultiSelect options={[{ value: 'FULL', label: 'Полный' }, { value: 'FLEXIBLE', label: 'Свободный' }]} values={d.work.schedule ? [d.work.schedule] : []} onChange={values => patch('work', { schedule: (values.at(-1) || '') as RegistrationData['work']['schedule'] })} disabled={!canEdit('work.schedule')}/>
       <FormInput label="Предпочтительное время" optional value={d.work.preferredTime} onChangeText={preferredTime => patch('work', { preferredTime })} placeholder="Например, 09:00–18:00" disabled={!canEdit('work.preferredTime')}/>
@@ -203,7 +210,7 @@ export function RegistrationStepContent(props: Props) {
       <View style={[s.locationHero, { backgroundColor: palette.elevated }]}><Icon name="location-outline" size={46} color={palette.accent}/><Text style={[s.locationTitle, { color: palette.ink }]}>Заказы рядом с вами</Text><Text style={[s.locationText, { color: palette.muted }]}>Разрешение запрашивается только после вашего действия. Фоновый доступ понадобится отдельно при выходе на линию.</Text></View>
       <Pressable disabled={!canEdit('location.choice')} onPress={() => { patch('location', { choice: 'PRECISE' }); onRequestLocation(); }} style={[s.locationChoice, !canEdit('location.choice') && s.readOnly, { borderColor: d.location.choice === 'PRECISE' ? palette.accent : palette.line }]}><Icon name="navigate-circle-outline" color={palette.accent}/><Text style={[s.locationChoiceText, { color: palette.ink }]}>Разрешить геолокацию</Text>{d.location.choice === 'PRECISE' ? <Icon name="checkmark-circle" color={palette.accent}/> : null}</Pressable>
       <Pressable disabled={!canEdit('location.choice')} onPress={() => patch('location', { choice: 'MANUAL', city: d.personal.city })} style={[s.locationChoice, !canEdit('location.choice') && s.readOnly, { borderColor: d.location.choice === 'MANUAL' ? palette.accent : palette.line }]}><Icon name="map-outline" color={palette.accent}/><Text style={[s.locationChoiceText, { color: palette.ink }]}>Выбрать город вручную</Text>{d.location.choice === 'MANUAL' ? <Icon name="checkmark-circle" color={palette.accent}/> : null}</Pressable>
-      {d.location.choice === 'MANUAL' ? <SelectInput label="Город" value={d.location.city || d.personal.city} placeholder="Выберите город" disabled={!canEdit('location.city')} onPress={() => select('Город', config.cities.map(value => ({ value, label: value })), d.location.city, city => patch('location', { city }))}/> : null}
+      {d.location.choice === 'MANUAL' ? <SelectInput label="Город" value={d.location.city || d.personal.city} placeholder="Выберите город" disabled={!canEdit('location.city')} onPress={() => select('Город', workCityOptions, d.location.city, city => patch('location', { city }))}/> : null}
     </>; break;
     case 'PAYMENT': content = <>
       <SectionTitle title="Платёжные данные" description="Можно пропустить и добавить способ выплат позже."/>
@@ -213,7 +220,7 @@ export function RegistrationStepContent(props: Props) {
     case 'REVIEW': {
       const steps = buildRegistrationSteps(a, config).filter(item => item.id !== 'REVIEW' && (correctionFields === undefined || stepHasCorrection(item.id, a, config, correctionFields)));
       content = <>
-        <SectionTitle title={correctionFields === undefined ? 'Проверьте анкету' : 'Проверьте исправления'} description={correctionFields === undefined ? 'Перед отправкой убедитесь, что данные заполнены верно.' : 'Показаны только разделы и документы, которые были возвращены на исправление.'}/>
+        <SectionTitle title={correctionFields === undefined ? 'Проверьте анкету' : 'Проверьте исправления'} description={correctionFields === undefined ? 'Перед отправкой убедитесь, что данные заполнены верно.' : 'Показаны только данные и фотографии, которые были возвращены на исправление.'}/>
         <View style={s.stack}>{steps.map(item => { const validation = validateRegistrationStep(item.id, a, config); const skipped = d.skippedSteps.includes(item.id); return <Pressable key={item.id} onPress={() => onGoTo(item.id)} style={[s.reviewRow, { borderColor: palette.line, backgroundColor: palette.surface }]}><View style={[s.reviewIcon, { backgroundColor: validation.valid || skipped ? '#EAF8F1' : palette.elevated }]}><Icon name={validation.valid || skipped ? 'checkmark' : 'alert-outline'} size={20} color={validation.valid || skipped ? '#15945A' : '#A46900'}/></View><View style={{ flex: 1, gap: 3 }}><Text style={[s.reviewTitle, { color: palette.ink }]}>{item.title}</Text><Text style={[s.reviewSubtitle, { color: palette.muted }]}>{skipped ? 'Необязательно · пропущено' : validation.valid ? 'Заполнено' : item.optional ? 'Необязательно' : 'Требует внимания'}</Text></View><Text style={[s.edit, { color: palette.accent }]}>Изменить</Text></Pressable>; })}</View>
         {config.legalConsents.map(consent => {
           const checked = consent.id === 'truth-confirmation' ? d.agreements.truthConfirmed : consent.id === 'performer-terms' ? d.agreements.termsAccepted : d.agreements.acceptedIds.includes(consent.id);
@@ -246,16 +253,10 @@ function Requirements({ items }: { items: string[] }) {
 }
 
 function VehicleForm({ title, description, vehicle, path, onChange, canEdit, config, errors, taxi, cargo, select }: { title: string; description: string; vehicle: VehicleDraft; path: string; onChange: (value: Partial<VehicleDraft>) => void; canEdit: (path: string) => boolean; config: RegistrationConfig; errors: Record<string, string>; taxi?: boolean; cargo?: boolean; select: (title: string, options: { value: string; label: string }[], selected: string | undefined, choose: (value: string) => void) => void }) {
-  const { palette } = useTheme(); return <>
-    <SectionTitle title={title} description={description}/>
-    <Text style={[s.label, { color: palette.muted }]}>Владение *</Text><MultiSelect options={[{ value: 'OWN', label: 'Собственный' }, { value: 'RENT', label: 'Арендованный' }]} values={vehicle.ownership ? [vehicle.ownership] : []} onChange={values => onChange({ ownership: (values.at(-1) || '') as VehicleDraft['ownership'] })} disabled={!canEdit(`${path}.ownership`)}/>
+  return <OnboardingVehicleForm title={title} description={description} vehicle={vehicle} path={path} cargo={cargo} onChange={onChange} canEdit={canEdit} error={errors.vehicle}>
     {cargo ? <SelectInput label="Тип транспорта" value={config.cargoVehicleTypes.find(value => value === vehicle.type)} placeholder="Выберите тип" disabled={!canEdit(`${path}.type`)} onPress={() => select('Тип транспорта', config.cargoVehicleTypes.map(value => ({ value, label: value })), vehicle.type, type => onChange({ type }))}/> : null}
-    <View style={s.twoColumns}><View style={s.half}><FormInput label="Марка" value={vehicle.brand} onChangeText={brand => onChange({ brand })} disabled={!canEdit(`${path}.brand`)}/></View><View style={s.half}><FormInput label="Модель" value={vehicle.model} onChangeText={model => onChange({ model })} disabled={!canEdit(`${path}.model`)}/></View></View>
-    <View style={s.twoColumns}><View style={s.half}><FormInput label="Год" value={vehicle.year} onChangeText={year => onChange({ year: year.replace(/\D/g, '').slice(0, 4) })} keyboardType="number-pad" maxLength={4} disabled={!canEdit(`${path}.year`)}/></View><View style={s.half}><FormInput label="Цвет" value={vehicle.color} onChangeText={color => onChange({ color })} disabled={!canEdit(`${path}.color`)}/></View></View>
-    <FormInput label="Государственный номер" value={vehicle.plateNumber} onChangeText={plateNumber => onChange({ plateNumber: plateNumber.toUpperCase() })} autoCapitalize="characters" disabled={!canEdit(`${path}.plateNumber`)}/>
-    {errors.vehicle ? <Text style={s.error}>{errors.vehicle}</Text> : null}
-    {cargo ? <FormInput label="Грузоподъёмность" value={vehicle.capacityKg} onChangeText={capacityKg => onChange({ capacityKg })} placeholder="кг" keyboardType="decimal-pad" disabled={!canEdit(`${path}.capacityKg`)}/> : null}
-  </>;
+    {cargo ? <NativeNumberInput label="Грузоподъёмность, кг" value={vehicle.capacityKg} onChange={capacityKg => onChange({ capacityKg })} options={[500, 750, 1000, 1500, 2000, 3000, 5000]} disabled={!canEdit(`${path}.capacityKg`)}/> : null}
+  </OnboardingVehicleForm>;
 }
 
 function AdditionalVehicleForms({ usage, vehicles, config, errors, correctionFields, onAdd, onRemove, onChange, select }: { usage: VehicleUsage; vehicles: AdditionalVehicleDraft[]; config: RegistrationConfig; errors: Record<string, string>; correctionFields?: string[]; onAdd: () => void; onRemove: (vehicle: AdditionalVehicleDraft) => void; onChange: (vehicle: AdditionalVehicleDraft, value: Partial<VehicleDraft>) => void; select: (title: string, options: { value: string; label: string }[], selected: string | undefined, choose: (value: string) => void) => void }) {
@@ -282,11 +283,11 @@ function CargoEquipmentForm({ title, description, equipment, path, loadingTypes,
   return <>
     <SectionTitle title={title} description={description}/>
     <Text style={[s.label, { color: palette.muted }]}>Тип загрузки *</Text><MultiSelect options={loadingTypes} values={equipment.loadingTypes} onChange={value => onChange({ loadingTypes: value })} error={errors.loadingTypes} disabled={!canEdit(`${path}.loadingTypes`)}/>
-    <FormInput label="Количество паллет" optional value={equipment.palletCount} onChangeText={palletCount => onChange({ palletCount })} keyboardType="number-pad" error={errors.palletCount} disabled={!canEdit(`${path}.palletCount`)}/>
+    <NativeNumberInput label="Количество паллет" optional value={equipment.palletCount} onChange={palletCount => onChange({ palletCount })} options={Array.from({ length: 34 }, (_, index) => index)} error={errors.palletCount} disabled={!canEdit(`${path}.palletCount`)}/>
     <ToggleRow title="Рефрижератор" value={equipment.refrigerator} onValueChange={refrigerator => onChange({ refrigerator })} disabled={!canEdit(`${path}.refrigerator`)}/>
-    {equipment.refrigerator ? <View style={s.twoColumns}><View style={s.half}><FormInput label="Мин. температура" value={equipment.minTemperature} onChangeText={minTemperature => onChange({ minTemperature })} keyboardType="numbers-and-punctuation" error={errors.temperature} disabled={!canEdit(`${path}.minTemperature`)}/></View><View style={s.half}><FormInput label="Макс. температура" value={equipment.maxTemperature} onChangeText={maxTemperature => onChange({ maxTemperature })} keyboardType="numbers-and-punctuation" disabled={!canEdit(`${path}.maxTemperature`)}/></View></View> : null}
+    {equipment.refrigerator ? <View style={s.twoColumns}><View style={s.half}><NativeNumberInput label="Мин. температура" signed value={equipment.minTemperature} onChange={minTemperature => onChange({ minTemperature })} options={Array.from({ length: 81 }, (_, index) => index - 40)} error={errors.temperature} disabled={!canEdit(`${path}.minTemperature`)}/></View><View style={s.half}><NativeNumberInput label="Макс. температура" signed value={equipment.maxTemperature} onChange={maxTemperature => onChange({ maxTemperature })} options={Array.from({ length: 81 }, (_, index) => index - 40)} disabled={!canEdit(`${path}.maxTemperature`)}/></View></View> : null}
     <ToggleRow title="Гидроборт" value={equipment.tailLift} onValueChange={tailLift => onChange({ tailLift })} disabled={!canEdit(`${path}.tailLift`)}/><ToggleRow title="Манипулятор" value={equipment.manipulator} onValueChange={manipulator => onChange({ manipulator })} disabled={!canEdit(`${path}.manipulator`)}/><ToggleRow title="Работа с грузчиками" value={equipment.worksWithLoaders} onValueChange={worksWithLoaders => onChange({ worksWithLoaders })} disabled={!canEdit(`${path}.worksWithLoaders`)}/>
-    {equipment.worksWithLoaders ? <FormInput label="Количество грузчиков" value={equipment.loaderCount} onChangeText={loaderCount => onChange({ loaderCount })} keyboardType="number-pad" error={errors.loaderCount} disabled={!canEdit(`${path}.loaderCount`)}/> : null}
+    {equipment.worksWithLoaders ? <NativeNumberInput label="Количество грузчиков" value={equipment.loaderCount} onChange={loaderCount => onChange({ loaderCount })} options={Array.from({ length: 10 }, (_, index) => index + 1)} error={errors.loaderCount} disabled={!canEdit(`${path}.loaderCount`)}/> : null}
   </>;
 }
 
@@ -322,9 +323,10 @@ function DocumentList({ step, application, role, prefix, title, vehicle, data, c
   </View></>;
 }
 
-function PhotoList({ title, role, slots, uploads, errors, correctionFields, onUpload, onDelete }: { title: string; role: PerformerRole; slots: ConfiguredUploadSlot[]; uploads: RegistrationData['uploads']; errors: Record<string, string>; correctionFields?: string[]; onUpload: Props['onUpload']; onDelete: Props['onDeleteUpload'] }) {
-  const complete = slots.filter(item => uploads[item.slotKey]).length;
-  return <><SectionTitle title={title} description={`Добавлено ${complete} из ${slots.length}.`}/><InfoCard text="Сделайте одно фото спереди под углом. Автомобиль должен полностью помещаться в кадре, а госномер — хорошо читаться."/><View style={s.photoGrid}>{slots.map(item => <View key={item.slotKey} style={s.photoCell}><UploadCard title={knownPhotoTitle(item)} required={item.required} upload={uploads[item.slotKey]} image hint={item.description || 'Обязательный ракурс'} disabled={!correctionUploadAllowed(correctionFields, item.slotKey, uploads[item.slotKey])} onPress={() => onUpload(item.slotKey, item.kind, knownPhotoTitle(item), true, false, role)} onDelete={uploads[item.slotKey] && correctionUploadDeleteAllowed(correctionFields) ? () => onDelete(item.slotKey) : undefined}/>{errors[item.slotKey] ? <Text style={s.error}>{errors[item.slotKey]}</Text> : null}</View>)}</View></>;
+function PhotoList({ title, role, slots, uploads, errors, correctionFields, onUpload, onDelete, onView }: { title: string; role: PerformerRole; slots: ConfiguredUploadSlot[]; uploads: RegistrationData['uploads']; errors: Record<string, string>; correctionFields?: string[]; onUpload: Props['onUpload']; onDelete: Props['onDeleteUpload']; onView?: Props['onViewUpload'] }) {
+  const { palette } = useTheme();
+  const complete = slots.filter(item => uploadedPhoto(uploads[item.slotKey])).length;
+  return <><SectionTitle title={title} description={`Добавлено ${complete} из ${slots.length}`}/><View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 12, marginTop: 10, marginBottom: 10 }}><Icon name="information-circle-outline" size={20} color={palette.ink}/><Text style={{ flex: 1, color: palette.muted, fontSize: 13, lineHeight: 18 }}>Сделайте четыре фото: спереди, сзади, слева и справа. Автомобиль должен полностью помещаться в кадре, а госномер — хорошо читаться.</Text></View><View style={s.photoGrid}>{slots.map(item => <View key={item.slotKey} style={s.photoCell}><VehiclePhotoCard title={knownPhotoTitle(item)} upload={uploads[item.slotKey]} disabled={!correctionUploadAllowed(correctionFields, item.slotKey, uploads[item.slotKey])} onPress={() => onUpload(item.slotKey, item.kind, knownPhotoTitle(item), true, false, role)} onView={onView ? () => onView(item.slotKey, knownPhotoTitle(item)) : undefined} onDelete={uploads[item.slotKey] && correctionUploadDeleteAllowed(correctionFields) ? () => onDelete(item.slotKey) : undefined}/>{errors[item.slotKey] ? <Text style={s.error}>{errors[item.slotKey]}</Text> : null}</View>)}</View></>;
 }
 
 function knownPhotoTitle(item: ConfiguredUploadSlot) {

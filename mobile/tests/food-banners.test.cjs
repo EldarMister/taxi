@@ -21,7 +21,7 @@ function loadAssets() {
       vm.runInNewContext(compile('foodPhotography.ts'), { exports: photographs, require: asset => asset });
       return photographs;
     }
-    if (/\.(png|jpe?g)$/i.test(id)) return id;
+    if (/\.(png|webp|jpe?g)$/i.test(id)) return id;
     throw new Error(`Unexpected dependency ${id}`);
   } });
   return exports;

@@ -1,8 +1,10 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, AppState, Linking, Pressable, RefreshControl, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { ActivityIndicator, Alert, AppState, Linking, Pressable, RefreshControl, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
 import * as ImageManipulator from 'expo-image-manipulator';
 import { api, messageOf } from './api';
+import { clearAccountLocalData } from './accountDeletion';
+import { LegalDocumentLink } from './LegalDocumentLink';
 import { getNotificationPermissionState, openNotificationSettings, registerPushNotifications, requestNotificationAccess } from './native/push';
 import { useTheme } from './design/theme';
 import type { ThemePreference } from './design/theme';
@@ -11,8 +13,10 @@ import { Avatar, Button, Car, colors, Empty, Icon, km, localize, mins, money, Ro
 import { ClientHistoryRow, ClientTripHistoryDetail } from './ClientTripHistory';
 import { writeSelectedLanguage } from './auth/languageStore';
 import { DriverTripHistory } from './DriverTripHistory';
+import { historyDistanceLabel, historyTotals } from './driverHistory';
 import { DriverProfileScreen, DriverSettingsScreen, type DriverPreferencesPatch } from './DriverAccountScreens';
 import { DriverBalanceScreen } from './DriverBalanceScreen';
+import { DriverDetailsScreen } from './DriverDetailsScreen';
 
 export type Page = 'home' | 'profile' | 'history' | 'balance' | 'settings' | 'support' | 'payment' | 'registration';
 const completedOrders = (orders: Order[]) => orders.filter(order => order.status === 'COMPLETED');
@@ -44,19 +48,50 @@ function HistoryRow({ order, user, expanded, onPress }: { order: Order; user: Us
   </View>;
 }
 
-export function AccountScreen({ page, user, config, onUser, onError, onOnline, onNavigate, onMenu, busy, themePreference, onThemePreferenceChange, historyDetailId, onHistoryDetailId, voiceEnabled, onVoiceEnabledChange }: { page: Page; user: User; config: AppConfig | null; onUser: (user: User) => void; onError: (error: string) => void; onOnline: (online: boolean) => void; onNavigate: (page: Page) => void; onMenu?: () => void; busy: boolean; themePreference: ThemePreference; onThemePreferenceChange: (preference: ThemePreference) => void; historyDetailId: string | null; onHistoryDetailId: (id: string | null) => void; voiceEnabled?: boolean; onVoiceEnabledChange?: (enabled: boolean) => void }) {
+export function AccountScreen({ page, user, config, onUser, onError, onOnline, onNavigate, onMenu, onLogout, busy, themePreference, onThemePreferenceChange, historyDetailId, onHistoryDetailId, voiceEnabled, onVoiceEnabledChange }: { page: Page; user: User; config: AppConfig | null; onUser: (user: User) => void; onError: (error: string) => void; onOnline: (online: boolean) => void; onNavigate: (page: Page) => void; onMenu?: () => void; onLogout: () => void; busy: boolean; themePreference: ThemePreference; onThemePreferenceChange: (preference: ThemePreference) => void; historyDetailId: string | null; onHistoryDetailId: (id: string | null) => void; voiceEnabled?: boolean; onVoiceEnabledChange?: (enabled: boolean) => void }) {
   const styles = useAccountStyles();
   const s = useAccountUi();
   const t = tr(user.language);
   const local = (ru: string, ky: string) => localize(user.language, ru, ky);
   const { isDark, palette } = useTheme();
   const [name, setName] = useState(user.name || '');
+  const [firstName, setFirstName] = useState(user.firstName ?? '');
+  const [lastName, setLastName] = useState(user.lastName ?? '');
+  const [nameError, setNameError] = useState('');
+  const nameRequest = useRef(false), lastNameInput = useRef<TextInput>(null);
+  const normalizeName = (value: string) => value.trim().replace(/\s+/gu, ' ');
+  const normalizedFirstName = normalizeName(firstName), normalizedLastName = normalizeName(lastName);
+  const fullNameTooLong = `${normalizedFirstName} ${normalizedLastName}`.length > 80;
+  const clientNameValid = !!normalizedFirstName && !!normalizedLastName && !fullNameTooLong;
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
   const [avatarSaving, setAvatarSaving] = useState(false);
+  const avatarRequest = useRef(false), deletion = useRef(false);
+  const [deleting, setDeleting] = useState(false);
+  const [profileDetail, setProfileDetail] = useState<'personal' | 'vehicles' | null>(null);
+  async function deleteAccount() {
+    if (deletion.current) return;
+    deletion.current = true; setDeleting(true);
+    try {
+      await api.request('/users/me', { method: 'DELETE' });
+      try { await clearAccountLocalData(user.id); }
+      finally { await api.clear(); }
+    }
+    catch (error) { onError(messageOf(error)); }
+    finally { deletion.current = false; setDeleting(false); }
+  }
+  const confirmDeletion = () => Alert.alert(t('Удалить аккаунт?'), t('Аккаунт, фотографии, история заказов, маршруты, чаты, сохранённые адреса и черновики будут удалены без возможности восстановления. Все сессии будут завершены. Сначала завершите или отмените активные заказы.') + (user.role === 'DRIVER' ? '\n\n' + t('Если на балансе есть остаток, обратитесь в поддержку для расчёта до удаления аккаунта.') : ''), [{ text: t('Оставить'), style: 'cancel' }, { text: t('Удалить аккаунт'), style: 'destructive', onPress: () => void deleteAccount() }]);
+  async function removeAvatar() {
+    if (avatarRequest.current || saving) return;
+    avatarRequest.current = true; setAvatarSaving(true);
+    try { onUser(await api.request<User>('/users/me/avatar', { method: 'DELETE' })); }
+    catch (error) { onError(messageOf(error)); }
+    finally { avatarRequest.current = false; setAvatarSaving(false); }
+  }
   const [period, setPeriod] = useState('today');
   const [history, setHistory] = useState<Order[]>([]);
   const [balance, setBalance] = useState<Balance | null>(null);
+  const [balanceError, setBalanceError] = useState<string | null>(null);
   const [loading, setLoading] = useState(['history', 'balance'].includes(page));
   const [expandedOrder, setExpandedOrder] = useState<string | null>(null);
   const [historyMapInteracting, setHistoryMapInteracting] = useState(false);
@@ -69,6 +104,7 @@ export function AccountScreen({ page, user, config, onUser, onError, onOnline, o
     if (!['history', 'balance'].includes(page)) return;
     const version = ++requestVersion.current;
     setLoading(true);
+    if (page === 'balance') setBalanceError(null);
     try {
       if (page === 'history') {
         const result = await api.request<Order[]>(`/orders/history?period=${period}`);
@@ -77,7 +113,7 @@ export function AccountScreen({ page, user, config, onUser, onError, onOnline, o
         const result = await api.request<Balance>('/driver/balance');
         if (version === requestVersion.current) setBalance(result);
       }
-    } catch (error) { if (version === requestVersion.current) onError(messageOf(error)); }
+    } catch (error) { if (version === requestVersion.current) { if (page === 'balance') setBalanceError(messageOf(error)); onError(messageOf(error)); } }
     finally { if (version === requestVersion.current) setLoading(false); }
   }
   useEffect(() => { void refresh(); return () => { requestVersion.current += 1; }; }, [page, period]);
@@ -88,7 +124,7 @@ export function AccountScreen({ page, user, config, onUser, onError, onOnline, o
     const subscription = AppState.addEventListener('change', state => { if (state === 'active') refreshPermission(); });
     return () => subscription.remove();
   }, [page, user.id]);
-  async function update(patch: Partial<Pick<User, 'name' | 'notifications' | 'language'>>) {
+  async function update(patch: Partial<Pick<User, 'name' | 'firstName' | 'lastName' | 'notifications' | 'language'>>) {
     setSaving(true);
     try {
       if (patch.notifications === true) {
@@ -108,11 +144,22 @@ export function AccountScreen({ page, user, config, onUser, onError, onOnline, o
         onUser(next);
       } else onUser(await api.patch<User>('/users/me', patch));
       if (patch.notifications === true) void registerPushNotifications();
-      if (patch.name !== undefined) setEditing(false);
+      if (patch.name !== undefined || patch.firstName !== undefined) setEditing(false);
       return true;
     }
     catch (error) { onError(messageOf(error)); return false; }
     finally { setSaving(false); }
+  }
+  async function saveClientName() {
+    if (nameRequest.current) return;
+    if (!clientNameValid) {
+      setNameError(t(fullNameTooLong ? 'Имя и фамилия вместе — не более 80 символов' : 'Введите имя и фамилию'));
+      return;
+    }
+    nameRequest.current = true;
+    setNameError('');
+    try { await update({ firstName: normalizedFirstName, lastName: normalizedLastName }); }
+    finally { nameRequest.current = false; }
   }
   async function updatePreferences(patch: DriverPreferencesPatch) {
     if (!user.driverProfile) return;
@@ -122,7 +169,8 @@ export function AccountScreen({ page, user, config, onUser, onError, onOnline, o
     finally { setSaving(false); }
   }
   async function chooseAvatar() {
-    if (user.role !== 'DRIVER' || avatarSaving) return;
+    if (user.role !== 'DRIVER' || avatarRequest.current) return;
+    avatarRequest.current = true;
     setAvatarSaving(true);
     try {
       const result = await ImagePicker.launchImageLibraryAsync({
@@ -146,7 +194,7 @@ export function AccountScreen({ page, user, config, onUser, onError, onOnline, o
       form.append('avatar', { uri: normalized.uri, name: 'avatar.jpg', type: 'image/jpeg' } as unknown as Blob);
       onUser(await api.upload<User>('/users/me/avatar', form));
     } catch (error) { onError(messageOf(error)); }
-    finally { setAvatarSaving(false); }
+    finally { avatarRequest.current = false; setAvatarSaving(false); }
   }
   const completed = completedOrders(history);
   const locale = user.language === 'ky' ? 'ky-KG' : user.language === 'en' ? 'en-US' : 'ru-RU';
@@ -159,19 +207,15 @@ export function AccountScreen({ page, user, config, onUser, onError, onOnline, o
   const driverProfile = user.driverProfile;
 
   if (page === 'history' && user.role === 'DRIVER') return <DriverTripHistory user={user} onBack={() => onNavigate('home')} onError={onError}/>;
-  if (page === 'balance' && user.role === 'DRIVER') return <DriverBalanceScreen balance={balance} loading={loading} language={user.language} onRefresh={() => void refresh()} onMenu={onMenu ?? (() => onNavigate('home'))}/>;
+  if (page === 'balance' && user.role === 'DRIVER') return <DriverBalanceScreen balance={balance} loading={loading} error={balanceError} language={user.language} onRefresh={() => void refresh()} onMenu={onMenu ?? (() => onNavigate('home'))}/>;
   if (page === 'settings' && user.role === 'DRIVER') return <DriverSettingsScreen user={user} saving={saving} voiceEnabled={voiceEnabled ?? true} onVoiceEnabledChange={onVoiceEnabledChange} notificationGranted={notificationPermission} onNotifications={notifications => void update({ notifications })} onOpenNotificationSettings={() => void openNotificationSettings().catch(error => onError(messageOf(error)))} themePreference={themePreference} onThemePreferenceChange={onThemePreferenceChange} onLanguage={language => update({ language })} onPreferences={patch => void updatePreferences(patch)} onMenu={onMenu ?? (() => onNavigate('home'))}/>;
-  if (page === 'profile' && user.role === 'DRIVER') return <DriverProfileScreen user={user} busy={busy} editing={editing} onEdit={() => { setName(user.name || ''); setEditing(!editing); }} onOnline={onOnline} onNavigate={onNavigate} onMenu={onMenu ?? (() => onNavigate('home'))} editor={<View style={{ gap: 11 }}>
-    <Text style={s.h3}>{local('Личные данные', 'Жеке маалыматтар')}</Text>
-    <Button secondary label={t(user.photoUrl ? 'Изменить фото' : 'Выбрать фото')} busy={avatarSaving} disabled={saving} onPress={() => void chooseAvatar()}/>
-    <Text style={s.caption}>{t('Имя')}</Text><TextInput style={s.input} value={name} onChangeText={setName} maxLength={80} accessibilityLabel={t('Имя')}/>
-    <Button label={t('Сохранить')} busy={saving} disabled={avatarSaving || !name.trim()} onPress={() => void update({ name: name.trim() })}/>
-  </View>}/>;
+  if (page === 'profile' && user.role === 'DRIVER' && profileDetail) return <DriverDetailsScreen kind={profileDetail} user={user} onBack={() => setProfileDetail(null)} onUser={onUser} onAvatar={() => void chooseAvatar()} onRemoveAvatar={() => void removeAvatar()} avatarBusy={avatarSaving} onDeleteAccount={confirmDeletion} deleting={deleting} onLogout={onLogout}/>;
+  if (page === 'profile' && user.role === 'DRIVER') return <DriverProfileScreen user={user} busy={busy} editing={false} editor={null} onEdit={() => setProfileDetail('personal')} onVehicle={() => setProfileDetail('vehicles')} onOnline={onOnline} onNavigate={onNavigate} onMenu={onMenu ?? (() => onNavigate('home'))}/>;
 
   return <ScrollView key={page === 'history' && user.role === 'CLIENT' ? historyDetailId || 'history-list' : page} scrollEnabled={!historyMapInteracting} showsVerticalScrollIndicator={false} style={{ backgroundColor: isDark ? palette.background : page === 'profile' ? '#F3F8FC' : '#FFFFFF' }} contentContainerStyle={styles.page} refreshControl={['history', 'balance'].includes(page) ? <RefreshControl refreshing={loading} onRefresh={refresh} tintColor={palette.accent}/> : undefined} keyboardShouldPersistTaps="handled">
     {page === 'profile' && <>
       <View style={styles.profileCard}>
-        <Pressable accessibilityRole="button" accessibilityLabel={local('Редактировать профиль', 'Профилди түзөтүү')} accessibilityState={{ expanded: editing }} onPress={() => { setName(user.name || ''); setEditing(!editing); }} style={styles.profilePerson}>
+        <Pressable accessibilityRole="button" accessibilityLabel={local('Редактировать профиль', 'Профилди түзөтүү')} accessibilityState={{ expanded: editing, disabled: saving }} disabled={saving} onPress={() => { if (nameRequest.current) return; setName(user.name || ''); setFirstName(user.firstName ?? ''); setLastName(user.lastName ?? ''); setNameError(''); setEditing(!editing); }} style={styles.profilePerson}>
           {user.role === 'DRIVER' && <View><Avatar user={user} size={76}/>{driverProfile && <View style={[styles.onlineDot, { backgroundColor: isDark ? driverProfile.online ? '#FFFFFF' : '#777777' : driverProfile.online ? colors.green : '#A5B3C2' }]}/>}</View>}
           <View style={{ flex: 1, gap: 7 }}><Text style={styles.profileName} numberOfLines={2}>{user.name || t('Профиль')}</Text><Text style={styles.profilePhone}>{user.phone}</Text>{driverProfile && <View style={[s.row, { gap: 6 }]}><Icon name="star" color={palette.accent} size={19}/><Text style={styles.rating}>{driverProfile.rating == null ? '—' : Number(driverProfile.rating).toFixed(1)}</Text>{driverProfile.completedTrips != null && <Text style={s.caption}>{user.language === 'en' ? `(${driverProfile.completedTrips} trips)` : local(`(${driverProfile.completedTrips} поездок)`, `(${driverProfile.completedTrips} сапар)`)}</Text>}</View>}</View>
           <Icon name={editing ? 'chevron-down' : 'chevron-forward'} color={palette.muted} size={19}/>
@@ -189,11 +233,30 @@ export function AccountScreen({ page, user, config, onUser, onError, onOnline, o
           <View style={[s.row, { gap: 14 }]}><Avatar user={user} size={64}/><View style={{ flex: 1, gap: 3 }}><Text style={s.h3}>{t('Фотография профиля')}</Text><Text style={s.caption}>{t('Выберите квадратную область фотографии.')}</Text></View></View>
           <Button secondary label={t(user.photoUrl ? 'Изменить фото' : 'Выбрать фото')} busy={avatarSaving} disabled={saving} onPress={() => void chooseAvatar()}/>
         </>}
-        <Text style={s.caption}>{t('Имя')}</Text>
-        <TextInput style={s.input} value={name} onChangeText={setName} maxLength={80} accessibilityLabel={t('Имя')}/>
-        <Button label={t('Сохранить')} busy={saving} disabled={avatarSaving || !name.trim()} onPress={() => update({ name: name.trim() })}/>
+        {user.role === 'CLIENT' ? <>
+          <Text style={s.caption}>{t('Имя')}</Text>
+          <TextInput testID="client-profile-first-name" style={s.input} value={firstName} onChangeText={value => { setFirstName(value); setNameError(''); }} maxLength={80} accessibilityLabel={t('Имя')} autoCapitalize="words" autoComplete="given-name" autoCorrect={false} keyboardAppearance={isDark ? 'dark' : 'light'} editable={!saving} returnKeyType="next" submitBehavior="submit" onSubmitEditing={() => lastNameInput.current?.focus()}/>
+          <Text style={s.caption}>{t('Фамилия')}</Text>
+          <TextInput ref={lastNameInput} testID="client-profile-last-name" style={s.input} value={lastName} onChangeText={value => { setLastName(value); setNameError(''); }} maxLength={80} accessibilityLabel={t('Фамилия')} autoCapitalize="words" autoComplete="family-name" autoCorrect={false} keyboardAppearance={isDark ? 'dark' : 'light'} editable={!saving} returnKeyType="done" onSubmitEditing={() => { void saveClientName(); }}/>
+          {(nameError || fullNameTooLong) && <Text accessibilityRole="alert" accessibilityLiveRegion="polite" style={{ color: isDark ? '#FF8888' : colors.danger, fontSize: 14, lineHeight: 21 }}>{nameError || t('Имя и фамилия вместе — не более 80 символов')}</Text>}
+          <Button label={t('Сохранить')} busy={saving} disabled={avatarSaving || !clientNameValid} onPress={() => { void saveClientName(); }}/>
+        </> : <>
+          <Text style={s.caption}>{t('Имя')}</Text>
+          <TextInput style={s.input} value={name} onChangeText={setName} maxLength={80} accessibilityLabel={t('Имя')}/>
+          <Button label={t('Сохранить')} busy={saving} disabled={avatarSaving || !name.trim()} onPress={() => update({ name: name.trim() })}/>
+        </>}
       </View>}
-      <View style={[styles.profileCard, { paddingVertical: 2 }]}>{user.role === 'DRIVER' ? <><MenuRow icon="shield-checkmark-outline" label={t('Допуски и документы')} onPress={() => onNavigate('registration')}/><View style={styles.menuDivider}/></> : null}<MenuRow icon="settings-outline" label={t('Настройки')} onPress={() => onNavigate('settings')}/><View style={styles.menuDivider}/><MenuRow icon="help-circle-outline" label={t('Поддержка')} onPress={() => onNavigate('support')}/><View style={styles.menuDivider}/><MenuRow icon="receipt-outline" label={user.role === 'DRIVER' ? t('История заказов') : t('Способы оплаты')} onPress={() => onNavigate(user.role === 'DRIVER' ? 'history' : 'payment')}/></View>
+      <View style={[styles.profileCard, { paddingVertical: 2 }]}>
+        <MenuRow icon="settings-outline" label={t('Настройки')} onPress={() => onNavigate('settings')}/>
+        {user.role === 'DRIVER' && <>
+          <View style={styles.menuDivider}/>
+          <MenuRow icon="help-circle-outline" label={t('Поддержка')} onPress={() => onNavigate('support')}/>
+          <View style={styles.menuDivider}/>
+          <MenuRow icon="receipt-outline" label={t('История заказов')} onPress={() => onNavigate('history')}/>
+        </>}
+      </View>
+      <Pressable accessibilityRole="button" accessibilityLabel={t('Выйти из аккаунта')} disabled={deleting} onPress={onLogout} style={{ minHeight: 48, alignItems: 'center', justifyContent: 'center' }}><Text style={{ color: palette.ink, fontSize: 14 }}>{t('Выйти из аккаунта')}</Text></Pressable>
+      <Pressable accessibilityRole="button" accessibilityLabel={t('Удалить аккаунт')} disabled={deleting} onPress={confirmDeletion} style={{ minHeight: 48, alignItems: 'center', justifyContent: 'center' }}>{deleting ? <ActivityIndicator color={colors.danger}/> : <Text style={{ color: colors.danger, fontSize: 14 }}>{t('Удалить аккаунт')}</Text>}</Pressable>
     </>}
 
     {page === 'history' && user.role === 'CLIENT' && historyDetailId ? (
@@ -204,6 +267,7 @@ export function AccountScreen({ page, user, config, onUser, onError, onOnline, o
         <View style={[s.row, { gap: 15 }]}><View style={styles.incomeIcon}><Icon name="bar-chart" color={palette.accent} size={29}/></View><View style={{ flex: 1, gap: 3 }}><Text style={s.muted}>{t('Доход наличными')}</Text><Text style={styles.summaryValue}>{loading && history.length === 0 ? '—' : money(income(history))}</Text></View></View>
         <View style={styles.summaryStats}><Stat value={loading && !history.length ? '—' : String(completed.length)} label={local('Выполнено заказов', 'Аткарылган буюртмалар')}/><View style={styles.statDivider}/><Stat value={loading && !history.length ? '—' : km(completed.reduce((total, order) => total + Number(order.distanceMeters), 0))} label={t('Расстояние')}/><View style={styles.statDivider}/><Stat value={driverProfile?.rating == null ? '—' : Number(driverProfile.rating).toFixed(1)} label={t('Рейтинг')}/></View>
       </View>}
+      {user.role === 'CLIENT' && <Text testID="client-history-distance" style={s.muted}>{loading ? `${t('Расстояние')} · —` : historyDistanceLabel(historyTotals(history).distanceMeters, user.language)}</Text>}
       {loading && history.length === 0 && <ActivityIndicator style={{ paddingVertical: 20 }} color={palette.accent}/>}
       {!loading && history.length === 0 && <Empty icon="time-outline" title={t('Поездок пока нет')}/>}
       {groups.map(group => <View key={group.date} style={{ gap: 8 }}><Text style={styles.dateHeading}>{period === 'today' ? `${t('Сегодня')}, ` : ''}{group.date}</Text>{group.orders.map(order => user.role === 'CLIENT' ? <ClientHistoryRow key={order.id} order={order} user={user} onPress={() => onHistoryDetailId(order.id)}/> : <HistoryRow key={order.id} order={order} user={user} expanded={expandedOrder === order.id} onPress={() => setExpandedOrder(expandedOrder === order.id ? null : order.id)}/>)}</View>)}
@@ -287,13 +351,15 @@ export function AccountScreen({ page, user, config, onUser, onError, onOnline, o
       <Empty icon="headset-outline" title={t('Поддержка')} subtitle={t('Если возникла проблема с поездкой, сообщите время заказа и номер телефона аккаунта.')}/>
       {config?.supportPhone
         ? <Button label={config.supportPhone} icon="call-outline" onPress={() => void Linking.openURL(`tel:${config.supportPhone}`)}/>
-        : <View style={s.card}><Text style={s.muted}>{t('Контакт поддержки пока не настроен. Обратитесь к диспетчеру сервиса.')}</Text></View>}
+        : null}
+      <Button label="atlas.delivery.kg@gmail.com" icon="mail-outline" onPress={() => void Linking.openURL('mailto:atlas.delivery.kg@gmail.com')}/>
       <View style={[s.card, { gap: 12 }]}>
         <Text style={s.h3}>{user.role === 'DRIVER' ? 'Atlas pro' : 'Atlas'}</Text>
         <Text style={s.caption}>{t('Карты — OpenStreetMap, маршруты — OSRM.')}</Text>
         <Pressable accessibilityRole="link" onPress={() => void Linking.openURL('https://www.openstreetmap.org/copyright')}><Text style={{ color: palette.accent }}>{t('© Участники OpenStreetMap ↗')}</Text></Pressable>
-        {process.env.EXPO_PUBLIC_PRIVACY_URL && <Pressable accessibilityRole="link" onPress={() => void Linking.openURL(process.env.EXPO_PUBLIC_PRIVACY_URL!)}><Text style={{ color: palette.accent }}>{t('Политика конфиденциальности ↗')}</Text></Pressable>}
-        {process.env.EXPO_PUBLIC_TERMS_URL && <Pressable accessibilityRole="link" onPress={() => void Linking.openURL(process.env.EXPO_PUBLIC_TERMS_URL!)}><Text style={{ color: palette.accent }}>{local('Условия использования ↗', 'Колдонуу шарттары ↗')}</Text></Pressable>}
+        <LegalDocumentLink document="privacy" language={user.language}><Text style={{ color: palette.accent }}>{local('Политика конфиденциальности', 'Купуялык саясаты')}</Text></LegalDocumentLink>
+        <LegalDocumentLink document="terms" language={user.language}><Text style={{ color: palette.accent }}>{local('Условия использования', 'Колдонуу шарттары')}</Text></LegalDocumentLink>
+        <LegalDocumentLink document="deletion" language={user.language}><Text style={{ color: palette.accent }}>{local('Удаление аккаунта и данных', 'Аккаунтту жана маалыматтарды жок кылуу')}</Text></LegalDocumentLink>
       </View>
     </>}
   </ScrollView>;

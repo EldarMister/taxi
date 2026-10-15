@@ -1,3 +1,4 @@
+import { validPlate, vehicleYearRange } from './vehicleData';
 import { MAX_ADDITIONAL_VEHICLES, additionalVehicleClientIdPattern, type AdditionalVehicleDraft, type BaseDocumentRequirement, type CargoEquipmentDraft, type CourierTransportMode, type PerformerRole, type RegistrationApplication, type RegistrationConfig, type RegistrationData, type RegistrationStepId, type RegistrationUpload, type VehicleDraft, type VehicleUsage } from './types';
 
 export type RegistrationStep = { id: RegistrationStepId; title: string; optional?: boolean };
@@ -40,9 +41,9 @@ const fallbackDocumentRequirements: BaseDocumentRequirement[] = [
   { id: 'identity', title: 'Удостоверение личности', kind: 'IDENTITY_DOCUMENT', slots: ['identity_front', 'identity_back'], requiredFor: ['TAXI_DRIVER', 'CARGO_DRIVER', 'COURIER'] },
   { id: 'driver-license', title: 'Водительское удостоверение', kind: 'DRIVER_LICENSE', slots: ['license_front', 'license_back'], requiredFor: ['TAXI_DRIVER', 'CARGO_DRIVER'], condition: 'Также требуется для моторизованной доставки' },
   { id: 'taxi-registration', title: 'Документы автомобиля', kind: 'VEHICLE_DOCUMENT', slots: ['taxi_registration', 'taxi_insurance'], expirySlots: ['taxi_insurance'], requiredFor: ['TAXI_DRIVER'] },
-  { id: 'taxi-photos', title: 'Фотографии автомобиля такси', kind: 'VEHICLE_PHOTO', slots: ['taxi_photo_front'], requiredFor: ['TAXI_DRIVER'] },
+  { id: 'taxi-photos', title: 'Фотографии автомобиля такси', kind: 'VEHICLE_PHOTO', slots: ['taxi_photo_front', 'taxi_photo_back', 'taxi_photo_left', 'taxi_photo_right'], requiredFor: ['TAXI_DRIVER'] },
   { id: 'cargo-registration', title: 'Документы грузового автомобиля', kind: 'VEHICLE_DOCUMENT', slots: ['cargo_registration', 'cargo_insurance'], expirySlots: ['cargo_insurance'], requiredFor: ['CARGO_DRIVER'] },
-  { id: 'cargo-photos', title: 'Фотографии грузового автомобиля', kind: 'VEHICLE_PHOTO', slots: ['cargo_photo_front'], requiredFor: ['CARGO_DRIVER'] },
+  { id: 'cargo-photos', title: 'Фотографии грузового автомобиля', kind: 'VEHICLE_PHOTO', slots: ['cargo_photo_front', 'cargo_photo_back', 'cargo_photo_left', 'cargo_photo_right'], requiredFor: ['CARGO_DRIVER'] },
   { id: 'courier-vehicle', title: 'Документы транспорта курьера', kind: 'VEHICLE_DOCUMENT', slots: ['courier_registration', 'courier_insurance'], expirySlots: ['courier_insurance'], requiredFor: ['COURIER'], condition: 'Только для моторизованной доставки с отдельным транспортом' },
   { id: 'courier-vehicle-photo', title: 'Фотография транспорта курьера', kind: 'VEHICLE_PHOTO', slots: ['courier_photo'], requiredFor: ['COURIER'], condition: 'Только для моторизованной доставки с отдельным транспортом' },
   { id: 'rental-proof', title: 'Договор аренды или доверенность', kind: 'VEHICLE_DOCUMENT', slots: [], requiredFor: ['TAXI_DRIVER', 'CARGO_DRIVER'], condition: 'Только для арендованного транспорта' },
@@ -91,6 +92,7 @@ export function additionalVehicleForUploadSlot(data: Pick<RegistrationData, 'veh
 }
 
 export function additionalVehicleUploadSlots(vehicle: AdditionalVehicleDraft): ConfiguredUploadSlot[] {
+  if (vehicle.usage !== 'COURIER') return ['front', 'back', 'left', 'right'].map(suffix => ({ slotKey: `vehicle_${vehicle.clientId}_photo_${suffix}`, title: additionalVehiclePhotoTitles[suffix], kind: 'VEHICLE_PHOTO', required: true, requiresExpiry: false }));
   const prefix = `vehicle_${vehicle.clientId}`;
   return [
     { slotKey: `${prefix}_registration`, title: 'Свидетельство о регистрации', kind: 'VEHICLE_DOCUMENT', required: true, requiresExpiry: false },
@@ -112,7 +114,11 @@ export function registrationUploadSlotsForStep(step: RegistrationStepId, applica
 }
 
 export function configuredBaseUploadSlots(application: Pick<RegistrationApplication, 'roles' | 'data'>, config?: Pick<RegistrationConfig, 'documentRequirements'>): ConfiguredUploadSlot[] {
-  return requirements(config).filter(item => requirementApplies(item, application)).flatMap(item => {
+  if (!application.roles.includes('COURIER')) return application.roles.flatMap(role => {
+    const prefix = role === 'TAXI_DRIVER' ? 'taxi' : 'cargo';
+    return ['front', 'back', 'left', 'right'].map(suffix => ({ slotKey: `${prefix}_photo_${suffix}`, title: additionalVehiclePhotoTitles[suffix], kind: 'VEHICLE_PHOTO' as const, required: true, requiresExpiry: false }));
+  });
+  return requirements(application.roles.includes('COURIER') ? undefined : config).filter(item => requirementApplies(item, application)).flatMap(item => {
     let slots = item.slots;
     if (item.id === 'rental-proof') slots = [
       ...(application.roles.includes('TAXI_DRIVER') && application.data.taxiVehicle.ownership === 'RENT' ? ['taxi_rental'] : []),
@@ -146,6 +152,14 @@ export function configuredUploadSlotsForStep(step: RegistrationStepId, applicati
 }
 
 export function buildRegistrationSteps(application: Pick<RegistrationApplication, 'roles' | 'data'>, config?: Pick<RegistrationConfig, 'documentRequirements'>): RegistrationStep[] {
+  if (!application.roles.includes('COURIER')) {
+    const steps: RegistrationStep[] = [{ id: 'ROLES', title: 'Направления работы' }, { id: 'PERSONAL_DATA', title: 'Личные данные' }];
+    if (application.roles.includes('TAXI_DRIVER')) steps.push({ id: 'TAXI_VEHICLE', title: 'Легковой автомобиль' }, { id: 'TAXI_PHOTOS', title: 'Четыре фото автомобиля' });
+    if (application.roles.includes('CARGO_DRIVER')) steps.push({ id: 'CARGO_VEHICLE', title: 'Грузовой транспорт' }, { id: 'CARGO_PHOTOS', title: 'Четыре фото автомобиля' });
+    steps.push({ id: 'REVIEW', title: 'Проверка анкеты' });
+    return steps;
+  }
+  config = undefined;
   const roles = new Set<PerformerRole>(application.roles);
   const steps: RegistrationStep[] = [
     { id: 'ROLES', title: 'Направления работы' },
@@ -182,8 +196,8 @@ function displayDate(value: string) {
   return date.getFullYear() === year && date.getMonth() === month - 1 && date.getDate() === day ? date : null;
 }
 const vehicleReady = (vehicle: VehicleDraft, cargo = false) => {
-  const year = Number(vehicle.year); const validYear = /^\d{4}$/.test(vehicle.year) && year >= 1950 && year <= new Date().getFullYear() + 1;
-  return filled(vehicle.ownership) && filled(vehicle.brand) && filled(vehicle.model) && validYear && filled(vehicle.plateNumber) && (!cargo || filled(vehicle.type) && positive(vehicle.capacityKg));
+  const { minimum, maximum } = vehicleYearRange(); const year = Number(vehicle.year); const validYear = /^\d{4}$/.test(vehicle.year) && year >= minimum && year <= maximum;
+  return filled(vehicle.ownership) && filled(vehicle.brand) && filled(vehicle.model) && validYear && filled(vehicle.plateNumber) && (!vehicle.plate || validPlate(vehicle.plate)) && (!cargo || filled(vehicle.type) && positive(vehicle.capacityKg));
 };
 function validateCargoEquipment(equipment: CargoEquipmentDraft, errors: Record<string, string>, prefix = '') {
   const key = (name: string) => `${prefix}${name}`;

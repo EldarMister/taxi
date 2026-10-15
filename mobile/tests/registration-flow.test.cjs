@@ -110,9 +110,9 @@ test('курьер может добавить другой автомобиль
 
 test('такси и грузовой водитель имеют независимые транспортные ветки', () => {
   const steps = ids(app(['TAXI_DRIVER', 'CARGO_DRIVER']));
-  for (const step of ['TAXI_VEHICLE', 'TAXI_DOCUMENTS', 'TAXI_PHOTOS', 'CARGO_VEHICLE', 'CARGO_DOCUMENTS', 'CARGO_PHOTOS']) assert.ok(steps.includes(step), step);
+  for (const step of ['TAXI_VEHICLE', 'TAXI_PHOTOS', 'CARGO_VEHICLE', 'CARGO_PHOTOS']) assert.ok(steps.includes(step), step);
   assert.ok(!steps.includes('CARGO_EQUIPMENT'));
-  assert.equal(steps.filter(step => step === 'DRIVER_LICENSE').length, 1);
+  assert.equal(steps.filter(step => /DOCUMENT|LICENSE|PROFILE_PHOTO/.test(step)).length, 0);
 });
 
 test('моторный транспорт курьера требует документы и фотографию', () => {
@@ -152,22 +152,30 @@ const fillVehicle = (vehicle, cargo = false) => Object.assign(vehicle, {
   ...(cargo ? { type: 'Фургон', capacityKg: '3500' } : {}),
 });
 
-test('дополнительная машина имеет стабильный clientId и отдельные слоты документов', () => {
+test('дополнительная машина требует четыре снимка и не требует документов даже при аренде', () => {
   const value = app(['TAXI_DRIVER']);
   const extra = types.createAdditionalVehicle('TAXI', 'v-taxi1');
-  fillVehicle(extra); extra.tariffs = ['ECONOMY']; extra.ownership = 'RENT';
-  value.data.vehicles.push(extra);
-  assert.deepEqual(flow.additionalVehicleUploadSlotsForStep('TAXI_DOCUMENTS', value).map(item => item.slotKey), [
-    'vehicle_v-taxi1_registration', 'vehicle_v-taxi1_insurance', 'vehicle_v-taxi1_rental',
-  ]);
-  assert.deepEqual(flow.additionalVehicleUploadSlotsForStep('TAXI_PHOTOS', value).map(item => item.slotKey), [
-    'vehicle_v-taxi1_photo_front',
-  ]);
-  const result = flow.validateRegistrationStep('TAXI_DOCUMENTS', value, config);
-  assert.ok(result.errors['vehicle_v-taxi1_registration']);
-  assert.ok(result.errors['vehicle_v-taxi1_insurance']);
-  assert.ok(result.errors['expiry_vehicle_v-taxi1_insurance']);
-  assert.ok(result.errors['vehicle_v-taxi1_rental']);
+  fillVehicle(extra); extra.ownership = 'RENT'; value.data.vehicles.push(extra);
+  assert.deepEqual(flow.additionalVehicleUploadSlotsForStep('TAXI_DOCUMENTS', value), []);
+  const slots = flow.additionalVehicleUploadSlotsForStep('TAXI_PHOTOS', value).map(item => item.slotKey);
+  assert.deepEqual(slots, ['front','back','left','right'].map(side => `vehicle_v-taxi1_photo_${side}`));
+  const errors = flow.validateRegistrationStep('TAXI_PHOTOS', value, config).errors;
+  for (const slot of slots) assert.ok(errors[slot]);
+});
+
+test('такси и доставка проходят с личными данными, машиной и четырьмя фото без документов', () => {
+  const value = app(['TAXI_DRIVER']);
+  Object.assign(value.data.personal, { firstName: 'Асан', lastName: 'Ибраев', birthDate: '10.03.1990', city: 'Бишкек' });
+  fillVehicle(value.data.taxiVehicle);
+  const steps = flow.buildRegistrationSteps(value, config);
+  assert.deepEqual(steps.map(step => step.id), ['ROLES','PERSONAL_DATA','TAXI_VEHICLE','TAXI_PHOTOS','REVIEW']);
+  const slots = flow.configuredUploadSlotsForStep('TAXI_PHOTOS', value, config);
+  assert.equal(slots.length, 4);
+  assert.equal(flow.validateRegistrationStep('TAXI_PHOTOS', value, config).valid, false);
+  for (const slot of slots) value.data.uploads[slot.slotKey] = { slotKey: slot.slotKey, kind: 'VEHICLE_PHOTO', status: 'UPLOADED' };
+  for (const step of steps.filter(step => step.id !== 'REVIEW')) assert.equal(flow.validateRegistrationStep(step.id, value, config).valid, true, step.id);
+  delete value.data.uploads.taxi_photo_right;
+  assert.ok(flow.validateRegistrationStep('TAXI_PHOTOS', value, config).errors.taxi_photo_right);
 });
 
 test('дополнительный грузовик валидирует собственную комплектацию', () => {
@@ -284,15 +292,15 @@ test('регистрация показывает сегментированны
   const screen = fs.readFileSync(path.join(__dirname, '..', 'src', 'DriverRegistrationScreen.tsx'), 'utf8');
   assert.match(components, /Array\.from\(\{ length: total \}/);
   assert.match(components, /profileUploadCard/);
-  assert.match(components, /profile-avatar-3d\.png/);
-  assert.match(steps, /roles-checklist-3d\.png/);
-  assert.match(steps, /role-taxi-3d\.png/);
-  assert.match(steps, /role-cargo-3d\.png/);
-  assert.match(steps, /role-courier-3d\.png/);
+  assert.match(components, /profile-avatar-3d\.webp/);
+  assert.doesNotMatch(steps, /roles-checklist-3d\.png/);
+  assert.match(steps, /service-taxi\.webp/);
+  assert.match(steps, /service-truck\.webp/);
+  assert.match(steps, /role-courier-3d\.webp/);
   assert.match(screen, /Разрешите доступ к камере/);
-  assert.match(screen, /camera-permission-3d\.png/);
+  assert.match(screen, /camera-permission-3d\.webp/);
   assert.match(screen, /Не удалось загрузить данные/);
-  assert.match(screen, /load-error-3d\.png/);
+  assert.match(screen, /load-error-3d\.webp/);
 });
 
 test('уже разрешённая камера открывается без повторного запроса', () => {

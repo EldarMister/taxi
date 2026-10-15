@@ -50,7 +50,7 @@ async function mount(t, stage, reduced = false, options = {}) {
     header: React.createElement('View', null, React.createElement('Pressable', { testID: 'call', onPress: () => contacts.calls++ }), React.createElement('Pressable', { testID: 'chat', onPress: () => contacts.chats++ }), stage === 'ARRIVED' ? React.createElement('Text', { testID: 'timer' }, '0:47') : null),
     details: React.createElement(Details), footer: React.createElement('Pressable', { testID: 'confirm', onPress: () => contacts.actions++ }),
     compactDetails: stage === 'SEARCHING' ? React.createElement('Text', null, 'Tariff and fare') : undefined,
-    style: {}, handleStyle: {}, handleLabel: open => open ? 'Close' : 'Open', onHeight: value => heights.push(value), onExpanded: value => expanded.push(value), inset, maxHeight: options.maxHeight,
+    style: {}, handleStyle: {}, handleLabel: open => open ? 'Close' : 'Open', showHandle: options.showHandle, onHeight: value => heights.push(value), onExpanded: value => expanded.push(value), inset, maxHeight: options.maxHeight,
   })); });
   t.after(async () => { await act(async () => renderer.unmount()); assert.equal(reactions.size, 0); });
   const root = () => renderer.root.findByProps({ testID: 'driver-ride-sheet' });
@@ -62,10 +62,28 @@ async function mount(t, stage, reduced = false, options = {}) {
   const tap = async id => act(async () => renderer.root.findByProps({ testID: id }).props.onPress());
   const step = async fraction => act(async () => reveal.step(fraction));
   const style = () => root().props.style.at(-1).evaluate();
-  return { renderer, gesture, tap, step, style, reveal, inset, animations, heights, expanded, contacts, detailsMounts,
+  return { renderer, gesture, tap, step, style, clip, reveal, inset, animations, heights, expanded, contacts, detailsMounts,
+    async resizeCompact(height) { await act(async () => renderer.root.findByProps({ testID: 'driver-sheet-compact-details' }).props.onLayout({ nativeEvent: { layout: { height } } })); },
     async resize(total, details) { await act(async () => { root().props.onLayout({ nativeEvent: { layout: { height: total } } }); clip().props.onLayout({ nativeEvent: { layout: { height: details } } }); }); },
     async drag(dy, vy = 0, end = true) { await act(async () => { const h = gesture().handlers; h.onStart({ translationY: 0 }); h.onUpdate({ translationY: dy }); if (end) { h.onEnd({ velocityY: vy }); h.onFinalize(); } }); } };
 }
+test('offer without a handle expands from its header and keeps its action pinned during dragging', async t => {
+  const h = await mount(t, 'SEARCHING', false, { showHandle: false });
+  assert.equal(h.renderer.root.findAllByProps({ testID: 'driver-panel-handle' }).length, 0);
+  const toggle = () => h.renderer.root.findByProps({ testID: 'driver-sheet-header-toggle' });
+  assert.equal(toggle().props.accessibilityState.expanded, false);
+  await h.tap('driver-sheet-header-toggle'); await h.step(1);
+  assert.equal(toggle().props.accessibilityState.expanded, true);
+  assert.equal(h.inset.get(), 420);
+  await h.tap('confirm');
+  await h.drag(300, 0); await h.step(1);
+  assert.equal(toggle().props.accessibilityState.expanded, false);
+  assert.equal(h.inset.get(), 244);
+  await h.tap('confirm');
+  assert.equal(h.contacts.actions, 2);
+  assert.equal(h.detailsMounts.count, 1);
+});
+
 test('full measured detail height becomes the expanded detent', async t => {
   const h = await mount(t, 'ARRIVED');
   await h.tap('driver-panel-handle'); await h.step(1);
@@ -107,6 +125,54 @@ test('SEARCHING: reduced motion settles without a spring and preserves the compa
   await h.step(1); assert.equal(h.inset.get(), 420);
   await h.tap('driver-panel-handle'); await h.step(1);
   assert.equal(h.inset.get(), 244);
+  assert.equal(h.detailsMounts.count, 1);
+});
+
+test('equal-height offer views swap visible content and accessibility when expansion has no travel', async t => {
+  const h = await mount(t, 'SEARCHING');
+  await h.resizeCompact(220);
+  const details = () => h.renderer.root.findAllByType('MotionView').find(node => node.props.importantForAccessibility && !node.props.testID);
+  const compact = () => h.renderer.root.findByProps({ testID: 'driver-sheet-compact-details' });
+  assert.equal(h.inset.get(), 420);
+  assert.equal(details().props.style.evaluate().opacity, 0);
+  assert.equal(compact().props.style.at(-1).evaluate().opacity, 1);
+  await h.tap('driver-panel-handle'); await h.step(1);
+  assert.equal(h.reveal.get(), 0, 'equal measured heights have no translated detent');
+  assert.equal(details().props.style.evaluate().opacity, 1, 'full details still replace the compact content');
+  assert.equal(details().props.pointerEvents, 'auto');
+  assert.equal(details().props.accessibilityElementsHidden, false);
+  assert.equal(compact().props.style.at(-1).evaluate().opacity, 0);
+  assert.equal(compact().props.accessibilityElementsHidden, true);
+  await h.tap('driver-panel-handle'); await h.step(1);
+  assert.equal(details().props.style.evaluate().opacity, 0);
+  assert.equal(compact().props.style.at(-1).evaluate().opacity, 1);
+  assert.equal(compact().props.pointerEvents, 'auto');
+  assert.equal(h.detailsMounts.count, 1);
+});
+
+test('a compact offer taller than the capped detail viewport remains whole and expands into usable scrolling details', async t => {
+  const h = await mount(t, 'SEARCHING', false, { maxHeight: 320 });
+  await h.resizeCompact(180);
+  assert.equal(h.clip().props.style[1].minHeight, 180, 'the absolute compact view reserves its full measured viewport');
+  // Yoga applies the 180 px clip minimum while its scroll child remains capped at 120 px.
+  await h.resize(380, 180);
+  assert.equal(h.renderer.root.findByProps({ testID: 'driver-sheet-details-scroll' }).props.style.maxHeight, 120);
+  assert.equal(h.inset.get(), 380, 'map controls receive the complete compact envelope');
+  const details = () => h.renderer.root.findAllByType('MotionView').find(node => node.props.importantForAccessibility && !node.props.testID);
+  const compact = () => h.renderer.root.findByProps({ testID: 'driver-sheet-compact-details' });
+  await h.tap('driver-panel-handle'); await h.step(1);
+  assert.equal(details().props.style.evaluate().opacity, 1);
+  assert.equal(details().props.pointerEvents, 'auto', 'the capped scroll viewport receives gestures after expansion');
+  assert.equal(compact().props.style.at(-1).evaluate().opacity, 0);
+  assert.equal(h.inset.get(), 380, 'swapping content does not move the footer or map inset');
+  const footer = h.renderer.root.findAllByType('MotionView').at(-1);
+  assert.equal(footer.props.style.at(-1).evaluate().transform[0].translateY, 0);
+  await h.tap('confirm');
+  await h.tap('driver-panel-handle'); await h.step(1);
+  assert.equal(compact().props.style.at(-1).evaluate().opacity, 1);
+  assert.equal(compact().props.pointerEvents, 'auto');
+  await h.tap('confirm');
+  assert.equal(h.contacts.actions, 2, 'the pinned action works in either content view');
   assert.equal(h.detailsMounts.count, 1);
 });
 for (const stage of ['ASSIGNED', 'ARRIVED', 'IN_PROGRESS', 'DELIVERY_ASSIGNED', 'DELIVERY_ARRIVED', 'DELIVERY_IN_PROGRESS']) {

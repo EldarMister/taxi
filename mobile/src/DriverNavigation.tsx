@@ -1,22 +1,27 @@
 import React from 'react';
 import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
 import Svg, { Path, Circle } from 'react-native-svg';
-import { displayDistance, distantManeuverInstruction, normalizeManeuver, NormalizedManeuver, offRouteThreshold, navigationConfig } from './navigation';
+import { displayDistance, distantManeuverInstruction, normalizeManeuver, NormalizedManeuver, offRouteThreshold } from './navigation';
 import { useDriverNavigation } from './useDriverNavigation';
 import { colors, Icon, tr } from './ui';
 import type { Language } from './types';
 import { useTheme } from './design/theme';
-import { RoadFeatureAlerts } from './RoadFeatureAlerts';
+import { RoadFeatureAlerts, SpeedLimitSign } from './RoadFeatureAlerts';
 
 
 function TurnArrow({ maneuver, arrived, color = 'white' }: { maneuver?: NormalizedManeuver; arrived?: boolean; color?: string }) {
   if (arrived || maneuver?.kind === 'arrive') return <Icon name="flag" size={34} color={color}/>;
   const left = maneuver?.side === 'left';
   const roundabout = maneuver?.kind === 'roundabout' || maneuver?.kind === 'exit-roundabout';
+  const diagonal = maneuver?.intensity === 'slight' || maneuver?.kind === 'fork' || maneuver?.kind === 'merge' || maneuver?.kind === 'off-ramp';
+  const sidePath = maneuver?.intensity === 'sharp'
+    ? 'M12 43V20Q12 9 21 18L38 35M38 22V35H25'
+    : diagonal ? 'M14 43V29Q14 24 18 20L37 5M24 5H37V18'
+      : 'M12 43V25Q12 15 22 15H41M32 6L41 15L32 24';
   return <Svg width={42} height={46} viewBox="0 0 48 48" style={left ? { transform: [{ scaleX: -1 }] } : undefined}>
     {roundabout ? <><Circle cx="24" cy="25" r="12" fill="none" stroke={color} strokeWidth={4}/><Path d="M24 45V37M24 13V3M17 10L24 3L31 10" stroke={color} strokeWidth={4} fill="none" strokeLinecap="round" strokeLinejoin="round"/></> :
       maneuver?.kind === 'uturn' ? <Path d="M12 43V17C12 3 36 3 36 17V33M29 26L36 33L43 26" stroke={color} strokeWidth={5} fill="none" strokeLinecap="round" strokeLinejoin="round"/> :
-      maneuver?.side === 'left' || maneuver?.side === 'right' ? <Path d="M12 43V25Q12 15 22 15H41M32 6L41 15L32 24" stroke={color} strokeWidth={5} fill="none" strokeLinecap="round" strokeLinejoin="round"/> :
+      maneuver?.side === 'left' || maneuver?.side === 'right' ? <><Path d={sidePath} stroke={color} strokeWidth={5} fill="none" strokeLinecap="round" strokeLinejoin="round"/>{maneuver?.kind === 'fork' && <Path d="M14 29V6" stroke={color} strokeWidth={3} opacity={.4} fill="none" strokeLinecap="round"/>}</> :
       <Path d="M24 43V5M12 17L24 5L36 17" stroke={color} strokeWidth={5} fill="none" strokeLinecap="round" strokeLinejoin="round"/>}
   </Svg>;
 }
@@ -31,7 +36,7 @@ export function DriverNavigation({ navigation, top, onLocation, onHeight, langua
   const ready = !!progress && !gpsStatus && !offRoute && !loading && (!error || !!navigation.route);
   const title = gpsStatus ? t(gpsStatus) : (loading ? t('Строим маршрут') : offRoute ? t('Вы отклонились от маршрута') : progress ? distantManeuverInstruction(progress, language) : (error ? t('Маршрут недоступен') : t('Готовим навигацию')));
   const turn = navigation.route?.steps[progress?.stepIndex || 0];
-  const maneuver = turn && progress && progress.maneuverDistance <= navigationConfig.maneuverWarningMeters ? normalizeManeuver(turn) : undefined;
+  const maneuver = ready && turn && progress ? normalizeManeuver(turn) : undefined;
   return <><View testID="driver-navigation" pointerEvents="box-none" onLayout={event => onHeight?.(event.nativeEvent.layout.height)} style={[styles.position, { top }]}>
     <View style={styles.guidance}>
       <View style={[styles.turn, theme.isDark && { backgroundColor: theme.palette.accent, shadowColor: '#000000' }]}>{loading ? <ActivityIndicator color={theme.isDark ? theme.palette.accentText : 'white'}/> : <TurnArrow maneuver={maneuver} arrived={progress?.arrived} color={theme.isDark ? theme.palette.accentText : 'white'}/>}</View>
@@ -40,6 +45,7 @@ export function DriverNavigation({ navigation, top, onLocation, onHeight, langua
         <Text numberOfLines={2} style={[styles.title, theme.isDark && { color: theme.palette.muted, textShadowColor: '#000000' }]}>{title}</Text>
       </View>
     </View>
+    {ready && navigation.currentSpeedLimit != null && <View testID="current-speed-limit" accessible accessibilityLabel={language === 'en' ? `Speed limit ${navigation.currentSpeedLimit}` : language === 'ky' ? `Ылдамдык чектөөсү ${navigation.currentSpeedLimit}` : `Ограничение скорости ${navigation.currentSpeedLimit}`} style={styles.speedLimit}><SpeedLimitSign speedLimit={navigation.currentSpeedLimit} size={44}/></View>}
     {!!gpsStatus && <Pressable accessibilityRole="button" accessibilityLabel={t('Проверить местоположение')} onPress={() => { navigation.retry(); onLocation(); }} style={[styles.notice, theme.isDark && { backgroundColor: theme.palette.elevated }]}><Icon name="locate" color={theme.isDark ? theme.palette.ink : '#B57522'} size={16}/><Text numberOfLines={2} style={[styles.noticeText, theme.isDark && { color: theme.palette.ink }]}>{t(gpsStatus)}</Text></Pressable>}
     {!!error && <Pressable accessibilityRole="button" onPress={navigation.retry} style={[styles.notice, theme.isDark && { backgroundColor: theme.palette.elevated }]}><Icon name="refresh" color={theme.isDark ? theme.palette.ink : colors.blue} size={16}/><Text numberOfLines={2} style={[styles.noticeText, theme.isDark && { color: theme.palette.ink }]}>{t(error)} · {t('Повторить')}</Text></Pressable>}
     {!!navigation.voiceError && <Pressable accessibilityRole="button" onPress={navigation.testVoice} style={[styles.notice, theme.isDark && { backgroundColor: theme.palette.elevated }]}><Text numberOfLines={2} style={[styles.noticeText, theme.isDark && { color: theme.palette.ink }]}>{t(navigation.voiceError)} · {t('Проверить')}</Text></Pressable>}
@@ -52,6 +58,7 @@ const styles = StyleSheet.create({
   instruction: { flex: 1, gap: 1, backgroundColor: '#FFFFFF', borderRadius: 13, paddingHorizontal: 8, paddingVertical: 4 },
   distance: { fontSize: 28, lineHeight: 32, fontWeight: '800', color: '#152644', letterSpacing: -.8, fontVariant: ['tabular-nums'], textShadowColor: 'white', textShadowRadius: 6 },
   title: { fontSize: 12, lineHeight: 15, fontWeight: '600', color: '#3E5874', textShadowColor: 'white', textShadowRadius: 5 },
+  speedLimit: { alignSelf: 'flex-start', marginLeft: 4 },
   notice: { flexDirection: 'row', gap: 7, alignItems: 'center', paddingHorizontal: 9, paddingVertical: 7, borderRadius: 12, backgroundColor: 'rgba(255,255,255,.94)' },
   noticeText: { flex: 1, color: '#71512A', fontSize: 11, lineHeight: 14 },
 });

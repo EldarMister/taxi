@@ -62,6 +62,8 @@ export function FoodExperience({ userId, userPhone, language = 'ru', active, ent
   const [historyLoading, setHistoryLoading] = useState(false);
   const [historyError, setHistoryError] = useState('');
   const [orderError, setOrderError] = useState('');
+  const [cancellingOrder, setCancellingOrder] = useState(false);
+  const cancellation = useRef(false);
   const [submitError, setSubmitError] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [deliveryInfoOpen, setDeliveryInfoOpen] = useState(false);
@@ -217,7 +219,8 @@ export function FoodExperience({ userId, userPhone, language = 'ru', active, ent
     const version = ++catalogVersion.current;
     setLoading(true); setCatalogError('');
     try {
-      const data = await api.request<FoodCatalog>('/food/catalog');
+      // The server hides dishes with modern modifier rules from legacy clients.
+      const data = await api.request<FoodCatalog>('/food/catalog', { headers: { 'X-Atlas-Capabilities': 'food-modifiers-v2' } });
       if (!mounted.current || version !== catalogVersion.current) return;
       setCatalog(data);
       if (wantedPromo.current) {
@@ -274,6 +277,22 @@ export function FoodExperience({ userId, userPhone, language = 'ru', active, ent
     }
   }, [screen, selectedOrder?.id, language]);
   latestOrderRefresh.current = refreshOrder;
+  const cancelFoodOrder = async () => {
+    if (!selectedOrder || selectedOrder.status !== 'PLACED' || cancellation.current) return;
+    const id = selectedOrder.id;
+    cancellation.current = true; setCancellingOrder(true); setOrderError('');
+    try {
+      const cancelled = await api.post<FoodOrder>(`/food/orders/${id}/cancel`, {});
+      if (!mounted.current) return;
+      setSelectedOrder(current => current?.id === id ? cancelled : current);
+      setOrders(current => current.map(item => item.id === id ? cancelled : item));
+      setActiveOrders(current => current.filter(item => item.id !== id));
+      setActiveOrder(current => current?.id === id ? null : current);
+      void refreshOrder();
+    } catch (error) {
+      if (mounted.current) { await refreshOrder(); setOrderError(t(foodError(error))); }
+    } finally { cancellation.current = false; if (mounted.current) setCancellingOrder(false); }
+  };
   useEffect(() => { if (active) void refreshOrder(); }, [active, orderRevision, refreshOrder]);
   useEffect(() => {
     if (!active) return;
@@ -430,7 +449,7 @@ export function FoodExperience({ userId, userPhone, language = 'ru', active, ent
     setSubmitError(''); navigate('checkout');
   }} />; }
   else if (screen === 'checkout' && cartRestaurant) { routeKey = 'checkout'; content = <CheckoutScreen carts={checkoutCarts} recipientPhone={userPhone} onChangeAddress={() => setAddressOpen(true)} restaurant={cartRestaurant} lines={lines} paymentMethods={catalog.paymentMethods} details={cartDetails} onDetails={setCartDetails} onBack={back} onSubmit={() => void submit()} busy={submitting} error={submitError} />; }
-  else if (screen === 'order' && selectedOrder) { routeKey = `order:${selectedOrder.id}`; content = <FoodOrderScreen relatedOrders={activeOrders.some(item => item.id === selectedOrder.id) ? activeOrders : []} onSelectOrder={setSelectedOrder} order={selectedOrder} onBack={back} error={orderError} onRetry={() => void refreshOrder()} />; }
+  else if (screen === 'order' && selectedOrder) { routeKey = `order:${selectedOrder.id}`; content = <FoodOrderScreen relatedOrders={activeOrders.some(item => item.id === selectedOrder.id) ? activeOrders : []} onSelectOrder={setSelectedOrder} order={selectedOrder} onBack={back} error={orderError} onRetry={() => void refreshOrder()} onCancel={() => void cancelFoodOrder()} cancelling={cancellingOrder} />; }
   else if (screen === 'history') { routeKey = 'history'; content = <FoodHistoryScreen orders={orders} loading={historyLoading} error={historyError} onBack={back} onRetry={() => void loadHistory()} onOrder={order => { setSelectedOrder(order); orderOrigin.current = 'history'; navigate('order'); }} />; }
   else { routeKey = 'restaurants'; content = <RestaurantsScreen currentAddress={details.address} onChangeAddress={() => setAddressOpen(true)} restaurants={catalog.restaurants} onBack={back} onRestaurant={openRestaurant} onFavorites={() => navigate('favorites')} favoriteCount={favoriteRestaurants.length + favoriteDishItems.length} onCart={() => openCart('restaurants')} onDeliveryInfo={() => setDeliveryInfoOpen(true)} cartRestaurantCount={checkoutCarts.length} cartCount={allSummary.count} cartTotal={allSummary.total} cartRestaurantName={cartRestaurant?.name} cartLines={lines} cartRestaurant={cartRestaurant} banners={banners} onBanner={openBanner} favoriteIds={favorites} onToggleFavorite={value => setFavorites(current => toggle(current, value.id))} loading={loading} error={catalogError} onRetry={() => void loadCatalog()} />; }
   return <FoodLanguageProvider language={language}><View style={{ flex: 1, backgroundColor: theme.isDark ? theme.palette.background : '#F7F7F5' }}>

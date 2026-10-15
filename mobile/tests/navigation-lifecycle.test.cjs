@@ -8,7 +8,7 @@ const { create, act } = require('react-test-renderer');
 global.IS_REACT_ACT_ENVIRONMENT = true;
 function compile(file, dependencies, globals = {}) {
   const exports = {};
-  vm.runInNewContext(ts.transpileModule(fs.readFileSync(require.resolve(file), 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText,
+  vm.runInNewContext(ts.transpileModule(fs.readFileSync(require.resolve(file), 'utf8'), { fileName: file, compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.React } }).outputText,
     { exports, require: id => { if (!(id in dependencies)) throw new Error(`Unexpected import ${id}`); return dependencies[id]; }, Date, AbortController, ...globals });
   return exports;
 }
@@ -20,7 +20,7 @@ function deferred() { let resolve; const promise = new Promise(r => { resolve = 
 async function setup(options = {}) {
   let clock = Date.now(), props = { userId: 'driver1', enabled: true, locationEnabled: true, mapVisible: options.initialMapVisible ?? true, language: options.language ?? 'ru', order: options.initialOrder === undefined ? order : options.initialOrder }, value, renderer;
   let appStateListener, gps, gpsError, watchConfig, backgroundFix, speechOptions, removed = 0, stops = 0;
-  const speaks = [], requests = [], diagnosticEvents = [], intervals = new Map();
+  const speaks = [], requests = [], featureRequests = [], diagnosticEvents = [], intervals = new Map();
   const voiceStorage = options.voiceStorage ?? new Map();
   class TestDate extends Date { static now() { return clock; } }
   const navigation = compile('../src/navigation.ts', {}, { Date: TestDate });
@@ -55,7 +55,10 @@ async function setup(options = {}) {
     './native/trackingRecorder': { recordTrackingEvent: (type, data) => diagnosticEvents.push({ type, data }) },
     'expo-keep-awake': { activateKeepAwakeAsync: async () => {}, deactivateKeepAwake: async () => {} },
     './api': { messageOf: error => error.message, api: { request: async (path, init) => {
-      if (path === '/routes/road-features') return { features: options.roadFeatures ?? [] };
+      if (path === '/routes/road-features') {
+        featureRequests.push(JSON.parse(init.body));
+        return { features: typeof options.roadFeatures === 'function' ? options.roadFeatures(featureRequests.length) : options.roadFeatures ?? [] };
+      }
       if (path === '/routes/match') return null;
       const body = JSON.parse(init.body); requests.push({ path, init, body });
       if (options.legacyRouteServer && ('fast' in body || 'bearing' in body)) {
@@ -63,6 +66,7 @@ async function setup(options = {}) {
       }
       if (options.routeFailureAt === requests.length) throw new Error('Сеть недоступна');
       if (options.routePending) return options.routePending.promise;
+      if (options.routeResponse) return options.routeResponse;
       const start = body.pickup, end = body.dropoff;
       return { ...route, geometry: [start,end], distanceMeters: navigation.distanceBetween(start,end), steps: [mkStep('depart', start, [start,end]), mkStep('arrive', end, [end])] };
     } } },
@@ -70,7 +74,7 @@ async function setup(options = {}) {
   function Probe() { value = hook.useDriverNavigation(props); return null; }
   await act(async () => { renderer = create(React.createElement(Probe)); });
   return {
-    get value() { return value; }, get removed() { return removed; }, get stops() { return stops; }, get speechOptions() { return speechOptions; }, get watchConfig() { return watchConfig; }, speaks, requests, voiceStorage, diagnosticEvents,
+    get value() { return value; }, get removed() { return removed; }, get stops() { return stops; }, get speechOptions() { return speechOptions; }, get watchConfig() { return watchConfig; }, speaks, requests, featureRequests, voiceStorage, diagnosticEvents,
     async gps(point = a, accuracy = 5) { clock += 1000; await act(async () => { gps({ timestamp: clock, coords: { ...point, accuracy, speed: 10, heading: 0 } }); }); },
     async serviceFix(point = a, accuracy = 5, motion = {}) { clock += 1000; await act(async () => { backgroundFix?.({ ...point, timestamp: clock, accuracy, speed: 10, heading: 0, ...motion }); }); },
     async advance(milliseconds) { clock += milliseconds; await act(async () => { for (const callback of intervals.values()) callback(); }); },
@@ -425,8 +429,138 @@ test('reroute ignores a single excursion, repeated timer renders and stationary 
   } finally { await app.close(); }
 });
 
-test('distant traffic lights stay silent until their 100 metre approach', async () => {
-  const app = await setup({ roadFeatures: [{ id: 'light', kind: 'traffic_light', along: 150 }] });
+function maneuverRoute(type, modifier, distance = 80) {
+  const via = { latitude: a.latitude + distance / 111195, longitude: a.longitude };
+  const after = modifier.includes('sharp') ? 135 : modifier.includes('slight') ? 25 : 90;
+  const bearing = modifier.includes('left') ? 360 - after : after;
+  const end = { latitude: via.latitude + Math.cos(bearing * Math.PI / 180) * .003,
+    longitude: via.longitude + Math.sin(bearing * Math.PI / 180) * .003 / Math.cos(via.latitude * Math.PI / 180) };
+  const turn = { ...mkStep(type, via, [via,end]), name: 'улица Ленина',
+    maneuver: { type, modifier, location: via, bearingBefore: 0, bearingAfter: bearing } };
+  return { ...route, geometry: [a,via,end], distanceMeters: distance + 334,
+    steps: [mkStep('depart', a, [a,via]), turn, mkStep('arrive', end, [end])] };
+}
+
+test('router modifiers reach the live guidance text and speech for turns and same-road bends', async () => {
+  for (const type of ['turn', 'continue']) for (const [modifier, phrase] of [
+    ['slight right', 'плавно поверните направо'], ['slight left', 'плавно поверните налево'],
+    ['sharp right', 'круто поверните направо'], ['sharp left', 'круто поверните налево'],
+  ]) {
+    const response = maneuverRoute(type, modifier);
+    const app = await setup({ routeResponse: response });
+    try {
+      await app.gps(a);
+      assert.equal(app.value.route.steps[1].maneuver.modifier, modifier);
+      assert.ok(app.value.progress.instruction.toLowerCase().startsWith(phrase), `${type}: ${modifier}`);
+      assert.ok(app.speaks.some(text => text.includes(`80 метров ${phrase}`)), app.speaks.join('\n'));
+      assert.equal(app.speechOptions.shouldStart(), true);
+    } finally { await app.close(); }
+  }
+});
+
+test('early voice preview includes the real bend and discards stale distance before playback', async () => {
+  const app = await setup({ routeResponse: maneuverRoute('continue', 'slight right', 450) });
+  try {
+    await app.gps(a);
+    assert.match(app.speaks[0], /^Через 450 метров плавно поверните направо/);
+    const queued = app.speechOptions;
+    assert.equal(queued.shouldStart(), true);
+    await app.serviceFix({ ...a, latitude: a.latitude + 60 / 111195 });
+    assert.equal(queued.shouldStart(), false, 'a far preview cannot start with a materially outdated distance');
+    await app.run(() => queued.onStopped());
+    await app.serviceFix({ ...a, latitude: a.latitude + 62 / 111195 });
+    assert.match(app.speaks.at(-1), /^Через 390 метров плавно поверните направо/);
+  } finally { await app.close(); }
+});
+
+test('camera warnings start at 500 metres and current limit persists to its segment end', async () => {
+  const app = await setup({ roadFeatures: [
+    { id: 'camera', kind: 'speed_camera', along: 400 },
+    { id: 'limit', kind: 'speed_limit', speedLimit: 40, along: 0, endAlong: 200 },
+  ] });
+  try {
+    await app.gps(a); await app.speechStarted(); await app.run(() => app.speechOptions?.onDone?.()); await app.gps(a);
+    assert.equal(app.value.currentSpeedLimit, 40);
+    assert.match(app.speaks.at(-1), /камера контроля скорости/);
+    assert.equal(app.speechOptions.shouldStart(), true, 'camera cue is relevant outside the old 100 metre window');
+    await app.speechStarted(); await app.run(() => app.speechOptions?.onDone?.());
+    await app.serviceFix({ ...a, latitude: a.latitude + .0006 });
+    assert.equal(app.value.currentSpeedLimit, 40);
+    assert.ok(app.value.roadFeatures.every(feature => feature.id !== 'limit'), 'passed warning disappears while its limit remains');
+    await app.serviceFix({ ...a, latitude: a.latitude + .0012 });
+    await app.serviceFix({ ...a, latitude: a.latitude + .0019 });
+    assert.equal(app.value.currentSpeedLimit, null, 'leaving the mapped segment clears its speed limit');
+  } finally { await app.close(); }
+});
+
+test('rolling feature refresh keeps the active limit from the preceding road section', async () => {
+  const end = { latitude: a.latitude + .03, longitude: a.longitude };
+  const response = { ...route, geometry: [a,end], distanceMeters: 3335,
+    steps: [mkStep('depart', a, [a,end]), mkStep('arrive', end, [end])] };
+  const app = await setup({ routeResponse: response,
+    roadFeatures: call => call === 1 ? [{ id: 'limit', kind: 'speed_limit', speedLimit: 40, along: 0, endAlong: 1200 }]
+      : [{ id: 'limit-refreshed', kind: 'speed_limit', speedLimit: 40, along: 685, endAlong: 1885 }] });
+  try {
+    await app.gps(a);
+    assert.equal(app.value.currentSpeedLimit, 40);
+    for (let distance = 80; distance <= 800; distance += 80) {
+      await app.advance(1000);
+      await app.serviceFix({ ...a, latitude: a.latitude + distance / 111195 });
+    }
+    assert.ok(app.featureRequests.length >= 2, 'driving reaches the next feature window');
+    assert.equal(app.value.currentSpeedLimit, 40, 'window eviction preserves the active preceding speed section');
+    await app.update({ order: { ...order, status: 'ARRIVED' } });
+    assert.equal(app.value.currentSpeedLimit, null, 'ending navigation clears the old road limit');
+  } finally { await app.close(); }
+});
+
+test('a dense shortened feature window waits for route progress before requesting again', async () => {
+  const geometry = [a];
+  for (let index = 1; index <= 160; index++) geometry.push({ latitude: a.latitude + index * 2 / 111195,
+    longitude: a.longitude + (index % 2 ? 2 : 0) / (111195 * Math.cos(a.latitude * Math.PI / 180)) });
+  const end = geometry.at(-1);
+  const response = { ...route, geometry, distanceMeters: 453,
+    steps: [mkStep('depart', a, geometry), mkStep('arrive', end, [end])] };
+  const app = await setup({ routeResponse: response });
+  try {
+    await app.gps(a);
+    assert.equal(app.featureRequests.length, 1);
+    assert.ok(app.featureRequests[0].points.length <= 80);
+    await app.advance(3000); await app.gps(a); await app.advance(3000);
+    assert.equal(app.featureRequests.length, 1, 'a short loaded window is not fetched again while the driver stands still');
+  } finally { await app.close(); }
+});
+
+test('HUD shows distant sharp/slight direction, distinct arrows and the current speed limit', async () => {
+  const navigation = compile('../src/navigation.ts', {});
+  const { DriverNavigation } = compile('../src/DriverNavigation.tsx', {
+    react: { default: React },
+    'react-native': { ActivityIndicator: 'ActivityIndicator', Pressable: 'Pressable', Text: 'Text', View: 'View', StyleSheet: { create: value => value } },
+    'react-native-svg': { default: 'Svg', Path: 'Path', Circle: 'Circle' },
+    './navigation': navigation, './useDriverNavigation': {},
+    './ui': { colors: {}, tr: () => value => value, Icon: () => null },
+    './design/theme': { useTheme: () => ({ isDark: false, palette: {} }) },
+    './RoadFeatureAlerts': { RoadFeatureAlerts: () => null, SpeedLimitSign: props => React.createElement('SpeedLimitSign', props) },
+  });
+  const paths = [];
+  for (const modifier of ['slight right', 'right', 'sharp right']) {
+    const response = maneuverRoute('continue', modifier, 450);
+    const instruction = navigation.maneuverText(response.steps[1]);
+    const nav = { route: response, progress: { instruction, stepIndex: 1, maneuverDistance: 450, along: 0, offRouteMeters: 0 },
+      position: { accuracy: 5 }, loading: false, error: '', gpsStatus: '', voiceError: '', currentSpeedLimit: 40 };
+    let rendered;
+    await act(async () => { rendered = create(React.createElement(DriverNavigation, { navigation: nav, top: 10 })); });
+    try {
+      assert.ok(rendered.root.findAllByType('Text').some(text => text.props.children === instruction));
+      paths.push(rendered.root.findByType('Path').props.d);
+      assert.equal(rendered.root.findByType('SpeedLimitSign').props.speedLimit, 40);
+    } finally { await act(async () => rendered.unmount()); }
+  }
+  assert.equal(new Set(paths).size, 3, 'slight, normal and sharp bends have different arrow geometry');
+});
+
+test('distant traffic lights stay silent until their 150 metre approach', async () => {
+  const app = await setup({ roadFeatures: [{ id: 'light', kind: 'traffic_light', along: 200 }] });
   try {
     await app.gps(a); await app.speechStarted(); await app.run(() => app.speechOptions?.onDone?.());
     assert.equal(app.value.roadFeatures.length, 0);

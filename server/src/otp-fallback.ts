@@ -37,6 +37,10 @@ export class OtpFallback {
     let messageId:string;
     try { messageId=await this.delivery.sendWhatsapp(phone,code); }
     catch {
+      if (!this.config.telegramGatewayToken) {
+        await this.finish(job.id,'failed');
+        throw new ServiceUnavailableException('Не удалось отправить код в WhatsApp. Попробуйте позже.');
+      }
       this.logger.warn('WhatsApp OTP submission failed; attempting Telegram Gateway');
       return this.toTelegram(job,false);
     }
@@ -60,7 +64,7 @@ export class OtpFallback {
     }
     // Claim before sending: across workers/restarts there is at most one paid
     // Telegram request. Ambiguous network failures are never retried blindly.
-    const claimed=await this.db.otpDeliveryAttempt.updateMany({where:{id:job.id,state:{in:['sending_whatsapp','whatsapp_pending']},expiresAt:{gt:now}},data:{state:'telegram_sending',channel:'telegram',nextCheckAt:new Date(Date.now()+15000)}});
+    const claimed=await this.db.otpDeliveryAttempt.updateMany({where:{id:job.id,state:{in:['sending_whatsapp','whatsapp_pending','whatsapp_failed']},expiresAt:{gt:now}},data:{state:'telegram_sending',channel:'telegram',nextCheckAt:new Date(Date.now()+15000)}});
     if (!claimed.count) throw new ServiceUnavailableException('Запрос кода уже обрабатывается.');
     try {
       const code=unsealOtp(job.codeCiphertext,this.config.otpSecret,identity(job));
@@ -88,21 +92,25 @@ export class OtpFallback {
       await this.db.otpDeliveryAttempt.updateMany({where:{codeCiphertext:{not:''},expiresAt:{lte:now}},data:{state:'expired',codeCiphertext:''}});
       await this.db.otpDeliveryAttempt.updateMany({where:{state:{in:['sending_whatsapp','telegram_sending']},nextCheckAt:{lt:new Date(Date.now()-30000)}},data:{state:'failed',codeCiphertext:''}});
       await this.db.otpDeliveryAttempt.deleteMany({where:{expiresAt:{lt:new Date(Date.now()-86400000)}}});
-      if (!this.config.telegramGatewayToken || this.config.smsProvider!=='messaggio') return;
-      const jobs=await this.db.otpDeliveryAttempt.findMany({where:{state:'whatsapp_pending',expiresAt:{gt:now},nextCheckAt:{lte:now}},take:8,orderBy:{nextCheckAt:'asc'}});
+      if (!['messaggio','whatsapp_cloud'].includes(this.config.smsProvider)) return;
+      const jobs=await this.db.otpDeliveryAttempt.findMany({where:{state:{in:['whatsapp_pending','whatsapp_failed']},expiresAt:{gt:now},nextCheckAt:{lte:now}},take:8,orderBy:{nextCheckAt:'asc'}});
       await Promise.all(jobs.map(job=>this.check(job).catch(()=>this.logger.warn('OTP delivery check deferred'))));
     } catch {this.logger.warn('OTP delivery worker deferred');}
     finally {this.running=false;}
   }
 
   private async check(job:OtpDeliveryAttempt) {
-    const claimed=await this.db.otpDeliveryAttempt.updateMany({where:{id:job.id,state:'whatsapp_pending',nextCheckAt:job.nextCheckAt},data:{nextCheckAt:new Date(Date.now()+15000)}});
+    const claimed=await this.db.otpDeliveryAttempt.updateMany({where:{id:job.id,state:job.state,nextCheckAt:job.nextCheckAt},data:{nextCheckAt:new Date(Date.now()+15000)}});
     if (!claimed.count) return;
     const challenge=await this.db.smsChallenge.findUnique({where:{phone:job.phone}});
     if (!challenge || challenge.codeHash!==job.codeHash || challenge.consumedAt || challenge.expiresAt.getTime()<=Date.now()) {await this.finish(job.id,'stopped');return;}
+    if (job.state==='whatsapp_failed') {if(this.config.telegramGatewayToken) await this.toTelegram(job);else await this.finish(job.id,'failed');return;}
     let result:'pending'|'failed'|'delivered'='pending';
     try {result=await this.delivery.whatsappStatus(job.whatsappMessageId!,job.phone);} catch { /* Wait for the delivery deadline on status API outages. */ }
     if (result==='delivered') {await this.finish(job.id,'whatsapp_delivered');return;}
-    if (result==='failed' || Date.now()-job.createdAt.getTime()>=60000) await this.toTelegram(job);
+    if (result==='failed' || Date.now()-job.createdAt.getTime()>=60000) {
+      if (this.config.telegramGatewayToken) await this.toTelegram(job);
+      else if(result==='failed') await this.finish(job.id,'failed');
+    }
   }
 }

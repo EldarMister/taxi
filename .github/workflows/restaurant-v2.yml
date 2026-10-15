@@ -1,0 +1,68 @@
+name: Atlas Restaurant V2
+on:
+  pull_request:
+    paths: ['apps/atlas-restaurant/**', 'server/src/restaurant*', 'server/src/food*', 'server/src/content-domain.ts', 'server/test/restaurant*', '.github/workflows/restaurant-v2.yml']
+  push:
+    branches: ['feature/atlas-restaurant-v2', 'main']
+    paths: ['apps/atlas-restaurant/**', 'server/src/restaurant*', 'server/src/food*', '.github/workflows/restaurant-v2.yml']
+  workflow_dispatch:
+jobs:
+  application:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/atlas-restaurant
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: apps/atlas-restaurant/package-lock.json
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: atlas-restaurant-bundles
+          path: apps/atlas-restaurant/dist
+  api-compatibility:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: taxi
+          POSTGRES_PASSWORD: restaurant_ci_only
+          POSTGRES_DB: taxi_test
+        ports: ['55432:5432']
+        options: >-
+          --health-cmd "pg_isready -U taxi -d taxi_test"
+          --health-interval 5s --health-timeout 3s --health-retries 20
+    env:
+      NODE_ENV: development
+      DATABASE_URL: postgresql://taxi:restaurant_ci_only@127.0.0.1:55432/taxi_test?schema=public
+      TEST_DATABASE_RESET: 'true'
+      JWT_SECRET: restaurant-ci-jwt-not-a-production-secret-123456
+      OTP_SECRET: restaurant-ci-otp-not-a-production-secret-123456
+      DEV_AUTH_ENABLED: 'true'
+      DEV_OTP_CODE: '123456'
+      SMS_PROVIDER: development
+      PUSH_PROVIDER: development
+      ROUTING_PROVIDER: osrm
+    defaults:
+      run:
+        working-directory: server
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: server/package-lock.json
+      - run: npm ci
+      - run: npm run db:migrate
+      - run: npm run build
+      - run: npm run test:restaurant
+      - run: npx tsx --test --test-concurrency=1 test/restaurant-v2.integration.test.ts

@@ -1,4 +1,5 @@
 import * as SecureStore from 'expo-secure-store';
+import { savedPermissionStep, type PermissionIntroState, type PermissionRole } from '../permissionFlow';
 
 export interface SessionTokens { accessToken: string; refreshToken: string }
 const options: SecureStore.SecureStoreOptions = {
@@ -53,14 +54,30 @@ export async function writeLastOrderId(id: string | null): Promise<void> {
     : SecureStore.deleteItemAsync('taxi.lastOrderId', options));
 }
 
-export type PermissionIntroState = 'location' | 'notifications' | 'done';
+export type { PermissionIntroState } from '../permissionFlow';
 const permissionIntroKey = (userId: string) => `taxi.permissionIntro.v1.${userId}`;
+const permissionFlowKey = (userId: string, role: PermissionRole) => `taxi.permissionIntro.v2.${role.toLowerCase()}.${userId}`;
+const deletedPermissionAccounts = new Set<string>();
 
-export async function readPermissionIntro(userId: string): Promise<PermissionIntroState> {
-  const value = await SecureStore.getItemAsync(permissionIntroKey(userId), options);
-  return value === 'notifications' || value === 'done' ? value : 'location';
+export async function readPermissionIntro(userId: string, role: PermissionRole = 'CLIENT'): Promise<PermissionIntroState> {
+  await storageQueue;
+  const value = await SecureStore.getItemAsync(permissionFlowKey(userId, role), options);
+  if (value != null) return savedPermissionStep(value, role);
+  // Completed accounts retain their result. Unfinished legacy flows restart
+  // at notifications so the changed order cannot skip a required step.
+  const legacy = await SecureStore.getItemAsync(permissionIntroKey(userId), options);
+  return legacy === 'done' ? 'done' : 'notifications';
 }
 
-export async function writePermissionIntro(userId: string, value: PermissionIntroState): Promise<void> {
-  await SecureStore.setItemAsync(permissionIntroKey(userId), value, options);
+export async function writePermissionIntro(userId: string, value: PermissionIntroState, role: PermissionRole = 'CLIENT'): Promise<void> {
+  await serializeStorage(async () => { if (!deletedPermissionAccounts.has(userId)) await SecureStore.setItemAsync(permissionFlowKey(userId, role), savedPermissionStep(value, role), options); });
+}
+
+export async function clearPermissionIntro(userId: string): Promise<void> {
+  deletedPermissionAccounts.add(userId);
+  await serializeStorage(() => Promise.all([
+    SecureStore.deleteItemAsync(permissionIntroKey(userId), options),
+    SecureStore.deleteItemAsync(permissionFlowKey(userId, 'CLIENT'), options),
+    SecureStore.deleteItemAsync(permissionFlowKey(userId, 'DRIVER'), options),
+  ]).then(() => undefined));
 }

@@ -95,7 +95,7 @@ export function ClientCompletionPanel({ order, user, busy, onDone, onRating, onH
       <ScrollView contentContainerStyle={s.thankYouContent} showsVerticalScrollIndicator={false} bounces={false}>
         <View style={s.thankYouArt}>
           <SuccessCelebration key={`thanks-${order.id}`} variant="thankYou" size={210} testID="thank-you-celebration"/>
-          <Animated.Image source={require('../assets/success-blue-car.png')} resizeMode="cover" accessibilityLabel={say('Синий автомобиль', 'Көк унаа')} style={[s.thankYouCar, { opacity: carEntry, transform: [{ translateY: carEntry.interpolate({ inputRange: [0, 1], outputRange: [26, 0] }) }, { scale: carEntry.interpolate({ inputRange: [0, 1], outputRange: [.9, 1] }) }] }]}/>
+          <Animated.Image source={require('../assets/success-blue-car.webp')} resizeMode="cover" accessibilityLabel={say('Синий автомобиль', 'Көк унаа')} style={[s.thankYouCar, { opacity: carEntry, transform: [{ translateY: carEntry.interpolate({ inputRange: [0, 1], outputRange: [26, 0] }) }, { scale: carEntry.interpolate({ inputRange: [0, 1], outputRange: [.9, 1] }) }] }]}/>
         </View>
         <Text style={[s.thankYouTitle, isDark && s.darkInk]}>{say('Спасибо\nза ваш отзыв!', 'Пикириңиз үчүн\nрахмат!')}</Text>
         <Text style={[s.thankYouSubtitle, isDark && s.darkMuted]}>{say('Ваше мнение помогает нам\nделать Atlas лучше', 'Сиздин пикириңиз Atlasты\nжакшыртууга жардам берет')} <Icon name="heart" size={19} color={isDark ? '#FFFFFF' : '#087FFF'}/></Text>

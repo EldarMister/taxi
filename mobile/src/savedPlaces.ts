@@ -5,6 +5,8 @@ export type SavedPlaceKind = 'home' | 'work' | 'favorite';
 export type SavedPlaces = Partial<Record<SavedPlaceKind, Point>>;
 
 const key = (userId: string) => `taxi.saved-places.v1.${userId.replace(/[^a-zA-Z0-9._-]/g, '_')}`;
+const deletedAccounts = new Set<string>();
+let writes: Promise<unknown> = Promise.resolve();
 
 function validPoint(value: unknown): value is Point {
   if (!value || typeof value !== 'object') return false;
@@ -15,6 +17,8 @@ function validPoint(value: unknown): value is Point {
 }
 
 export async function readSavedPlaces(userId: string): Promise<SavedPlaces> {
+  await writes;
+  if (deletedAccounts.has(userId)) return {};
   const raw = await SecureStore.getItemAsync(key(userId));
   if (!raw) return {};
   try {
@@ -29,5 +33,14 @@ export async function readSavedPlaces(userId: string): Promise<SavedPlaces> {
 }
 
 export async function writeSavedPlaces(userId: string, places: SavedPlaces): Promise<void> {
-  await SecureStore.setItemAsync(key(userId), JSON.stringify(places));
+  const operation = writes.then(async () => { if (!deletedAccounts.has(userId)) await SecureStore.setItemAsync(key(userId), JSON.stringify(places)); });
+  writes = operation.catch(() => undefined);
+  await operation;
+}
+
+export async function clearSavedPlaces(userId: string): Promise<void> {
+  deletedAccounts.add(userId);
+  const operation = writes.then(() => SecureStore.deleteItemAsync(key(userId)));
+  writes = operation.catch(() => undefined);
+  await operation;
 }

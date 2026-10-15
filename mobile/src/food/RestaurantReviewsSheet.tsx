@@ -5,6 +5,7 @@ import { BottomPanel } from '../BottomPanel';
 import { useTheme } from '../design/theme';
 import { fonts } from '../design/typography';
 import { palette as brand } from '../design/tokens';
+import { ratingStarColor } from '../ui';
 import { FoodButton } from './components';
 import { useFoodLanguage, useFoodT } from './i18n';
 import { sortRestaurantReviews, type RestaurantReviewSort } from './restaurantReviews';
@@ -50,7 +51,7 @@ export function RestaurantReviewsSheet({ restaurant, onClose, loading, error, on
             : error ? <View style={s.empty}><Text style={[s.emptyTitle, { color: palette.ink }]}>{t('Не удалось загрузить отзывы')}</Text><Text style={[s.emptyText, { color: palette.muted }]}>{error}</Text>{onRetry && <FoodButton label={t('Повторить')} onPress={onRetry}/>}</View>
             : reviews.length ? reviews.map(review => <View key={review.id} testID={`restaurant-review-${review.id}`} style={[s.review, { borderTopColor: palette.line }]}>
               <View style={s.reviewHeading}><View style={s.authorCopy}><Text style={[s.author, { color: palette.ink }]}>{review.authorName}</Text><Text style={[s.date, { color: palette.muted }]}>{[date(review.createdAt), review.source].filter(Boolean).join(' · ')}</Text></View>
-                <View accessibilityLabel={`${review.rating} ${t('из 5')}`} style={s.stars}>{Array.from({ length: 5 }, (_, index) => <Ionicons key={index} name={review.rating >= index + 1 ? 'star' : review.rating > index ? 'star-half' : 'star-outline'} size={20} color="#FFE500"/>)}</View>
+                <View accessibilityLabel={`${review.rating} ${t('из 5')}`} style={s.stars}>{Array.from({ length: 5 }, (_, index) => <Ionicons key={index} name={review.rating >= index + 1 ? 'star' : review.rating > index ? 'star-half' : 'star-outline'} size={20} color={ratingStarColor}/>)}</View>
               </View><Text style={[s.reviewText, { color: palette.ink }]}>{review.text}</Text>
             </View>) : <View testID="restaurant-reviews-empty" style={[s.empty, { borderTopColor: palette.line, borderTopWidth: StyleSheet.hairlineWidth }]}><Text style={[s.emptyTitle, { color: palette.ink }]}>{t('Отзывов пока нет')}</Text><Text style={[s.emptyText, { color: palette.muted }]}>{t('Здесь появятся отзывы клиентов о ресторане.')}</Text></View>}
         </ScrollView>

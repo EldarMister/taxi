@@ -28,6 +28,11 @@ test('last-order writes finish in call order so dismissal survives a slow earlie
   }).outputText;
   const exports = {};
   vm.runInNewContext(compiled, { exports, require: id => {
+    if (id === '../permissionFlow') {
+      const flow = {};
+      vm.runInNewContext(ts.transpileModule(read('src/permissionFlow.ts'), { compilerOptions: { module: ts.ModuleKind.CommonJS } }).outputText, { exports: flow });
+      return flow;
+    }
     assert.equal(id, 'expo-secure-store');
     return secureStore;
   } });
@@ -60,12 +65,13 @@ test('both production app variants configure MapLibre without a legacy map key',
       for (const variant of ['client', 'driver']) {
         process.env.APP_VARIANT = variant;
         const { exp } = getConfig(process.cwd());
-        assert.equal(exp.android.package, variant === 'client' ? 'kg.taxigo.app' : 'kg.taxigo.driver');
+        assert.equal(exp.android.package, variant === 'client' ? 'atlas.kg' : 'atlas.pro');
         assert.equal(exp.newArchEnabled, false);
         const location=exp.plugins.find(p=>Array.isArray(p)&&p[0]==='expo-location')[1];
         assert.equal(location.isAndroidBackgroundLocationEnabled,variant==='driver');
         assert.equal(location.isAndroidForegroundServiceEnabled,variant==='driver');
         assert.equal(location.isIosBackgroundLocationEnabled,variant==='driver');
+        assert.equal(exp.android.permissions.includes('android.permission.SYSTEM_ALERT_WINDOW'), variant === 'driver');
         assert.ok(exp.plugins.includes('@maplibre/maplibre-react-native'));
         assert.equal(Object.hasOwn(exp.ios.infoPlist, 'YandexMapKitAPIKey'), false);
       }
@@ -101,7 +107,8 @@ test('profile editing uses the gallery and both chat builds can access the camer
 
 test('an ambiguous driver accept keeps the offer until authoritative reconciliation', () => {
   const app = read('App.tsx');
-  const accept = app.slice(app.indexOf('const accept ='), app.indexOf('const skip ='));
+  const accept = app.slice(app.indexOf('async function acceptOffer('), app.indexOf('async function skipOffer('));
+  assert.match(app, /const accept = \(offer: Order\) => run\(\(\) => acceptOffer\(offer\)\)/);
   assert.doesNotMatch(accept, /finally\s*\{|setOffers\(/);
   assert.match(accept, /catch \(e\)[\s\S]*await sync\(\);[\s\S]*orderRef\.current\?\.id === offer\.id[\s\S]*throw e/);
 });
@@ -117,16 +124,16 @@ test('foreground GPS uses a fast cached fix, precise fallback and keeps coordina
   assert.match(location, /requestForegroundPermissionsAsync\(\)[\s\S]*getForegroundPermissionsAsync\(\)/);
   assert.match(location, /enableNetworkProviderAsync/);
   assert.match(app, /address: `GPS:/);
-  assert.match(app, /await rememberPermissionStep\("notifications"\);\s*locateAfterPermissionGrant\(currentUser\)/);
-  assert.match(app, /locationPermission\?\.granted[\s\S]*rememberPermissionStep\("notifications"\)/);
+  assert.match(app, /rememberPermissionStep\(nextPermissionStep\(step, permissionRole\), currentUser\.id\)/);
+  assert.match(app, /if \(step === 'location'\) locateAfterPermissionGrant\(currentUser\)/);
+  assert.match(app, /getOnboardingPermissionState\(step\)[\s\S]*if \(!permission\.granted\)/);
   assert.match(app, /showUserPosition=\{locationEnabled && !driver\}/);
   assert.match(map, /driverPosition \? 'Показать водителя' : 'Моё местоположение'/);
   assert.match(map, /await getCurrentPosition\(\)/);
   assert.doesNotMatch(app, /navigate-outline/, 'the old duplicate map control is gone');
   assert.match(app, /state === "active"[\s\S]*refreshLocationPermission/);
-  assert.match(map, /showUserPosition && passengerView && <UserLocation visible=\{false\} onUpdate=/);
-  assert.match(map, /client-user-position/);
-  assert.doesNotMatch(map, /<UserLocation renderMode="native"/, 'the native puck must not paint a blue accuracy radius');
+  assert.match(map, /showUserPosition && passengerView && <UserLocation visible renderMode="native" androidRenderMode="compass" showsUserHeadingIndicator/);
+  assert.doesNotMatch(map, /client-user-position|map-user-location\.png/, 'native SDK owns the client position indicator');
   // Motion, geographic rotation and lifecycle are exercised against the actual
   // marker/camera in map-selection.test.cjs, not pinned to a source-code pattern.
 });
@@ -155,8 +162,9 @@ test('auth uses iOS keyboard padding and Android resize; chat keeps its composer
   assert.match(auth, /behavior=\{Platform\.OS === 'ios' \? 'padding' : undefined\}/);
   assert.match(read('android/app/src/main/AndroidManifest.xml'), /android:windowSoftInputMode="adjustResize"/);
   assert.match(auth, /keyboardDismissMode=\{Platform\.OS === 'ios' \? 'interactive' : 'on-drag'\}/);
-  assert.match(overlays, /<KeyboardAvoidingView[^>]+behavior="padding"/);
-  assert.match(overlays, /input\.current\?\.blur\(\); Keyboard\.dismiss\(\); onClose\(\)/);
+  assert.match(overlays, /<KeyboardAvoidingView[^>]+behavior=\{Platform\.OS === 'ios' \? 'padding' : undefined\}/);
+  assert.match(overlays, /const dismissComposerKeyboard = \(\) => \{ input\.current\?\.blur\(\); Keyboard\.dismiss\(\); \}/);
+  assert.match(overlays, /const closeChat = \(\) => \{ dismissComposerKeyboard\(\); onClose\(\); \}/);
   assert.match(overlays, /<ScrollView[\s\S]*style=\{\{ flex: 1 \}\}[\s\S]*keyboardShouldPersistTaps="handled"/);
 });
 

@@ -11,6 +11,16 @@ const source = ts.transpileModule(fs.readFileSync(path.join(__dirname, '../src/f
 vm.runInNewContext(source, { exports: exportsObject });
 const { restaurantCategories, filterRestaurants } = exportsObject;
 const clone = value => JSON.parse(JSON.stringify(value));
+
+test('external cuisines reuse sheet groups, deduplicate labels and preserve custom merchant cuisines', () => {
+  const catalog = ['Японская кухня', 'Япония', 'Узбекская', 'Корейская', '', 'Алкоголь'].map(cuisine => ({ cuisine }));
+  assert.deepEqual(clone(exportsObject.restaurantCuisines(catalog)), ['Япония', 'Восток', 'Корейская']);
+});
+
+test('selecting a canonical cuisine matches that merchant even without a cuisine-specific dish category', () => {
+  const catalog = [{ id: 'east', name: 'Кебаб', cuisine: 'Восток', categories: ['Шашлык'], dishes: [{ name: 'Кебаб', category: 'Шашлык' }] }];
+  assert.deepEqual(clone(filterRestaurants(catalog, '', 'Все', { dishes: [], cuisines: ['Восток'], sort: 'default' })).map(item => item.id), ['east']);
+});
 const merchants = [
   { id: 'east', name: 'Восток', cuisine: 'Узбекская кухня', categories: ['Плов', 'Национальная кухня'], imageKey: 'east', dishes: [{ name: 'Самса', category: 'Выпечка', imageKey: 'samsa', available: true }] },
   { id: 'burger', name: 'Парк Бургер', cuisine: 'Бургеры', categories: ['Бургеры', 'Фастфуд', 'Бургеры'], imageKey: 'restaurant-burger', dishes: [{ name: 'Комбо', category: 'Комбо', imageKey: 'combo', available: true }, { name: 'Чизбургер', category: 'Бургеры', imageKey: 'burger', imageUrl: 'https://example.test/burger.jpg', available: true }] },

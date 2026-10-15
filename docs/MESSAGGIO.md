@@ -15,10 +15,10 @@ Account registration alone does not enable WhatsApp delivery.
    Messaggio/Meta and wait for the sender to become active. Ask Messaggio support
    to enable WhatsApp **authentication codes to Kyrgyzstan (+996)** if necessary.
 2. Create and obtain approval for an **AUTHENTICATION** template with a single
-   code variable in the body and a **Copy Code** button. Select a supported
+   code variable in the body and **Zero-tap (Без нажатия)** for Android, with the
+   Copy Code/one-tap fallback included by Meta. Select a supported
    language (e.g. Russian `ru`); use exactly the approved language and template
-   name in Atlas. This implementation targets Copy Code, not Android one-tap
-   or zero-tap templates.
+   name in Atlas. Add both supported Android apps from the table below.
 3. In the activated sender's API details find **Project Login** and **Code API**.
    Project Login is the credential for the `Messaggio-Login` header, not the
    password used to sign in to the dashboard. Code API identifies the sender;
@@ -28,7 +28,7 @@ Account registration alone does not enable WhatsApp delivery.
 
 Send this request to your Messaggio manager/support if the required options are
 missing: “We need WhatsApp AUTHENTICATION OTP delivery for Atlas, recipients in
-Kyrgyzstan (+996), six-digit codes, five-minute expiry, Copy Code button. Please
+Kyrgyzstan (+996), six-digit codes, five-minute expiry, Android Zero-tap and Copy Code fallback. Please
 activate the sender and template and provide Project Login, sender Code API,
 the approved template name and its language code for the Multichannel API.”
 
@@ -144,3 +144,20 @@ pending until the sender, template and credentials are supplied.
 Setup references:
 [Sender registration](https://messaggio.com/guides/how-to-create-a-sender-id/),
 [WhatsApp sender requirements](https://messaggio.com/guides/whatsapp-sender-id-requirements/).
+
+## Android WhatsApp autofill (1.2.11+)
+
+The client and driver integrate the official [WhatsApp Android OTP SDK 1.0.0](https://github.com/WhatsApp/WhatsApp-Android-OTP-SDK) from Maven Central.
+
+| App | Android package | Signing hash (current direct APK signing certificate) |
+| --- | --- | --- |
+| Atlas | atlas.kg | AhDnRV8wj+C |
+| Atlas pro | atlas.pro | zpsXs/K48RO |
+
+Register both apps in the approved AUTHENTICATION template's supported apps. Choose Zero-tap, Russian ru (or the approved language), and five-minute expiry matching server OTP lifetime. Hashes are package + certificate; a different Play App Signing certificate needs recalculation. Both current local APKs keep the existing signing certificate.
+
+Before sending the code request, the app creates an unpredictable handshake UUID and broadcasts the SDK handshake to both WhatsApp and WhatsApp Business. The receiver and one-tap activity use the SDK to validate that UUID. Only a six-digit code from the current, unexpired attempt reaches the code input. Early responses are buffered until the server has accepted request-code. Incoming native data never bypasses normal server verification, attempt limits or single-use consumption. Codes stay in process memory only and are cleared on cancel, success, supersession and expiry; process death falls back to manual entry.
+
+Wrong/expired/duplicate handshakes, old phone numbers, failed send requests and late async responses are ignored. A native code arriving while manual verification is in flight remains buffered. Unsupported devices/SDK, iOS, unavailable WhatsApp and Telegram delivery preserve manual input/paste. The phone screen explains automatic filling before the handshake.
+
+The SDK does not activate a sender or approve a template. Until the approved Zero-tap template and Messaggio credentials are configured on the API, real WhatsApp delivery cannot be tested. No new credential belongs in mobile public environment variables. Messaggio receives the same six-digit body/button parameters as before; the approved template determines its Android autofill behavior. Confirm your sender supports that template through the Multichannel API before activating it.

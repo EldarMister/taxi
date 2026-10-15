@@ -20,6 +20,17 @@ export class AppConfig {
   readonly messaggioWhatsappTemplate = process.env.MESSAGGIO_WHATSAPP_TEMPLATE?.trim() || '';
   readonly messaggioWhatsappLanguage = process.env.MESSAGGIO_WHATSAPP_LANGUAGE?.trim() || 'ru';
   readonly telegramGatewayToken = process.env.TELEGRAM_GATEWAY_TOKEN?.trim() || '';
+  readonly nikitaApiKey = process.env.NIKITA_API_KEY?.trim() || '';
+  readonly testAuthPhones = (process.env.TEST_AUTH_PHONES ?? '').split(',').map(phone => phone.trim()).filter(Boolean);
+  readonly testAuthCode = process.env.TEST_AUTH_CODE ?? this.devCode;
+  readonly whatsappCloudToken = process.env.WHATSAPP_CLOUD_TOKEN?.trim() || '';
+  readonly whatsappCloudPhoneId = process.env.WHATSAPP_CLOUD_PHONE_ID?.trim() || '';
+  readonly whatsappCloudWabaId = process.env.WHATSAPP_CLOUD_WABA_ID?.trim() || '';
+  readonly whatsappCloudTemplate = process.env.WHATSAPP_CLOUD_TEMPLATE?.trim() || '';
+  readonly whatsappCloudLanguage = process.env.WHATSAPP_CLOUD_LANGUAGE?.trim() || 'ru';
+  readonly whatsappCloudVersion = process.env.WHATSAPP_CLOUD_VERSION?.trim() || 'v25.0';
+  readonly whatsappCloudAppSecret = process.env.WHATSAPP_CLOUD_APP_SECRET?.trim() || '';
+  readonly whatsappCloudVerifyToken = process.env.WHATSAPP_CLOUD_VERIFY_TOKEN?.trim() || '';
   readonly routingProvider = process.env.ROUTING_PROVIDER ?? 'osrm';
   readonly osrmBaseUrl = this.endpoint('OSRM_BASE_URL', 'https://router.project-osrm.org');
   readonly nominatimBaseUrl = process.env.NOMINATIM_BASE_URL?.trim() ? this.endpoint('NOMINATIM_BASE_URL', '') : '';
@@ -36,7 +47,7 @@ export class AppConfig {
     }
     if (!process.env.DATABASE_URL) throw new Error('DATABASE_URL is required');
     if (this.jwtSecret === this.otpSecret) throw new Error('Use different JWT_SECRET and OTP_SECRET');
-    if (!['development','http','messaggio'].includes(this.smsProvider)) throw new Error('Unknown SMS_PROVIDER');
+    if (!['development','http','messaggio','whatsapp_cloud','nikita'].includes(this.smsProvider)) throw new Error('Unknown SMS_PROVIDER');
     if (this.routingProvider !== 'osrm') throw new Error('ROUTING_PROVIDER must be osrm');
     if (!['development','firebase','expo'].includes(this.pushProvider)) throw new Error('Unknown PUSH_PROVIDER');
     if (!this.development && [this.smsProvider, this.pushProvider].includes('development')) {
@@ -48,6 +59,9 @@ export class AppConfig {
       this.require('SMS_GATEWAY_TOKEN');
       if (!this.require('SMS_GATEWAY_URL').startsWith('https://')) throw new Error('SMS_GATEWAY_URL must use HTTPS');
     }
+    if (this.smsProvider === 'nikita' && !/^[a-f0-9]{32}$/i.test(this.nikitaApiKey)) throw new Error('Invalid or missing NIKITA_API_KEY');
+    if (this.testAuthPhones.some(phone => !/^\+996\d{9}$/.test(phone))) throw new Error('Invalid TEST_AUTH_PHONES');
+    if (this.testAuthPhones.length && !/^\d{6}$/.test(this.testAuthCode)) throw new Error('TEST_AUTH_CODE must have six digits');
     if (this.smsProvider === 'messaggio') {
       for (const [key, value] of [
         ['MESSAGGIO_LOGIN', this.messaggioLogin],
@@ -59,6 +73,18 @@ export class AppConfig {
       if (!/^[a-z]{2,3}(?:_[A-Z]{2})?$/.test(this.messaggioWhatsappLanguage)) throw new Error('Invalid MESSAGGIO_WHATSAPP_LANGUAGE');
     }
     if (this.telegramGatewayToken && (this.telegramGatewayToken.length > 512 || /[\r\n]/.test(this.telegramGatewayToken))) throw new Error('Invalid TELEGRAM_GATEWAY_TOKEN');
+    if (this.smsProvider === 'whatsapp_cloud') {
+      for (const [key,value] of [
+        ['WHATSAPP_CLOUD_TOKEN',this.whatsappCloudToken],
+        ['WHATSAPP_CLOUD_APP_SECRET',this.whatsappCloudAppSecret],
+        ['WHATSAPP_CLOUD_VERIFY_TOKEN',this.whatsappCloudVerifyToken],
+      ]) if (!value || value.length > 4096 || /[\r\n]/.test(value)) throw new Error(`Invalid or missing ${key}`);
+      if (!/^\d{6,30}$/.test(this.whatsappCloudPhoneId)) throw new Error('Invalid WHATSAPP_CLOUD_PHONE_ID');
+      if (!/^\d{6,30}$/.test(this.whatsappCloudWabaId)) throw new Error('Invalid WHATSAPP_CLOUD_WABA_ID');
+      if (!/^[a-z0-9_]{1,512}$/.test(this.whatsappCloudTemplate)) throw new Error('Invalid WHATSAPP_CLOUD_TEMPLATE');
+      if (!/^[a-z]{2,3}(?:_[A-Z]{2})?$/.test(this.whatsappCloudLanguage)) throw new Error('Invalid WHATSAPP_CLOUD_LANGUAGE');
+      if (!/^v\d{2}\.0$/.test(this.whatsappCloudVersion)) throw new Error('Invalid WHATSAPP_CLOUD_VERSION');
+    }
     if (!this.development) {
       if (!process.env.OSRM_BASE_URL || new URL(this.osrmBaseUrl).hostname === 'router.project-osrm.org') throw new Error('Configure a dedicated OSRM_BASE_URL outside development');
       if (!this.nominatimBaseUrl) throw new Error('Configure a dedicated NOMINATIM_BASE_URL outside development');

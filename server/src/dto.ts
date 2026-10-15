@@ -3,6 +3,7 @@ import { ArrayMaxSize, ArrayMinSize, IsArray, IsBoolean, IsDefined, IsIn, IsInt,
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 export class PhoneDto {
   @ApiProperty({example:'+996700123456'}) @Matches(/^\+[1-9]\d{7,14}$/) phone!:string;
+  @ApiPropertyOptional({enum:['client','driver'],default:'client'}) @IsOptional() @IsIn(['client','driver']) appVariant?:'client'|'driver';
 }
 export class VerifyDto extends PhoneDto {
   @ApiProperty({example:'123456'}) @Matches(/^\d{6}$/) code!:string;
@@ -12,6 +13,8 @@ export class RefreshDto {
 }
 export class ProfileDto {
   @ApiPropertyOptional() @IsOptional() @IsString() @MaxLength(80) name?:string;
+  @ApiPropertyOptional() @IsOptional() @IsString() @MaxLength(80) firstName?:string;
+  @ApiPropertyOptional() @IsOptional() @IsString() @MaxLength(80) lastName?:string;
   @ApiPropertyOptional() @IsOptional() @IsBoolean() notifications?:boolean;
   @ApiPropertyOptional({enum:['ru','ky']}) @IsOptional() @IsIn(['ru','ky']) language?:string;
 }
@@ -112,6 +115,7 @@ export class OrdersHistoryDto {
 export class PushTokenDto {
   @ApiProperty() @IsString() @MinLength(20) @MaxLength(4096) token!:string;
   @ApiProperty({enum:['android','ios']}) @IsIn(['android','ios']) platform!:string;
+  @ApiPropertyOptional() @IsOptional() @IsBoolean() driverOfferActions?:boolean;
 }
 export class RemovePushTokenDto { @ApiProperty() @IsString() @MaxLength(4096) token!:string; }
 export class TopupDto {

@@ -137,10 +137,10 @@ test('release configuration rejects placeholder and device-local servers', () =>
 
 test('server rejection is shown without reporting a lost network or replaying an SMS', async () => {
   let calls = 0; const events = [];
-  const { api } = setup(async () => { calls++; return reply(429, { message: 'Слишком много запросов. Попробуйте позже.' }); });
+  const { api } = setup(async () => { calls++; return reply(429, { message: 'Слишком много запросов. Попробуйте позже.', retryAfterSeconds: 42 }); });
   api.subscribe(event => events.push(event));
   await assert.rejects(api.post('/auth/request-code', { phone: '+996700123456' }),
-    error => error.status === 429 && error.message.includes('Слишком много запросов'));
+    error => error.status === 429 && error.retryAfterSeconds === 42 && error.message.includes('Слишком много запросов'));
   assert.equal(calls, 1);
   assert.deepEqual(events, ['online']);
 });

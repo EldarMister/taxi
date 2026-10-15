@@ -11,6 +11,7 @@ const generationKey = (base: string, generationId: string, index: number) => `${
 const legacyCountKey = (base: string) => `${base}.count`;
 const legacyChunkKey = (base: string, index: number) => `${base}.${index}`;
 const operations = new Map<string, Promise<void>>();
+const deletedAccounts = new Set<string>();
 type Generation = { id: string; count: number };
 type Manifest = { current: Generation; previous?: Generation };
 
@@ -41,6 +42,7 @@ export async function readRegistrationDraft(userId: string): Promise<Registratio
 export function writeRegistrationDraft(userId: string, application: RegistrationApplication) {
   const base = keyFor(userId); const value = JSON.stringify(application);
   return enqueue(base, async() => {
+    if (deletedAccounts.has(userId)) return;
     const chunks = splitSecureStoreValue(value);
     if (!validCount(chunks.length)) throw new Error('Черновик анкеты слишком большой для локального сохранения.');
     const previousManifest = parseManifest(await SecureStore.getItemAsync(manifestKey(base)));
@@ -67,6 +69,11 @@ export function clearRegistrationDraft(userId: string) {
     if (validCount(count)) await Promise.all(Array.from({ length: count }, (_, index) => SecureStore.deleteItemAsync(legacyChunkKey(base, index))));
     await SecureStore.deleteItemAsync(legacyCountKey(base));
   });
+}
+
+export function deleteRegistrationDraft(userId: string) {
+  deletedAccounts.add(userId);
+  return clearRegistrationDraft(userId);
 }
 
 function validCount(value: number) { return Number.isInteger(value) && value >= 1 && value <= 100; }

@@ -13,6 +13,24 @@ const compile = file => ts.transpileModule(fs.readFileSync(path.join(__dirname, 
 }).outputText;
 const point = (address, latitude = 42.87) => ({ address, latitude, longitude: 74.57 });
 const textOf = node => typeof node === 'string' ? node : node.children?.map(textOf).join('') || '';
+const pureModules = new Map();
+function loadPure(file) {
+  if (!pureModules.has(file)) {
+    const exports = {};
+    vm.runInNewContext(compile(file + '.ts'), { exports, require: id => loadPure(id.replace('./', '')) });
+    pureModules.set(file, exports);
+  }
+  return pureModules.get(file);
+}
+const addressIcons = {};
+vm.runInNewContext(compile('AddressPlaceIcon.tsx'), {
+  exports: addressIcons,
+  require: id => {
+    if (id === 'react' || id === 'react/jsx-runtime') return require(id);
+    if (id === 'react-native-svg') return { __esModule: true, default: 'Svg', Path: 'SvgPath' };
+    throw Error(id);
+  },
+});
 
 async function setup(t, initialProps = {}, history = []) {
   const requests = [], searches = [], selected = [], fields = [];
@@ -33,6 +51,8 @@ async function setup(t, initialProps = {}, history = []) {
         return React.createElement('BottomPanel', { closeRequested, onClose }, children);
       } };
       if (id === './address') return { shortAddress: address => address || '' };
+      if (id === './addressSearchPresentation') return loadPure('addressSearchPresentation');
+      if (id === './AddressPlaceIcon') return addressIcons;
       if (id === './api') return { messageOf: error => error.message, api: { request: async url => { requests.push(url); return history; } } };
       if (id === './native/search') return { searchAddresses: (query, center, signal) => new Promise((resolve, reject) => searches.push({ query, center, signal, resolve, reject })) };
       if (id === './ui') return { Icon: 'Icon', PickupIcon: 'PickupIcon', colors: {}, s: {}, tr: () => value => value };
@@ -86,6 +106,24 @@ test('the map button retains a visible background and border in dark mode', asyn
   assert.equal(style[1].backgroundColor, '#1D1D1D');
   assert.equal(style[1].borderColor, '#353535');
   assert.equal(style[0].borderWidth, 1);
+});
+
+test('named geocoder results show the venue above its address and preserve the full selected point', async t => {
+  const h = await setup(t);
+  const venue = point('Азия Молл · проспект Чынгыза Айтматова, 3, Бишкек', 42.8557139);
+  venue.longitude = 74.5849844;
+  await h.type('Asia Mall');
+  await h.pause();
+  await h.resolve(0, [venue]);
+  const row = h.button(venue.address);
+  assert.ok(row);
+  const texts = row.findAllByType('Text').map(textOf);
+  assert.deepEqual(texts, ['Азия Молл', 'Магазин · проспект Чынгыза Айтматова, 3, Бишкек']);
+  await h.tap(venue.address);
+  assert.deepEqual(h.selected, [venue]);
+  await h.update({dropoff:venue,field:'pickup'});
+  await h.update({field:'dropoff'});
+  assert.equal(h.input().props.value, venue.address);
 });
 
 test('edits debounce a fresh automatic search and cancel the previous request', async t => {
@@ -197,4 +235,69 @@ test('saved home address uses the taxi search with one field, map and GPS choice
   const second = await setup(t, { savedPlace: { title: 'Адрес работы' }, onMap: () => { mapOpens++; } });
   await second.tap('Выбрать на карте');
   assert.equal(mapOpens, 1);
+});
+
+test('your address edits pickup as a single address with no trip destination controls', async t => {
+  const original = point('Текущий адрес');
+  const h = await setup(t, { field: 'pickup', pickup: original, dropoff: point('Старая поездка'), savedPlace: { title: 'Ваш адрес', point: original } });
+  assert.equal(h.input().props.value, original.address);
+  assert.equal(h.input().props.autoFocus, true);
+  assert.equal(h.input().props.placeholder, 'Введите адрес');
+  const text = textOf(h.renderer.root);
+  assert.match(text, /Ваш адрес/);
+  assert.doesNotMatch(text, /Точка посадки|Пункт назначения|Старая поездка/);
+  await h.type('Новый адрес'); await h.keyboardSubmit(); await h.resolve(0, [point('Новый адрес')]); await h.tap('Новый адрес');
+  assert.equal(h.selected[0].address, 'Новый адрес');
+  assert.deepEqual(h.fields, []);
+});
+
+test('pickup result distances use GPS and destination distances recalculate from pickup', async t => {
+  const gps = point('GPS', 42.87), pickup = point('Подача', 42.88), destination = point('Киевская 12', 42.89);
+  const h = await setup(t, { field: 'pickup', userLocation: gps, pickup, center: point('Карта', 43.5) });
+  await h.type('Киевская'); await h.pause(); await h.resolve(0, [destination]);
+  assert.equal(h.searches[0].center.latitude, gps.latitude);
+  assert.equal(textOf(h.renderer.root.findByProps({ testID: 'address-distance' })), '2,2 км');
+  await h.update({ field: 'dropoff' });
+  await h.type('Киевская'); await h.pause(); await h.resolve(1, [destination]);
+  assert.equal(h.searches[1].center.latitude, pickup.latitude);
+  assert.equal(textOf(h.renderer.root.findByProps({ testID: 'address-distance' })), '1,1 км');
+  await h.update({ pickup: point('Новая подача', 42.885) });
+  await h.resolve(2, [destination]);
+  assert.equal(textOf(h.renderer.root.findByProps({ testID: 'address-distance' })), '556 м');
+});
+
+test('camera position never masquerades as GPS or pickup when showing result distances', async t => {
+  const h = await setup(t, { field: 'pickup', userLocation: null, pickup: point('Старая подача') });
+  await h.type('Чуй'); await h.pause(); await h.resolve(0, [point('Чуй 12')]);
+  assert.equal(h.renderer.root.findAllByProps({ testID: 'address-distance' }).length, 0);
+  await h.update({ field: 'dropoff', pickup: null, userLocation: point('GPS') });
+  await h.type('Чуй'); await h.pause(); await h.resolve(1, [point('Чуй 12')]);
+  assert.equal(h.renderer.root.findAllByProps({ testID: 'address-distance' }).length, 0);
+});
+
+test('result icons use category metadata and only matching query text is highlighted', async t => {
+  const h = await setup(t);
+  const hospital = { ...point('Альфа Мед · улица Киевская, 12, Бишкек'), category: 'hospital' };
+  await h.type('альфа 12'); await h.pause(); await h.resolve(0, [hospital, point('улица Школьная, 4')]);
+  const result = h.button(hospital.address);
+  assert.equal(result.findByType('SvgPath').props.d, addressIcons.addressPlaceIconPaths.hospital);
+  assert.equal(result.findByType('SvgPath').props.fill, '#555C63');
+  assert.equal(result.findByType('SvgPath').props.fillRule, 'evenodd');
+  assert.equal(result.findByType('Svg').props.accessible, false, 'decorative glyph does not duplicate the accessible result label');
+  const nestedTexts = result.findAllByType('Text').filter(node => node.parent?.type === 'Text');
+  assert.deepEqual(nestedTexts.map(textOf), ['Альфа', '12']);
+  assert.equal(h.button('улица Школьная, 4').findByType('SvgPath').props.d, addressIcons.addressPlaceIconPaths.location);
+});
+
+test('reference categories use their basket and bed glyphs, including readable dark mode', async t => {
+  const h = await setup(t, { darkTheme: true });
+  const supermarket = { ...point('Глобус · улица Медерова, 15'), category: 'supermarket' };
+  const hotel = { ...point('Rixon Hotel · улица Медерова, 71'), category: 'hotel' };
+  await h.type('Медерова'); await h.pause(); await h.resolve(0, [supermarket, hotel]);
+  for (const place of [supermarket, hotel]) {
+    const glyph = h.button(place.address).findByType('SvgPath');
+    assert.equal(glyph.props.d, addressIcons.addressPlaceIconPaths[place.category]);
+    assert.equal(glyph.props.fill, '#B0B6BE');
+  }
+  assert.notEqual(addressIcons.addressPlaceIconPaths.supermarket, addressIcons.addressPlaceIconPaths.hotel);
 });

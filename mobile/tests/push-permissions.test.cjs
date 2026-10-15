@@ -15,9 +15,11 @@ function setup(options = {}) {
   const calls = [], storage = new Map(), timers = new Map();
   const native = {
     getPermissionsAsync: async () => { if (options.unsupported) throw new Error('Native module unavailable'); return permission; },
-    requestPermissionsAsync: async () => { permissionRequests++; permission = options.answer ?? { status: 'granted', canAskAgain: true }; return permission; },
+    requestPermissionsAsync: async () => { permissionRequests++; permission = options.answer ?? { status: 'granted', canAskAgain: true }; return options.requestResult ?? permission; },
     getExpoPushTokenAsync: async ({ projectId }) => { tokenAttempts++; tokenProject = projectId; return options.token ? options.token(tokenAttempts) : { data: 'ExpoPushToken[test]' }; },
     setNotificationChannelAsync: async () => {}, setNotificationHandler: value => { notificationHandler = value; }, AndroidImportance: { HIGH: 4 }, AndroidAudioUsage: { NOTIFICATION: 5 }, AndroidAudioContentType: { SONIFICATION: 4 },
+    setNotificationCategoryAsync: async () => { if (options.categories) await options.categories(); },
+    dismissAllNotificationsAsync: async () => calls.push({ dismissed: true }), clearLastNotificationResponseAsync: async () => calls.push({ lastResponseCleared: true }),
   };
   const api = { getTokens: () => ({ accessToken: 'signed-in' }), request: async (url, init) => { calls.push({ url, ...init }); if (options.network) return options.network(url, init); } };
   const exports = {};
@@ -29,16 +31,48 @@ function setup(options = {}) {
     require: id => {
       if (id === 'expo-notifications') return native;
       if (id === 'expo-device') return { isDevice: options.isDevice ?? true };
-      if (id === 'expo-constants') return { expoConfig: { extra: { eas: { projectId: options.noProject ? undefined : 'configured-project' } } } };
+      if (id === 'expo-constants') return { expoConfig: { android: { package: options.driver ? 'atlas.pro' : 'atlas.kg' }, extra: { eas: { projectId: options.noProject ? undefined : 'configured-project' } } } };
       if (id === 'expo-secure-store') return { setItemAsync: async (key, value) => storage.set(key, value), getItemAsync: async key => storage.get(key), deleteItemAsync: async key => storage.delete(key) };
       if (id === 'react-native') return { AppState: { currentState: options.appState ?? 'active' }, Platform: { OS: options.os ?? 'android' }, Linking: { openSettings: async () => {} } };
       if (id === './driverSounds') return { driverSounds: { isDriver: () => options.driver ?? false } };
+      if (id === '../driverOfferNotification') return { DRIVER_OFFER_CATEGORY: 'atlas-driver-offer-v1', driverOfferButtons: () => [] };
+      if (id === '../auth/languageStore') return { selectedLanguage: () => 'ru' };
       if (id === '../api') return { api };
       throw new Error(`Unexpected dependency: ${id}`);
     },
   });
   return { ...exports, calls, storage, timers, get tokenAttempts() { return tokenAttempts; }, get tokenProject() { return tokenProject; }, get notificationHandler() { return notificationHandler; }, get permissionRequests() { return permissionRequests; } };
 }
+
+test('native offer capability is advertised only by the Android driver build', async () => {
+  for (const [os, driver, expected] of [['android', true, true], ['android', false, false], ['ios', true, false]]) {
+    const h = setup({ os, driver, permission: { status: 'granted', canAskAgain: true } });
+    await h.registerPushNotifications();
+    assert.equal(JSON.parse(h.calls.find(call => call.method === 'POST').body).driverOfferActions, expected);
+  }
+});
+
+test('logout during category setup cannot start token registration for a later account', async () => {
+  const pending = deferred(); const h = setup({ categories: () => pending.promise });
+  const registration = h.registerPushNotifications();
+  await h.unregisterPushNotifications(); pending.resolve();
+  assert.equal(await registration, null); assert.equal(h.tokenAttempts, 0); assert.equal(h.calls.length, 0);
+});
+
+test('deleted accounts forget device push state and cancel delayed registration without another server request', async () => {
+  const pending = deferred();
+  const h = setup({ permission: { status: 'granted', canAskAgain: true }, token: () => pending.promise });
+  h.storage.set('taxi.pushToken', 'old-token');
+  const registration = h.registerPushNotifications();
+  for (let tick = 0; tick < 8; tick++) await Promise.resolve();
+  const removed = h.forgetPushNotifications();
+  pending.resolve({ data: 'late-token' });
+  await Promise.all([registration, removed]);
+  assert.equal(h.storage.has('taxi.pushToken'), false);
+  assert.equal(h.calls.some(call => call.url), false);
+  assert.ok(h.calls.some(call => call.dismissed));
+  assert.ok(h.calls.some(call => call.lastResponseCleared));
+});
 
 test('driver uses its packaged push project and background offers retain notification sound', async () => {
   const h = setup({ driver: true, appState: 'background', env: { EXPO_PUBLIC_EAS_PROJECT_ID: 'client-project' }, permission: { status: 'granted', canAskAgain: true } });
@@ -76,13 +110,31 @@ test('denied permission never registers a device or repeatedly opens the system 
   assert.equal(h.permissionRequests, 1); assert.equal(h.tokenAttempts, 0); assert.equal(h.calls.length, 0);
 });
 
-test('unsupported native notifications return capability state instead of a raw SDK error', async () => {
-  const h = setup({ unsupported: true });
+test('a notification prompt result cannot overrule the actual OS permission state', async () => {
+  const h = setup({ answer: { status: 'denied', canAskAgain: false }, requestResult: { status: 'granted', canAskAgain: true } });
+  const permission = await h.requestNotificationAccess();
+  assert.equal(permission.granted, false);
+  assert.equal(permission.canAskAgain, false);
+  assert.equal(h.permissionRequests, 1);
+  assert.equal(h.tokenAttempts, 0);
+});
+
+test('a transient native notification error remains retryable and cannot become an unsupported platform', async () => {
+  const options = { unsupported: true };
+  const h = setup(options);
+  await assert.rejects(h.requestNotificationAccess(), /Не удалось запросить разрешение/);
+  await assert.rejects(h.getNotificationPermissionState(), /Не удалось проверить разрешение/);
+  assert.equal(await h.registerPushNotifications(), null);
+  assert.equal(h.calls.length, 0);
+  options.unsupported = false;
+  assert.equal((await h.requestNotificationAccess()).granted, true);
+});
+
+test('browser notification support remains explicitly unavailable without a pretend OS grant', async () => {
+  const h = setup({ os: 'web' });
   const permission = await h.requestNotificationAccess();
   assert.equal(permission.supported, false);
   assert.equal(permission.granted, false);
-  assert.equal(await h.registerPushNotifications(), null);
-  assert.equal(h.calls.length, 0);
 });
 
 test('provider failure leaves permission intact and a later retry registers successfully', async () => {
@@ -112,7 +164,7 @@ test('logout fences an in-flight provider response and never attaches it to a la
   const h = setup({ permission: { status: 'granted', canAskAgain: true }, token: () => provider.promise });
   const first = h.registerPushNotifications();
   const second = h.registerPushNotifications();
-  for (let i = 0; i < 10; i++) await Promise.resolve();
+  for (let i = 0; i < 30 && h.tokenAttempts === 0; i++) await Promise.resolve();
   assert.equal(h.tokenAttempts, 1);
   await h.unregisterPushNotifications();
   provider.resolve({ data: 'ExpoPushToken[late]' });

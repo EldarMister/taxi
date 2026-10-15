@@ -1,5 +1,5 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
-import { useColorScheme, View } from 'react-native';
+import { Appearance, useColorScheme, View } from 'react-native';
 import { readThemePreference, writeThemePreference } from './themeStore';
 import type { ThemePreference } from './themeStore';
 
@@ -72,6 +72,9 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
     void writeThemePreference(value).catch(() => undefined);
   }, []);
   const resolved = resolveTheme(preference, systemScheme);
+  useEffect(() => {
+    Appearance.setColorScheme(preference === 'system' ? null : preference);
+  }, [preference]);
   const context = useMemo<ThemeContextValue>(() => ({
     preference,
     setPreference,

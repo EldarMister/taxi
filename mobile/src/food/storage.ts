@@ -6,8 +6,10 @@ export type FoodCart = { restaurantId: string; lines: CartLine[]; restaurantComm
 export type FoodState = { restaurantId: string | null; lines: CartLine[]; carts?: FoodCart[]; favorites: string[]; favoriteDishes: string[]; address: string; checkout?: Omit<CheckoutDetails, 'address'>; pending?: { signature: string; requestId: string }; resumeCheckout?: boolean };
 const key = (userId: string) => `taxi.food.v1.${userId.replace(/[^a-zA-Z0-9._-]/g, '_')}`;
 let queue: Promise<unknown> = Promise.resolve();
+const deletedAccounts = new Set<string>();
 export async function readFoodState(userId: string): Promise<FoodState | null> {
   await queue;
+  if (deletedAccounts.has(userId)) return null;
   const raw = await SecureStore.getItemAsync(key(userId));
   if (!raw) return null;
   try {
@@ -31,7 +33,14 @@ export async function readFoodState(userId: string): Promise<FoodState | null> {
   } catch { return null; }
 }
 export function writeFoodState(userId: string, state: FoodState): Promise<void> {
-  const operation = queue.then(() => SecureStore.setItemAsync(key(userId), JSON.stringify(state)));
+  const operation = queue.then(async () => { if (!deletedAccounts.has(userId)) await SecureStore.setItemAsync(key(userId), JSON.stringify(state)); });
+  queue = operation.catch(() => undefined);
+  return operation;
+}
+
+export function clearFoodState(userId: string): Promise<void> {
+  deletedAccounts.add(userId);
+  const operation = queue.then(() => SecureStore.deleteItemAsync(key(userId)));
   queue = operation.catch(() => undefined);
   return operation;
 }

@@ -1,5 +1,6 @@
 export type Language = "ru" | "ky" | "en";
-export type Point = { latitude: number; longitude: number; address: string };
+export type PlaceCategory = 'building' | 'supermarket' | 'shop' | 'office' | 'school' | 'kindergarten' | 'hospital' | 'stadium' | 'home' | 'pharmacy' | 'hotel' | 'restaurant' | 'cafe' | 'bank' | 'park' | 'transport';
+export type Point = { latitude: number; longitude: number; address: string; category?: PlaceCategory };
 export type Coordinate = {
   latitude: number;
   longitude: number;
@@ -26,6 +27,8 @@ export type User = {
   id: string;
   phone: string;
   name: string;
+  firstName?: string;
+  lastName?: string;
   photoUrl?: string | null;
   role: "CLIENT" | "DRIVER" | "ADMIN";
   notifications: boolean;
@@ -147,6 +150,7 @@ export type Order = {
   driverRating?: number | null;
   routeProvider?: string;
 };
+// Display metadata belongs to search results, never to strict booking/saved-place DTOs.
 export const normalizePoint = ({
   latitude,
   longitude,
@@ -177,6 +181,7 @@ export type Balance = {
 };
 export type AppConfig = {
   supportPhone?: string;
+  balanceTopupTelegramUrl?: string | null;
   currency: string;
   development: boolean;
 };

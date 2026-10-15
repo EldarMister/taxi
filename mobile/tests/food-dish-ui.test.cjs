@@ -13,7 +13,7 @@ const dish = { id: 'dish', name: 'Очень длинное название б�
 const options = [{ id: 'small', name: 'Маленькая', price: 10 }, { id: 'large', name: 'Большая', price: 20 }, { id: 'box', name: 'Упаковка', price: 30, priceScope: 'PER_ITEM' }];
 const restaurant = { id: 'restaurant', dishes: [dish], options };
 
-function harness({ reduced = false, realSheet = false, width = 320 } = {}) {
+function harness({ reduced = false, realSheet = false, width = 320, dark = false } = {}) {
   const shared = [], animations = [], backListeners = [], jsCalls = [];
   let photoRenders = 0;
   const native = Object.fromEntries(['View', 'Text', 'Image', 'Pressable', 'ScrollView', 'TextInput', 'ActivityIndicator'].map(name => [name, name]));
@@ -54,7 +54,7 @@ function harness({ reduced = false, realSheet = false, width = 320 } = {}) {
       if (id === '../design/motion') return { SpringPressable: node('SpringPressable'), Reveal: node('Reveal'), useMotionPreference: () => reduced };
       if (id === '../design/tokens') return { palette: { ...colors, canvas: '#f7f7f5' }, radii: { small: 12, large: 22 } };
       if (id === '../design/typography') return { fonts: {} };
-      if (id === '../design/theme') return { useTheme: () => ({ palette: { ...colors, background: '#f7f7f5', elevated: '#eee', accent: colors.blue, accentText: '#fff' } }) };
+      if (id === '../design/theme') return { useTheme: () => ({ isDark: dark, palette: { ...colors, background: '#f7f7f5', elevated: '#eee', accent: colors.blue, accentText: '#fff' } }) };
       if (id === '../BottomPanel') return { BottomPanel: node('BottomPanel') };
       if (id === './foodTheme') return { useFoodColors: () => colors, useFoodStyles: value => value };
       if (id === './i18n') return { useFoodT: () => value => value, useFoodLanguage: () => 'ru' };
@@ -63,7 +63,7 @@ function harness({ reduced = false, realSheet = false, width = 320 } = {}) {
       if (id === './NumberTicker') return { NumberTicker: node('NumberTicker') };
       if (id === './components') return { money: value => `${value} сом`, foodColors: colors, FoodButton: node('FoodButton'), FoodFavoriteButton: node('FoodFavoriteButton'), FoodHeader: node('FoodHeader'), FoodIconButton: node('FoodIconButton') };
       if (id === './DishSheet' && !realSheet) return { DishSheet: props => React.createElement('DishSheet', props, props.children, props.footer) };
-      if (/\.(jpg|png|webp)$/.test(id)) return 'image';
+      if (/\.(jpg|png|webp)$/.test(id)) return id;
       if (id.startsWith('./')) return load(`${id.slice(2)}.${fs.existsSync(path.join(__dirname, '../src/food', `${id.slice(2)}.tsx`)) ? 'tsx' : 'ts'}`);
       throw new Error(`Unexpected dependency ${id}`);
     } });
@@ -71,6 +71,20 @@ function harness({ reduced = false, realSheet = false, width = 320 } = {}) {
   }
   return { load, shared, animations, backListeners, jsCalls, getPhotoRenders: () => photoRenders };
 }
+
+for (const dark of [false, true]) test(`${dark ? 'dark' : 'light'} modifiers keep blue selection and subdued empty circles`, async () => {
+  const h=harness({dark}), {DishScreen}=h.load('DishScreen.tsx'); let renderer;
+  await act(async()=>{renderer=create(React.createElement(DishScreen,{dish,restaurant,onBack(){},onAdd(){},onFavorite(){},favorite:false}));});
+  const option=()=>renderer.root.findAllByType('SpringPressable').find(node=>node.props.accessibilityLabel==='Упаковка, плюс 30 сом');
+  const circle=()=>option().findAllByType('View').find(node=>flatten(node.props.style).borderRadius===13);
+  assert.equal(flatten(circle().props.style).borderColor,dark ? '#4B515C' : '#E3E3DF');
+  assert.equal(flatten(circle().props.style).backgroundColor,dark ? '#25282D' : '#F1F1EF');
+  await act(async()=>option().props.onPress());
+  assert.equal(flatten(circle().props.style).backgroundColor,'#087FFF');
+  assert.equal(flatten(circle().props.style).borderColor,'#087FFF');
+  assert.ok(circle().findAll(node=>node.props.name==='checkmark'&&node.props.color==='#FFFFFF').length);
+  await act(async()=>renderer.unmount());
+});
 
 test('card photo, two-line title and footer keep the same bounds at 0, 1, 20 and after image loading', async () => {
   const h = harness(); const { DishCard } = h.load('DishCard.tsx');
@@ -178,6 +192,43 @@ const catalogProps = restaurants => ({ restaurants, onBack() {}, onRestaurant() 
   onCart() {}, onDeliveryInfo() {}, cartCount: 0, cartTotal: 0 });
 const restaurantIds = root => root.findAllByType('View').filter(node => node.props.testID?.startsWith('restaurant-card-')).map(node => node.props.testID.replace('restaurant-card-', ''));
 
+test('external dish and cuisine rails select multiple values and share committed filters with the sheet', async () => {
+  const { RestaurantsScreen } = harness().load('CatalogScreens.tsx');
+  const merchants = [catalogMerchant('burger', 'Бургеры', { cuisine: 'Европа' }), catalogMerchant('sushi', 'Суши', { cuisine: 'Япония' }), catalogMerchant('plov', 'Плов', { cuisine: 'Восток', dishes: [{ ...dish, name: 'Плов', category: 'Плов' }] })];
+  let renderer;
+  await act(async () => { renderer = create(React.createElement(RestaurantsScreen, catalogProps(merchants))); });
+  const rail = (id, label) => renderer.root.findByProps({ testID: id }).findAllByType('Pressable').find(node => node.props.accessibilityLabel === label);
+  await act(async () => { rail('restaurant-categories', 'Бургеры').props.onPress(); rail('restaurant-categories', 'Суши').props.onPress(); });
+  assert.deepEqual(restaurantIds(renderer.root), ['burger', 'sushi']);
+  assert.equal(rail('restaurant-categories', 'Бургеры').props.accessibilityState.checked, true);
+  assert.equal(rail('restaurant-categories', 'Суши').props.accessibilityState.checked, true);
+  assert.equal(rail('restaurant-categories', 'Суши').props.accessibilityRole, 'checkbox');
+  await act(async () => { rail('restaurant-cuisines', 'Европа').props.onPress(); rail('restaurant-cuisines', 'Япония').props.onPress(); });
+  assert.deepEqual(restaurantIds(renderer.root), ['burger', 'sushi']);
+  await act(async () => rail('restaurant-cuisines', 'Европа').props.onPress());
+  assert.deepEqual(restaurantIds(renderer.root), ['sushi']);
+  assert.equal(rail('restaurant-cuisines', 'Япония').props.accessibilityState.checked, true);
+  const filtersButton = () => renderer.root.findAllByType('FoodIconButton').find(node => node.props.name === 'options');
+  assert.equal(filtersButton().props.label, 'Фильтры: 3');
+  await act(async () => filtersButton().props.onPress());
+  const panel = () => renderer.root.findByType('BottomPanel');
+  const choice = label => panel().findAllByType('Pressable').find(node => node.props.accessibilityLabel === label);
+  for (const label of ['Бургеры', 'Суши', 'Япония']) assert.equal(choice(label).props.accessibilityState.checked, true);
+  await act(async () => choice('Суши').props.onPress());
+  assert.equal(rail('restaurant-categories', 'Суши').props.accessibilityState.checked, true, 'draft changes wait for Apply');
+  await act(async () => panel().findAllByType('Pressable').find(node => node.findAllByType('Text').some(text => text.props.children === 'Применить')).props.onPress());
+  await act(async () => panel().props.onClose());
+  assert.equal(rail('restaurant-categories', 'Суши').props.accessibilityState.checked, false);
+  assert.deepEqual(restaurantIds(renderer.root), [], 'dish alternatives combine with the selected cuisine');
+  assert.equal(renderer.root.findAllByType('Image').filter(node => String(node.props.source).includes('empty-search-atlas-3d.webp')).length, 1);
+  await act(async () => renderer.root.findAllByType('Pressable').find(node => node.findAllByType('Text').some(text => text.props.children === 'Сбросить')).props.onPress());
+  assert.deepEqual(restaurantIds(renderer.root), ['burger', 'sushi', 'plov']);
+  assert.equal(filtersButton().props.label, 'Фильтры');
+  assert.equal(rail('restaurant-categories', 'Бургеры').props.accessibilityState.checked, false);
+  assert.equal(rail('restaurant-cuisines', 'Япония').props.accessibilityState.checked, false);
+  await act(async () => renderer.unmount());
+});
+
 test('menu scroll crosses to JS only at section/header boundaries and does not rerender dish photographs', async () => {
   const h = harness();
   const { RestaurantScreen } = h.load('CatalogScreens.tsx');
@@ -203,7 +254,7 @@ test('menu scroll crosses to JS only at section/header boundaries and does not r
   await act(async () => renderer.unmount());
 });
 
-test('restaurant filters keep drafts until apply, discard cancelled changes and reset removed categories', async () => {
+test('restaurant filters keep drafts until apply, discard cancelled changes and retain selections when catalog changes', async () => {
   const { RestaurantsScreen } = harness().load('CatalogScreens.tsx');
   const merchants = [catalogMerchant('burger', 'Бургеры'), catalogMerchant('sushi', 'Суши')];
   const props = catalogProps(merchants);
@@ -233,8 +284,13 @@ test('restaurant filters keep drafts until apply, discard cancelled changes and 
   await act(async () => categoryRail().findAllByType('Pressable').find(node => node.props.accessibilityLabel === 'Суши').props.onPress());
   assert.deepEqual(restaurantIds(renderer.root), ['sushi']);
   await act(async () => renderer.update(React.createElement(RestaurantsScreen, { ...props, restaurants: [merchants[0]] })));
+  assert.deepEqual(restaurantIds(renderer.root), []);
+  assert.ok(icon('Фильтры: 1'));
+  const illustration = renderer.root.findAllByType('Image').find(node => String(node.props.source).includes('empty-search-atlas-3d'));
+  assert.equal(illustration.props.resizeMode, 'contain');
+  assert.equal(illustration.props.accessible, false);
+  await act(async () => renderer.root.findAllByType('Pressable').find(node => node.findAllByType('Text').some(text => text.props.children === 'Сбросить')).props.onPress());
   assert.deepEqual(restaurantIds(renderer.root), ['burger']);
-  assert.ok(icon('Фильтры'));
   assert.equal(categoryRail().findAllByType('Pressable').length, 1);
   await act(async () => renderer.unmount());
 });
@@ -275,26 +331,19 @@ test('configured restaurant promotions use live data and favorite actions are in
   await act(async () => renderer.unmount());
 });
 
-test('demo advertisements open their merchant, never advertise live merchants without a campaign, and yield to configured creative', async () => {
+test('restaurant advertisements use only the published set and hide completely when it is removed', async () => {
   const { RestaurantAdvertisements } = harness().load('RestaurantAdvertisements.tsx');
   const sushi = catalogMerchant('sushi-roll', 'Суши', { isDemo: true });
   const chicken = catalogMerchant('kfc', 'Курица', { isDemo: true });
   const plov = catalogMerchant('halva', 'Плов', { isDemo: true });
-  // Use a known campaign id so the live merchant check cannot pass merely because its id is unknown.
   const liveMerchant = catalogMerchant('halva', 'Плов', { isDemo: false });
   const opened = [], clickedBanners = [];
   const props = { restaurants: [sushi, liveMerchant, chicken, plov], banners: [], width: 361,
     onRestaurant: value => opened.push(value), onBanner: value => clickedBanners.push(value) };
   let renderer;
   await act(async () => { renderer = create(React.createElement(RestaurantAdvertisements, props)); });
-  const campaigns = renderer.root.findAllByType('SpringPressable');
-  assert.equal(campaigns.length, 3);
-  for (const campaign of campaigns) {
-    assert.equal(flatten(campaign.props.style).width, 115);
-    assert.equal(flatten(campaign.props.style).height, 115);
-  }
-  await act(async () => { campaigns[0].props.onPress(); campaigns[1].props.onPress(); campaigns[2].props.onPress(); });
-  assert.deepEqual(opened, [sushi, chicken, plov]);
+  assert.equal(renderer.toJSON(), null, 'demo restaurants cannot create ads absent from the published set');
+  assert.deepEqual(opened, []);
   assert.deepEqual(clickedBanners, []);
   await act(async () => renderer.update(React.createElement(RestaurantAdvertisements, { ...props, restaurants: [liveMerchant] })));
   assert.equal(renderer.toJSON(), null, 'live merchants have no synthetic advertising');
@@ -302,13 +351,13 @@ test('demo advertisements open their merchant, never advertise live merchants wi
     actionType: 'RESTAURANT', restaurantId: liveMerchant.id, imageUrl: 'https://images.test/merchant-creative.jpg' };
   await act(async () => renderer.update(React.createElement(RestaurantAdvertisements, { ...props, banners: [creative] })));
   const configured = renderer.root.findAllByType('SpringPressable');
-  assert.equal(configured.length, 1, 'configured creative replaces all demo fallback campaigns');
+  assert.equal(configured.length, 1, 'one published creative is a wide banner');
   assert.equal(flatten(configured[0].props.style).width, 361);
   assert.equal(flatten(configured[0].props.style).height, 361 / 2.04);
   assert.equal(configured[0].props.accessibilityLabel, 'Обед в Халве. Меню ресторана');
   await act(async () => configured[0].props.onPress());
   assert.deepEqual(clickedBanners, [creative]);
-  assert.deepEqual(opened, [sushi, chicken, plov]);
+  assert.deepEqual(opened, []);
   const three = [creative, { ...creative, id: 'campaign-two', sortOrder: 1 }, { ...creative, id: 'campaign-three', sortOrder: 2 }];
   await act(async () => renderer.update(React.createElement(RestaurantAdvertisements, { ...props, banners: three })));
   const small = renderer.root.findAllByType('SpringPressable');
@@ -321,6 +370,41 @@ test('demo advertisements open their merchant, never advertise live merchants wi
   }
   await act(async () => renderer.update(React.createElement(RestaurantAdvertisements, { ...props, banners: three.slice(0, 2) })));
   assert.equal(renderer.root.findAllByType('SpringPressable').length, 1, 'incomplete legacy sets never make a mixed-size rail');
+  await act(async () => renderer.update(React.createElement(RestaurantAdvertisements, { ...props, banners: [] })));
+  assert.equal(renderer.toJSON(), null, 'hiding all banners stays hidden even with demo restaurants in the catalog');
+  await act(async () => renderer.unmount());
+});
+
+test('configured ads support food, taxi and informational actions while filtering inactive or unavailable targets', async () => {
+  const { RestaurantAdvertisements } = harness().load('RestaurantAdvertisements.tsx');
+  const sushi = catalogMerchant('sushi-roll', 'Суши', { isDemo: true });
+  const opened = [], clicked = [];
+  const base = { title: 'Актуальный баннер', subtitle: '', active: true, imageUrl: 'https://images.test/current.jpg' };
+  const banners = [
+    { ...base, id: 'info', actionType: 'NONE', sortOrder: 2 },
+    { ...base, id: 'food', actionType: 'FOOD', sortOrder: 1 },
+    { ...base, id: 'taxi', actionType: 'TAXI', sortOrder: 0 },
+    { ...base, id: 'hidden', actionType: 'TAXI', active: false, sortOrder: -1 },
+    { ...base, id: 'unavailable', actionType: 'RESTAURANT', restaurantId: 'missing', sortOrder: -2 },
+  ];
+  let renderer;
+  const props = { restaurants: [sushi], banners, width: 361, onBanner: banner => clicked.push(banner.id), onRestaurant: value => opened.push(value) };
+  await act(async () => { renderer = create(React.createElement(RestaurantAdvertisements, props)); });
+  const cards = renderer.root.findAllByType('SpringPressable');
+  assert.equal(cards.length, 3);
+  assert.deepEqual(cards.map(card => card.props.disabled), [false, false, true]);
+  for (const card of cards) {
+    assert.equal(card.findAllByType('LinearGradient').length, 0, 'generic uploaded creatives retain their artwork');
+    assert.equal(card.findAllByType('Image').length, 1);
+  }
+  await act(async () => cards.forEach(card => card.props.onPress()));
+  assert.deepEqual(clicked, ['taxi', 'food'], 'configured actions are dispatched in publication order; NONE stays informational');
+  assert.deepEqual(opened, []);
+  await act(async () => renderer.update(React.createElement(RestaurantAdvertisements, { ...props, banners: [{ ...base, id: 'merchant', actionType: 'RESTAURANT', restaurantId: sushi.id, imageUrl: null, imageKey: 'sushi-roll' }], onBanner: undefined })));
+  const designed = renderer.root.findByType('SpringPressable');
+  assert.equal(designed.findAllByType('LinearGradient').length, 1, 'configured photograph keys retain the restaurant campaign design');
+  await act(async () => designed.props.onPress());
+  assert.deepEqual(opened, [sushi], 'merchant campaigns retain their direct restaurant action when no banner handler is provided');
   await act(async () => renderer.unmount());
 });
 

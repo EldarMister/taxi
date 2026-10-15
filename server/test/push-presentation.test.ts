@@ -1,6 +1,25 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { isPushNotificationEvent, pushNotificationEvents, pushPresentation } from '../src/pushPresentation';
+import { driverOfferPresentation, DRIVER_OFFER_CATEGORY, isPushNotificationEvent, pushNotificationEvents, pushPresentation } from '../src/pushPresentation';
+
+test('driver offers show price, both addresses and whole-trip road distance / estimate with action category', () => {
+  const order = { kind: 'RIDE', pickup: { address: 'Манас, 12', phone: 'private' }, dropoff: { address: 'Ала-Тоо' }, distanceMeters: 8400, durationSeconds: 1080, price: 450 };
+  const presentation = driverOfferPresentation(order);
+  assert.equal(presentation.title, 'Новый заказ · 450 сом');
+  assert.equal(presentation.body, 'Откуда: Манас, 12\nКуда: Ала-Тоо\nМаршрут: 8,4 км · ≈18 мин\nТакси · Наличные');
+  assert.equal(presentation.categoryId, DRIVER_OFFER_CATEGORY);
+  assert.equal(presentation.body.includes('private'), false);
+  assert.match(driverOfferPresentation({ ...order, kind: 'DELIVERY_TRUCK' }, 'ky').body, /Жүк ташуу/);
+  assert.match(driverOfferPresentation({ ...order, kind: 'DELIVERY_CAR' }, 'en').body, /Delivery/);
+});
+
+test('offer address copy is bounded, single-line and excludes arbitrary payload fields', () => {
+  const presentation = driverOfferPresentation({ kind: 'RIDE', pickup: { address: 'A\n\u0000B '.repeat(200), secret: 'never-send' }, dropoff: null, distanceMeters: NaN, durationSeconds: -1, price: 50 });
+  assert.equal(presentation.body.split('\n').length, 4);
+  assert.ok(presentation.body.length < 350);
+  assert.match(presentation.body, /Не указан/);
+  assert.equal(presentation.body.includes('never-send'), false);
+});
 
 test('client order lifecycle events have distinct actionable copy', () => {
   assert.equal(pushPresentation('order:created', 'CLIENT'), null);

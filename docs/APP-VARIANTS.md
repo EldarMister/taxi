@@ -2,10 +2,10 @@
 
 Один общий исходный код собирается в два независимо устанавливаемых приложения. Сервер, авторизация, карта, события Socket.IO и жизненный цикл заказа остаются общими, но бинарники имеют разные идентификаторы и принимают разные роли аккаунта.
 
-| Вариант | `APP_VARIANT` | Название | Android / iOS | Схема | Допустимая роль |
+| Вариант | `APP_VARIANT` | Название | Android | iOS | Схема | Допустимая роль |
 | --- | --- | --- | --- | --- | --- |
-| Клиент | `client` | Atlas | `kg.taxigo.app` | `taxi-go` | `CLIENT` |
-| Водитель | `driver` | Atlas pro | `kg.taxigo.driver` | `taxi-go-driver` | `DRIVER` |
+| Клиент | `client` | Atlas | `atlas.kg` | `kg.taxigo.app` | `taxi-go` | `CLIENT` |
+| Водитель | `driver` | Atlas pro | `atlas.pro` | `kg.taxigo.driver` | `taxi-go-driver` | `DRIVER` |
 
 Если `APP_VARIANT` не задан, всегда собирается прежнее клиентское приложение. Обычные команды `npm start`, `npm run android`, `npm run ios` и `npm run prebuild` также явно запускают клиентский вариант.
 
@@ -62,7 +62,7 @@ npm run build:ios:driver
 Для водительского приложения настроены отдельные облачные ресурсы:
 
 - `EXPO_PUBLIC_DRIVER_EAS_PROJECT_ID` — необязательное переопределение UUID отдельного EAS project; по умолчанию уже используется `c9056e00-5a97-482f-b121-75840b31d24e`;
-- Firebase project `taxi-go-driver-kg` с Android package `kg.taxigo.driver`;
+- Firebase project `taxi-go-driver-kg` с Android package `atlas.pro`;
 - `DRIVER_GOOGLE_SERVICES_FILE` — защищённый EAS-файл конфигурации Firebase;
 - отдельный Android keystore и ключ FCM V1 для push-уведомлений.
 
@@ -72,7 +72,11 @@ npm run build:ios:driver
 
 ## Защита от входа не в то приложение
 
-Проверка выполняется до загрузки пользовательского интерфейса при восстановлении сессии, при фоновой синхронизации и после подтверждения SMS-кода. Клиентский бинарник допускает только `CLIENT`, водительский — только `DRIVER`. Неподходящие токены и сохранённый идентификатор заказа очищаются, после чего показывается отдельный экран с указанием нужного приложения и кнопкой входа под другим номером.
+Проверка выполняется до загрузки пользовательского интерфейса при восстановлении сессии, при фоновой синхронизации и после подтверждения SMS-кода. Клиентский бинарник допускает только `CLIENT`, водительский — только `DRIVER`. Неподходящие токены и сохранённый идентификатор заказа очищаются; кнопка «Войти снова» позволяет подтвердить тот же номер в нужном приложении.
+
+С версии 1.2.26 оба запроса `/auth/request-code` и `/auth/verify-code` передают `appVariant: client | driver`. Сервер привязывает код к выбранному приложению и хранит отдельные UUID аккаунтов по уникальной паре `(phone, role)`. Один номер может одновременно использовать клиентское и водительское приложения. Существующие UUID и связи поездок сохраняются; старые водительские APK без `appVariant` нужно обновить перед повторным входом.
+
+Новый клиент после подтверждения номера заполняет имя и фамилию. Пара `firstName` + `lastName` сохраняется через `/users/me`, а `name` содержит их полную запись для профиля и поездок. Незаполненный экран восстанавливается после перезапуска; ранее сохранённые полные имена сохраняются без автоматического разделения. Новый аккаунт водителя сразу получает роль `DRIVER` и заполняет анкету исполнителя в своём приложении.
 
 Проверка конфигурации и role gate:
 
@@ -80,3 +84,16 @@ npm run build:ios:driver
 npm run test:variant
 npm run typecheck
 ```
+
+## Android packages from 1.2.10
+
+Client: `atlas.kg`; driver: `atlas.pro`. iOS bundle identifiers and deep links are unchanged. New Android IDs install as separate applications; accounts and server data remain, but users sign in again. Register both Android apps in their existing Firebase projects and refresh local files and EAS file variables before building. Old Firebase registrations remain for previously installed APKs.
+
+Directly signed APK app hashes with the current signing certificate:
+
+| App | Package | 11-character signing hash |
+| --- | --- | --- |
+| Atlas | atlas.kg | AhDnRV8wj+C |
+| Atlas pro | atlas.pro | zpsXs/K48RO |
+
+These hashes identify the package plus signing certificate; Play App Signing needs hashes calculated from the Play signing certificate instead. From 1.2.11 both Android apps implement zero-tap reception and the one-tap fallback through the official WhatsApp SDK. See MESSAGGIO.md for template activation.

@@ -1,15 +1,21 @@
 import React from 'react';
-import { Image, Pressable, ScrollView, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
+import { ActivityIndicator, Image, Pressable, ScrollView, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { StatusBar } from 'expo-status-bar';
 import type { Language, User } from './types';
-import { Button, Logo, colors, tr } from './ui';
+import { tr } from './ui';
 import { useTheme } from './design/theme';
+import { permissionPalettes } from './permissionPalette';
+import { PermissionIllustration } from './PermissionIllustration';
+import { permissionSteps, type PermissionStep } from './permissionFlow';
 
-export type PermissionStep = 'location' | 'notifications';
+export type { PermissionStep } from './permissionFlow';
 
-const artwork = {
-  location: require('../assets/onboarding-location.png'),
-  notifications: require('../assets/onboarding-notifications.png'),
+const titles: Record<PermissionStep, string> = {
+  notifications: 'Разрешите уведомления',
+  overlay: 'Разрешите отображение всплывающих окон',
+  location: 'Разрешите доступ к геолокации',
+  battery: 'Отключите энергосбережение',
 };
 
 export function PermissionOnboarding({ step, language, role, busy, error, openSettings, onAllow, onSkip }: {
@@ -22,48 +28,54 @@ export function PermissionOnboarding({ step, language, role, busy, error, openSe
   onAllow: () => void;
   onSkip: () => void;
 }) {
-  const { isDark } = useTheme();
   const t = tr(language);
+  const { isDark } = useTheme();
+  const tone = permissionPalettes[isDark ? 'dark' : 'light'];
   const { width, height } = useWindowDimensions();
-  const imageSize = Math.min(width - 40, Math.max(205, Math.min(300, height * .36)));
-  const location = step === 'location';
-  const description = location
+  const steps = permissionSteps(role === 'DRIVER' ? 'DRIVER' : 'CLIENT');
+  const activeStep = steps.indexOf(step);
+  const compact = height < 740;
+  const imageSize = Math.min(width - 48, 342, Math.max(compact ? 160 : 216, height * (compact ? .28 : .40)));
+  const description = step === 'location'
     ? role === 'DRIVER'
-      ? 'Так вы сможете быстро увидеть своё положение на карте. Геолокация используется только во время работы приложения.'
-      : 'Так мы быстрее найдём место подачи и покажем вашу точку на карте. Геолокация используется только во время работы приложения.'
-    : role === 'DRIVER'
-      ? 'Сообщим о новом заказе, сообщении пассажира, когда пассажир выходит, и о завершении поездки.'
-      : 'Сообщим, когда водитель назначен, приехал, написал вам и завершил поездку.';
+      ? 'Находим заказы рядом. На линии геолокация может работать в фоне с вашего разрешения.'
+      : 'Определим место подачи и вашу точку на карте.'
+    : step === 'notifications'
+      ? role === 'DRIVER'
+        ? 'Сообщим о новом заказе, сообщении пассажира, когда пассажир выходит, и о завершении поездки.'
+        : 'Сообщим, когда водитель назначен, приехал, написал вам и завершил поездку.'
+      : step === 'overlay'
+        ? 'Новые заказы и важные уведомления будут видны поверх других приложений.'
+        : 'Иначе вы можете пропустить новый заказ, а приложение может работать некорректно.';
+  const settingsAction = openSettings || step === 'overlay' || step === 'battery';
+  const buttonLabel = t(settingsAction ? 'Открыть настройки' : step === 'location' ? 'Разрешить доступ' : 'Включить уведомления');
 
-  return <SafeAreaView style={[styles.safe, isDark && styles.darkSafe]}>
+  return <SafeAreaView style={[styles.safe, { backgroundColor: tone.background }]}>
+    <StatusBar style={isDark ? "light" : "dark"} />
     <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.content}>
       <View style={styles.header}>
-        <Logo />
-        <View style={styles.progress} accessibilityLabel={t(location ? 'Шаг 1 из 2' : 'Шаг 2 из 2')}>
-          <View style={[styles.progressDot, isDark && styles.darkProgressDot, location && styles.progressDotActive, isDark && location && styles.darkProgressDotActive]}/>
-          <View style={[styles.progressDot, isDark && styles.darkProgressDot, !location && styles.progressDotActive, isDark && !location && styles.darkProgressDotActive]}/>
+        <Image source={isDark ? require('../assets/logo dark.png') : require('../assets/logo light.png')} resizeMode="contain" style={styles.logo} accessibilityLabel="ATLAS" accessibilityIgnoresInvertColors />
+        <View style={styles.progress} accessible accessibilityRole="progressbar" accessibilityLabel={t(`Шаг ${activeStep + 1} из ${steps.length}`)} accessibilityValue={{ min: 1, max: steps.length, now: activeStep + 1 }}>
+          {steps.map((item, index) => <View key={item} style={[styles.progressDot, { backgroundColor: tone.dot }, index === activeStep && styles.progressDotActive]} />)}
         </View>
       </View>
 
-      <View style={styles.main}>
-        <View style={[styles.artHalo, isDark && styles.darkArtHalo, { width: imageSize, height: imageSize }]}>
-          <Image source={artwork[step]} resizeMode="contain" style={styles.art} accessibilityIgnoresInvertColors />
-        </View>
-        <View style={styles.copy}>
-          <Text style={[styles.title, isDark && styles.darkTitle]}>{t(location ? 'Разрешите доступ к геолокации' : 'Не пропустите важное')}</Text>
-          <Text style={[styles.description, isDark && styles.darkDescription]}>{t(description)}</Text>
+      <View style={[styles.main, compact && styles.compactMain]}>
+        <PermissionIllustration step={step} language={language} role={role} size={imageSize} dark={isDark} />
+        <View style={[styles.copy, compact && styles.compactCopy]}>
+          <View style={styles.titleBox}><Text accessibilityRole="header" style={[styles.title, { color: tone.ink }]}>{t(titles[step])}</Text></View>
+          <Text style={[styles.description, { color: tone.muted }]}>{t(description)}</Text>
         </View>
       </View>
 
       <View style={styles.actions}>
-        {!!error && <View accessibilityRole="alert" style={[styles.error, isDark && styles.darkError]}><Text style={[styles.errorText, isDark && styles.darkErrorText]}>{t(error)}</Text></View>}
-        <Button
-          label={t(openSettings ? 'Открыть настройки' : location ? 'Разрешить доступ' : 'Включить уведомления')}
-          onPress={onAllow}
-          busy={busy}
-        />
-        <Pressable accessibilityRole="button" disabled={busy} onPress={onSkip} style={({ pressed }) => [styles.skip, pressed && { opacity: .55 }, busy && { opacity: .45 }]}>
-          <Text style={[styles.skipText, isDark && styles.darkSkipText]}>{t(location ? 'Указать адрес вручную' : 'Не сейчас')}</Text>
+        {!!error && <View accessibilityRole="alert" style={[styles.error, { backgroundColor: tone.error }]}><Text style={[styles.errorText, { color: tone.errorText }]}>{t(error)}</Text></View>}
+        <Pressable accessibilityRole="button" accessibilityLabel={buttonLabel} accessibilityState={{ disabled: busy, busy }} disabled={busy} onPress={onAllow} style={({ pressed }) => [styles.allow, { backgroundColor: tone.button }, pressed && styles.pressed, busy && styles.disabled]}>
+          {busy && <ActivityIndicator color={tone.ink} size="small" />}
+          <Text style={[styles.allowText, { color: tone.ink }]}>{buttonLabel}</Text>
+        </Pressable>
+        <Pressable accessibilityRole="button" accessibilityState={{ disabled: busy }} disabled={busy} onPress={onSkip} style={({ pressed }) => [styles.skip, pressed && styles.pressed, busy && styles.disabled]}>
+          <Text style={[styles.skipText, { color: tone.muted }]}>{t(step === 'location' && role !== 'DRIVER' ? 'Указать адрес вручную' : 'Не сейчас')}</Text>
         </Pressable>
       </View>
     </ScrollView>
@@ -71,29 +83,27 @@ export function PermissionOnboarding({ step, language, role, busy, error, openSe
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: colors.white },
-  darkSafe: { backgroundColor: '#050505' },
-  content: { flexGrow: 1, paddingHorizontal: 22, paddingTop: 10, paddingBottom: 14 },
-  header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-  progress: { flexDirection: 'row', alignItems: 'center', gap: 7, padding: 8 },
-  progressDot: { width: 9, height: 9, borderRadius: 5, backgroundColor: '#DCE8F4' },
-  progressDotActive: { width: 26, backgroundColor: colors.blue },
-  darkProgressDot: { backgroundColor: '#494949' }, darkProgressDotActive: { backgroundColor: '#FFFFFF' },
-  main: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingVertical: 8, gap: 10 },
-  artHalo: { maxWidth: 300, maxHeight: 300, minWidth: 205, minHeight: 205, borderRadius: 999, backgroundColor: '#F4F9FF', alignItems: 'center', justifyContent: 'center' },
-  darkArtHalo: { backgroundColor: '#1D1D1D' },
-  art: { width: '108%', height: '108%' },
-  copy: { alignItems: 'center', gap: 13, maxWidth: 340 },
-  title: { color: colors.ink, fontSize: 29, lineHeight: 35, fontWeight: '800', letterSpacing: -.7, textAlign: 'center' },
-  darkTitle: { color: '#FFFFFF' },
-  description: { color: colors.muted, fontSize: 16, lineHeight: 23, textAlign: 'center' },
-  darkDescription: { color: '#B8B8B8' },
-  actions: { gap: 8, paddingTop: 8 },
-  skip: { minHeight: 44, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 16 },
-  skipText: { color: colors.blue, fontSize: 16, fontWeight: '600' },
-  darkSkipText: { color: '#FFFFFF' },
-  error: { backgroundColor: '#FFF1F1', borderRadius: 14, paddingVertical: 10, paddingHorizontal: 13 },
-  darkError: { backgroundColor: '#303030' },
-  errorText: { color: colors.danger, fontSize: 13, lineHeight: 18, textAlign: 'center' },
-  darkErrorText: { color: '#FFFFFF' },
+  safe: { flex: 1, backgroundColor: '#FFFFFF' },
+  content: { flexGrow: 1, paddingHorizontal: 24, paddingTop: 8, paddingBottom: 12 },
+  header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', minHeight: 60 },
+  logo: { width: 176, height: 60 },
+  progress: { flexDirection: 'row', alignItems: 'center', gap: 9, paddingVertical: 10 },
+  progressDot: { width: 9, height: 9, borderRadius: 5, backgroundColor: '#E7E9EE' },
+  progressDotActive: { backgroundColor: '#2C6BFF' },
+  main: { flex: 1, alignItems: 'center', justifyContent: 'flex-start', paddingTop: 36, paddingBottom: 30, gap: 12 },
+  compactMain: { paddingTop: 18, paddingBottom: 18, gap: 8 },
+  compactCopy: { gap: 12 },
+  copy: { width: '100%', alignItems: 'center', gap: 16, maxWidth: 360 },
+  titleBox: { minHeight: 62, justifyContent: 'center', width: '100%' },
+  title: { color: '#131A2C', fontSize: 24, lineHeight: 31, fontFamily: 'Inter_600SemiBold', letterSpacing: -.5, textAlign: 'center' },
+  description: { color: '#8A91A0', fontSize: 16, lineHeight: 23, fontFamily: 'Inter_400Regular', textAlign: 'center' },
+  actions: { gap: 4 },
+  allow: { width: '100%', minHeight: 58, borderRadius: 18, backgroundColor: '#EFF0F3', flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 10, paddingVertical: 15, paddingHorizontal: 18 },
+  allowText: { color: '#131A2C', fontSize: 18, lineHeight: 25, fontFamily: 'Inter_400Regular', textAlign: 'center', flexShrink: 1 },
+  pressed: { opacity: .65 },
+  disabled: { opacity: .5 },
+  skip: { minHeight: 44, alignItems: 'center', justifyContent: 'center', paddingVertical: 10, paddingHorizontal: 12 },
+  skipText: { color: '#8A91A0', fontSize: 14, lineHeight: 20, fontFamily: 'Inter_400Regular', textAlign: 'center' },
+  error: { backgroundColor: '#FFF1F1', borderRadius: 14, marginBottom: 8, paddingVertical: 10, paddingHorizontal: 13 },
+  errorText: { color: '#CA4149', fontSize: 13, lineHeight: 18, textAlign: 'center' },
 });

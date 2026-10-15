@@ -1,9 +1,10 @@
 import { API, api, apiBlob, session, signIn, signOut, refresh, upload, rememberedUsername, rememberEnabled } from './api.js';
-import { esc, money, date, shortId, statuses, badge, icon, button, field, select, empty, loading, errorBox, photo, pager } from './ui.js';
-import { tariffEditor, driverEditor, restaurantEditor, bannerEditor, menuDishEditor, menuOptionEditor, menuCategoryEditor, readEditor, readMenuDish, readMenuOption, readMenuCategory, newRestaurant, restaurantAccountsView, restaurantAccountEditor, readRestaurantAccount, restaurantPromotionsView, restaurantPromotionEditor, readRestaurantPromotion, updatePromotionFields } from './editors.js';
+import { contentAssets } from './content-assets.js';
+import { esc, money, date, shortId, statuses, badge, icon, button, field, select, empty, loading, errorBox, photo, pager, bannerPreview } from './ui.js';
+import { tariffEditor, driverEditor, restaurantEditor, bannerEditor, menuDishEditor, menuOptionEditor, menuCategoryEditor, readEditor, readMenuDish, readMenuOption, readMenuCategory, newRestaurant, restaurantAccountsView, restaurantAccountEditor, readRestaurantAccount, restaurantPromotionsView, restaurantPromotionEditor, readRestaurantPromotion, updatePromotionFields, updateEditorFields, validateMenuDish } from './editors.js';
 
 const app = document.querySelector('#app'), modalRoot = document.querySelector('#modal-root');
-const sections = { cities: ['Города', 'grid', 'Города работы и доступность сервиса'], dashboard: ['Обзор', 'grid', 'Сервис сегодня'], orders: ['Заказы', 'orders', 'Все поездки и заказы еды'], applications: ['Заявки исполнителей', 'audit', 'Регистрация водителей и курьеров'], drivers: ['Водители', 'drivers', 'Водители, автомобили и баланс'], tariffs: ['Тарифы', 'tariffs', 'Стоимость поездок и комиссия'], restaurants: ['Рестораны', 'food', 'Каталог и настройки заведений'], menu: ['Меню', 'food', 'Категории, блюда и дополнения'], promotions: ['Акции ресторанов', 'tariffs', 'Скидки на блюда и бесплатная доставка'], 'restaurant-accounts': ['Владельцы ресторанов', 'lock', 'Доступ в приложение ресторана'], banners: ['Баннеры', 'banner', 'Главный экран приложения'], audit: ['Журнал действий', 'audit', 'Изменения и действия администраторов'] };
+const sections = { cities: ['Города', 'grid', 'Города работы и доступность сервиса'], dashboard: ['Обзор', 'grid', 'Сервис сегодня'], orders: ['Заказы', 'orders', 'Все поездки и заказы еды'], applications: ['Заявки исполнителей', 'audit', 'Регистрация водителей и курьеров'], drivers: ['Водители', 'drivers', 'Водители, автомобили и баланс'], tariffs: ['Тарифы', 'tariffs', 'Стоимость поездок и комиссия'], restaurants: ['Рестораны', 'food', 'Каталог и настройки заведений'], menu: ['Меню', 'food', 'Категории, блюда и дополнения'], promotions: ['Акции ресторанов', 'tariffs', 'Скидки на блюда и бесплатная доставка'], 'restaurant-accounts': ['Владельцы ресторанов', 'lock', 'Доступ в приложение ресторана'], banners: ['Баннеры', 'banner', 'Реклама в каталоге еды'], audit: ['Журнал действий', 'audit', 'Изменения и действия администраторов'] };
 function parseHash() { const raw = location.hash.replace(/^#/, ''), [name, encodedId] = raw.split('/'); let id = ''; try { id = encodedId ? decodeURIComponent(encodedId) : ''; } catch {} return { route: sections[name] ? name : 'dashboard', restaurantId: ['menu', 'promotions'].includes(name) ? id : '' }; }
 const initialLocation = parseHash();
 let route = initialLocation.route;
@@ -15,7 +16,7 @@ const items = value => Array.isArray(value) ? value : value?.items || [];
 const initials = name => String(name || '?').trim().split(/\s+/).slice(0, 2).map(v => v[0]).join('').toUpperCase();
 const params = () => new URLSearchParams({ page, pageSize: 25, ...(search ? { search } : {}), ...(route === 'orders' ? { kind, ...(filter ? { status: filter } : {}) } : {}), ...(route === 'drivers' ? { filter: filter || 'all' } : {}), ...(route === 'applications' ? { ...(filter ? { status: filter } : {}), ...(roleFilter ? { role: roleFilter } : {}) } : {}) });
 function toast(text) { const node = document.querySelector('#toast'); node.textContent = text; node.classList.add('show'); clearTimeout(toastTimer); toastTimer = setTimeout(() => node.classList.remove('show'), 4000); }
-function brand() { return `<div class="brand"><span class="brand-symbol">${icon('drivers', 23)}</span><span>Taxi <em>GO</em></span></div>`; }
+function brand() { return `<div class="brand"><span class="brand-symbol">${icon('drivers', 23)}</span><span>Atlas</span></div>`; }
 function connectionStatus() { document.querySelectorAll('[data-connection]').forEach(n => { n.className = `connection ${connected ? 'online' : ''}`; n.textContent = connected ? 'В реальном времени' : 'Обновление каждые 30 с'; }); }
 function loginView() {
   app.innerHTML = `<main class="auth-page"><section class="auth-box"><h1>Панель управления</h1><form id="login-form" autocomplete="on">${field('Логин', 'username', rememberedUsername(), { required: true, maxLength: 64 })}${field('Пароль', 'password', '', { type: 'password', required: true })}<label class="remember-login"><input type="checkbox" name="remember" ${rememberEnabled() ? 'checked' : ''}><span>Запомнить вход на этом устройстве</span></label><div class="auth-error" id="login-error" role="alert"></div><button class="button primary" type="submit">Войти ${icon('arrow', 17)}</button></form></section></main>`;
@@ -77,10 +78,21 @@ function applicationDetail(value) {
   return `<div class="application-summary"><div>${badge(value.status)}<h3>${esc(value.user?.name || 'Исполнитель')}</h3><p>${esc(value.user?.phone || 'Телефон не указан')}</p></div><div class="application-summary-meta"><span>Отправлена<strong>${date(value.submittedAt)}</strong></span><span>Обновлена<strong>${date(value.updatedAt)}</strong></span><span>Версия<strong>${value.version}</strong></span></div></div>${value.status === 'SUBMITTED' ? `<div class="notice application-start"><span>Заявка готова к проверке. После начала документы и направления перейдут в работу.</span>${button(icon('check', 16) + ' Начать проверку', 'application-start', '', 'primary')}</div>` : ''}<div class="form-section"><h3>Направления работы</h3><p>Каждое направление можно проверить независимо.</p></div><div class="application-review-grid">${(value.roles || []).map(role => `<article class="application-review-card"><div class="application-card-head"><div><h4>${esc(applicationRoles[role.role] || role.role)}</h4>${role.projectionIssueText ? `<p>${esc(role.projectionIssueText)}</p>` : role.reasonText ? `<p>${esc(role.reasonText)}</p>` : ''}</div>${badge(role.status)}</div>${role.operational ? '<span class="application-operational">Активировано для заказов</span>' : ''}${canReview ? `<div class="application-card-actions">${button('Одобрить', 'application-role-approve', `data-role="${esc(role.role)}"`, 'primary')}${button('На исправление', 'application-role-correction', `data-role="${esc(role.role)}"`)}${button('Отклонить', 'application-role-reject', `data-role="${esc(role.role)}"`, 'danger')}${button('Заблокировать', 'application-role-block', `data-role="${esc(role.role)}"`, 'ghost')}</div>` : ''}</article>`).join('')}</div><div class="form-section"><h3>Документы и фотографии</h3><p>${(value.uploads || []).length} файлов в анкете. Файл открывается только для вошедшего администратора.</p></div><div class="application-files">${(value.uploads || []).map(upload => `<article class="application-file"><div class="application-file-copy"><span class="application-file-icon">${icon(upload.mimeType === 'application/pdf' ? 'orders' : 'banner', 20)}</span><div><h4>${esc(uploadTitle(upload))}</h4><p>${esc(applicationKinds[upload.kind] || upload.kind)} · ${Math.max(1, Math.round((upload.byteSize || 0) / 1024))} КБ${upload.expiresAt ? ` · до ${date(upload.expiresAt)}` : ''}</p>${upload.reasonText ? `<small>${esc(upload.reasonText)}</small>` : ''}</div></div><div class="application-file-review">${badge(upload.status)}<div class="application-card-actions">${button('Открыть', 'application-file-open', `data-upload-id="${esc(upload.id)}" data-url="${esc(upload.url)}"`)}${canReview ? `${button('Одобрить', 'application-upload-approve', `data-upload-id="${esc(upload.id)}"`, 'primary')}${button('Исправить', 'application-upload-correction', `data-upload-id="${esc(upload.id)}"`)}${button('Отклонить', 'application-upload-reject', `data-upload-id="${esc(upload.id)}"`, 'danger')}${button('Блокировать', 'application-upload-block', `data-upload-id="${esc(upload.id)}"`, 'ghost')}` : ''}</div></div></article>`).join('') || '<p class="muted">Файлы не загружены.</p>'}</div><div class="form-section"><h3>Данные анкеты</h3><p>Сведения, которые исполнитель указал при регистрации.</p></div><div class="application-data">${applicationDataView(value)}</div><div class="form-section"><h3>Согласия</h3></div>${detailLine('Версия условий', value.legalTermsVersion)}${detailLine('Принятые согласия', (value.acceptedConsentIds || []).join(', '))}${detailLine('Достоверность подтверждена', date(value.truthConfirmedAt))}${detailLine('Условия приняты', date(value.termsAcceptedAt))}`;
 }
 function tariffsView() { const rows = items(data); return `<section class="panel"><div class="panel-heading"><h2>Тарифы поездок</h2><span class="muted" style="font-size:.82rem">Все суммы в сомах</span></div>${rows.length ? `<div class="table-wrap"><table><thead><tr><th>Тариф</th><th>Посадка</th><th>За км</th><th>За минуту в пути</th><th>Начало ожидания</th><th>Бесплатно</th><th>Платное ожидание</th><th>Минимум</th><th>Комиссия</th><th>Статус</th><th></th></tr></thead><tbody>${rows.map(t => `<tr><td><strong>${esc(t.name)}</strong><small>${esc(t.description)}</small></td><td>${money(t.basePrice)}</td><td>${money(t.pricePerKm)}</td><td>${money(t.pricePerMinute)}</td><td>${t.waitingGraceMinutes ?? 1} мин</td><td>${t.freeWaitingMinutes ?? 5} мин</td><td>${money(t.waitingPricePerMinute ?? 0)}/мин</td><td>${money(t.minimumPrice)}</td><td>${t.commissionBps / 100}%</td><td><span class="badge ${t.active ? 'good' : ''}">${t.active ? 'Включён' : 'Выключен'}</span></td><td>${button(icon('edit', 16), 'edit', `data-type="tariff" data-id="${esc(t.id)}" aria-label="Редактировать ${esc(t.name)}"`, 'ghost')}</td></tr>`).join('')}</tbody></table></div>` : empty('Тарифов пока нет', 'Добавьте тариф, чтобы клиенты могли рассчитать поездку.', 'tariffs')}</section>`; }
-function restaurantsView() { const rows = items(data); return rows.length ? `<div class="restaurant-grid">${rows.map(r => { const c = r.catalog; return `<article class="restaurant-card">${photo(c.imageUrl, c.imageKey, c.name)}<div class="card-body"><h3>${esc(c.name)}</h3><p>${esc(c.cuisine)}</p><div class="card-meta"><span>${c.dishes.length} блюд</span><span>${c.menuCategories.length} категорий</span><span>${c.etaMin}–${c.etaMax} мин</span><span>${r.isDemo ? 'Демо' : 'Ресторан'}</span></div><div class="card-footer"><span class="badge ${r.active ? 'good' : ''}">${r.active ? 'Открыт' : 'Скрыт'}</span><div class="card-actions">${button(icon('edit', 16) + ' Настройки', 'edit', `data-type="restaurant" data-id="${esc(r.id)}"`)}${button('Акции', 'open-promotions', `data-id="${esc(r.id)}"`)}${button('Меню ' + icon('arrow', 15), 'open-menu', `data-id="${esc(r.id)}"`, 'primary')}</div></div></div></article>`; }).join('')}</div>` : empty('Добавьте первый ресторан', 'Укажите адрес, затем наполните отдельный раздел меню.', 'food'); }
+function contentToolbar(total, placeholder, choices) {
+  return `<div class="toolbar"><span class="muted">${total} записей · данные приложения</span><div class="filters"><label class="search">${icon('search', 17)}<input id="search" aria-label="Поиск" placeholder="${esc(placeholder)}" value="${esc(search)}"></label><select id="filter" aria-label="Доступность">${choices.map(([id, title]) => `<option value="${id}" ${filter === id ? 'selected' : ''}>${title}</option>`).join('')}</select></div></div>`;
+}
+function restaurantsView() {
+  const all = items(data), query = search.trim().toLocaleLowerCase('ru-RU');
+  const rows = all.filter(r => (!query || [r.catalog.name, r.catalog.cuisine, r.catalog.address].some(value => String(value || '').toLocaleLowerCase('ru-RU').includes(query))) && (!filter || (filter === 'published' ? r.active : filter === 'hidden' ? !r.active : r.active && r.catalog.isOpen !== false)));
+  return contentToolbar(all.length, 'Название, кухня или адрес', [['', 'Все рестораны'], ['published', 'В каталоге'], ['open', 'Принимают заказы'], ['hidden', 'Скрыты']]) + (rows.length ? `<div class="restaurant-grid">${rows.map(r => {
+    const c = r.catalog, status = !r.active ? 'Скрыт' : c.isOpen === false ? 'Закрыт для заказов' : 'Принимает заказы';
+    return `<article class="restaurant-card">${photo(c.imageUrl, c.imageKey, c.name)}<div class="card-body"><div class="card-meta"><span class="badge ${r.active && c.isOpen !== false ? 'good' : ''}">${status}</span>${r.isDemo ? '<span class="badge">Демо</span>' : ''}</div><h3>${esc(c.name)}</h3><p>${esc(c.cuisine)}</p><p>${esc(c.address)}</p><div class="card-meta"><span>${c.dishes.length} блюд</span><span>${c.menuCategories.length} категорий</span><span>${c.etaMin}–${c.etaMax} мин</span><span>★ ${Number(c.rating || 0).toFixed(1)}</span></div><small class="content-updated">Обновлён ${date(r.updatedAt)}</small><div class="card-footer"><div class="card-actions">${button(icon('edit', 16) + ' Настройки', 'edit', `data-type="restaurant" data-id="${esc(r.id)}"`)}${button('Акции', 'open-promotions', `data-id="${esc(r.id)}"`)}${button('Меню ' + icon('arrow', 15), 'open-menu', `data-id="${esc(r.id)}"`, 'primary')}</div></div></div></article>`;
+  }).join('')}</div>` : empty(all.length ? 'Ничего не найдено' : 'Добавьте первый ресторан', all.length ? 'Измените поиск или фильтр доступности.' : 'Укажите адрес, затем наполните меню.', 'food'));
+}
 function bannersView() {
   const rows = items(data), active = rows.filter(b => b.active).length;
-  return `<div class="notice">В каталоге еды показывается один длинный баннер или три квадратных. Выберите изображения и примените весь набор одновременно.</div><div class="banner-display-controls"><span data-banner-selection-summary>${bannerSelectionLabel(active)}</span>${button('Применить показ', 'banner-save-display', [0, 1, 3].includes(active) ? '' : 'disabled', 'primary')}</div><div class="banner-grid">${rows.map(b => `<article class="banner-card"><div class="banner-preview">${b.imageUrl || b.imageKey ? photo(b.imageUrl, b.imageKey) : ''}<div class="banner-copy"><h3>${esc(b.title)}</h3><p>${esc(b.subtitle)}</p></div></div><div class="card-body"><div class="card-meta"><span>Позиция: ${b.sortOrder}</span><span>${esc({ NONE: 'Без перехода', TAXI: 'Такси', FOOD: 'Доставка', RESTAURANT: 'Ресторан' }[b.actionType])}</span></div><label class="banner-selection"><input type="checkbox" data-banner-selection value="${esc(b.id)}" ${b.active ? 'checked' : ''} ${b.imageUrl || b.imageKey ? '' : 'disabled'}> Выбрать для показа</label><div class="card-footer"><span class="badge ${b.active ? 'good' : ''}">${b.active ? 'Показывается' : 'Скрыт'}</span>${button('Изменить', 'edit', `data-type="banner" data-id="${esc(b.id)}"`)}</div></div></article>`).join('')}<button class="banner-slot" data-action="create" data-type="banner">${icon('plus', 28)}<strong>Добавить баннер</strong><small>Изображение, текст и переход в нужный раздел</small></button></div>`;
+  const published = rows.filter(b => b.active);
+  return `<div class="notice">В каталоге еды показывается один широкий баннер или три квадратных. Сохраните карточки, затем выберите и примените весь набор.</div>${published.length ? `<section class="panel"><div class="panel-heading"><div><h2>Сейчас в приложении</h2><p>${bannerSelectionLabel(active)}</p></div></div><div class="banner-published-rail ${active === 3 ? 'three' : ''}">${published.map(b => bannerPreview(b, restaurants, active === 3)).join('')}</div></section>` : ''}<div class="banner-display-controls"><span data-banner-selection-summary>${bannerSelectionLabel(active)}</span>${button('Применить показ', 'banner-save-display', [0, 1, 3].includes(active) ? '' : 'disabled', 'primary')}</div><div class="banner-grid">${rows.map(b => `<article class="banner-card">${bannerPreview(b, restaurants, false)}<div class="card-body"><h3>${esc(b.title)}</h3><p>${esc(b.subtitle)}</p><div class="card-meta"><span>Порядок: ${b.sortOrder + 1}</span><span>${esc(b.actionType === 'RESTAURANT' ? restaurants.find(r => r.id === b.restaurantId)?.catalog?.name || 'Ресторан' : { NONE: 'Без перехода', TAXI: 'Такси', FOOD: 'Еда' }[b.actionType])}</span></div><small class="content-updated">Обновлён ${date(b.updatedAt)}</small><label class="banner-selection"><input type="checkbox" data-banner-selection value="${esc(b.id)}" ${b.active ? 'checked' : ''} ${b.imageUrl || b.imageKey ? '' : 'disabled'}> Выбрать для показа</label><div class="card-footer"><span class="badge ${b.active ? 'good' : ''}">${b.active ? 'Опубликован' : 'Черновик'}</span>${button('Изменить', 'edit', `data-type="banner" data-id="${esc(b.id)}"`)}</div></div></article>`).join('')}<button class="banner-slot" data-action="create" data-type="banner">${icon('plus', 28)}<strong>Добавить баннер</strong><small>Изображение, текст и переход в нужный раздел</small></button></div>`;
 }
 function bannerSelectionLabel(count) { return count === 3 ? 'Три квадратных баннера' : count === 1 ? 'Один длинный баннер' : count === 0 ? 'Баннеры скрыты' : `Выбрано ${count}. Выберите один или три баннера.`; }
 function updateBannerSelection() {
@@ -126,7 +138,7 @@ function confirmMenuDiscard() {
 function markMenuDirty() { menuDirty = true; menuError = ''; menuGeneration += 1; }
 function menuEmpty(title, text) { return `<div class="menu-empty">${icon('food', 30)}<strong>${esc(title)}</strong><span>${esc(text)}</span></div>`; }
 function menuDishRow(dish, index) {
-  return `<article class="menu-dish-row" data-menu-dish data-index="${index}"><div class="menu-dish-media">${photo(dish.imageUrl, dish.imageKey, dish.name, 'menu-dish-photo')}</div><div class="menu-dish-copy"><div class="menu-dish-title"><strong>${esc(dish.name || 'Без названия')}</strong><span class="badge ${dish.available ? 'good' : ''}">${dish.available ? 'В наличии' : 'Скрыто'}</span></div><p>${esc(dish.description || 'Описание не добавлено')}</p><div class="menu-dish-meta"><span>${esc(dish.category)}</span><span>${esc(dish.portion || 'Порция не указана')}</span><span>${Number(dish.weightGrams || 0).toLocaleString('ru-RU')} г</span></div></div><div class="menu-dish-price">${money(dish.price)}</div><div class="menu-row-actions">${button(dish.available ? 'Скрыть' : 'Включить', 'menu-toggle-dish', `data-index="${index}"`, 'ghost')}${button(icon('edit', 16) + ' Изменить', 'menu-edit-dish', `data-index="${index}"`)}${button(icon('trash', 16), 'menu-remove-dish', `data-index="${index}" aria-label="Удалить ${esc(dish.name)}"`, 'danger')}</div></article>`;
+  return `<article class="menu-dish-row" data-menu-dish data-index="${index}"><div class="menu-dish-media">${photo(dish.imageUrl, dish.id, dish.name, 'menu-dish-photo', dish.imageKey)}</div><div class="menu-dish-copy"><div class="menu-dish-title"><strong>${esc(dish.name || 'Без названия')}</strong><span class="badge ${dish.available ? 'good' : ''}">${dish.available ? 'В наличии' : 'Скрыто'}</span></div><p>${esc(dish.description || 'Описание не добавлено')}</p><div class="menu-dish-meta"><span>${esc(dish.category)}</span><span>${esc(dish.portion || 'Порция не указана')}</span><span>${Number(dish.weightGrams || 0).toLocaleString('ru-RU')} г</span></div></div><div class="menu-dish-price">${money(dish.price)}</div><div class="menu-row-actions">${button(dish.available ? 'Скрыть' : 'Включить', 'menu-toggle-dish', `data-index="${index}"`, 'ghost')}${button(icon('edit', 16) + ' Изменить', 'menu-edit-dish', `data-index="${index}"`)}${button(icon('trash', 16), 'menu-remove-dish', `data-index="${index}" aria-label="Удалить ${esc(dish.name)}"`, 'danger')}</div></article>`;
 }
 function menuOptionCard(option, index, catalog) {
   const assigned = catalog.dishes.filter(dish => dish.optionIds?.includes(option.id)).length;
@@ -187,6 +199,11 @@ async function load(quiet = false) {
         history.replaceState(null, '', currentRouteHash());
         result = promotionRestaurantId ? await api(`/admin/restaurants/${encodeURIComponent(promotionRestaurantId)}/promotions`) : { promotions: [] };
       } else result = await api('/admin/restaurant-accounts');
+    } else if (route === 'banners') {
+      const [bannerResult, restaurantResult] = await Promise.all([api(path), api('/admin/restaurants')]);
+      if (version !== sequence) return;
+      restaurants = items(restaurantResult);
+      result = bannerResult;
     } else result = await api(path);
     if (version !== sequence) return;
     // A refresh that started before the first local edit must not replace the
@@ -226,7 +243,7 @@ async function navigate(next, restaurantId = '') {
 }
 function openDialog(type, value, title, subtitle = '', isNew = false) { dialogReturnFocus = document.activeElement; editor = { type, value: structuredClone(value), title, subtitle, isNew, dirty: false, saving: false, error: '', ...(type === 'restaurant-promotion' ? { restaurantId: promotionRestaurantId, promotionSnapshot: structuredClone(data) } : {}) }; drawDialog(); }
 function dialogBody() { const e = editor; if (e.type === 'city') return '<div class="form-grid">' + field('Название города', 'name', e.value.name || '', { required: true, maxLength: 100, wide: true }) + select('Доступность', 'status', [['ACTIVE','Доступен'],['SOON','Скоро'],['HIDDEN','Скрыт']], e.value.status || 'SOON') + field('Порядок в списке', 'sortOrder', e.value.sortOrder ?? 0, { type: 'number', min: 0, max: 10000, required: true }) + '</div>'; if (e.type === 'restaurant-owner') return restaurantAccountEditor(e.value, restaurants, e.isNew); if (e.type === 'restaurant-promotion') return restaurantPromotionEditor(e.value, restaurants.find(item => item.id === e.restaurantId)); if (e.type === 'tariff') return tariffEditor(e.value); if (e.type === 'driver') return driverEditor(e.value); if (e.type === 'restaurant') return restaurantEditor(e.value, e.isNew); if (e.type === 'banner') return bannerEditor(e.value, restaurants); if (e.type === 'menu-dish') return menuDishEditor(e.value, menuDraft.catalog); if (e.type === 'menu-option') return menuOptionEditor(e.value); if (e.type === 'menu-category') return menuCategoryEditor(e.value.name); if (e.type === 'order') return orderDetail(e.value); if (e.type === 'application') return applicationDetail(e.value); if (e.type === 'driver-detail') return driverDetail(e.value); if (e.type === 'topup') return `<div class="form-grid">${field('Сумма пополнения, сом', 'amount', '', { type: 'number', required: true, min: 1, max: 1000000, wide: true })}${field('Комментарий', 'note', '', { required: true, wide: true, maxLength: 250, placeholder: 'Например: наличные в офисе' })}</div>`; if (e.type === 'audit') return `<div class="detail-row"><span>Время</span><strong>${date(e.value.createdAt)}</strong></div><div class="detail-row"><span>Действие</span><strong>${esc(actionNames[e.value.action] || e.value.action)}</strong></div><pre class="audit-details">${esc(JSON.stringify(e.value.details || e.value.metadata || {}, null, 2))}</pre>`; return ''; }
-function drawDialog() { if (!editor) return; const readOnly = ['order', 'application', 'driver-detail', 'audit'].includes(editor.type); modalRoot.innerHTML = `<div class="modal-shade"><section class="drawer ${['restaurant', 'application', 'restaurant-owner', 'restaurant-promotion'].includes(editor.type) ? 'wide' : ''}" role="dialog" aria-modal="true" aria-labelledby="dialog-title"><div class="drawer-head"><div><h2 id="dialog-title">${esc(editor.title)}</h2>${editor.subtitle ? `<p>${esc(editor.subtitle)}</p>` : ''}</div>${button(icon('close'), 'close-dialog', 'aria-label="Закрыть"', 'ghost')}</div><form id="editor-form" style="display:contents"><div class="drawer-body">${dialogBody()}</div><footer class="drawer-footer"><div class="error-inline" role="alert">${esc(editor.error)}</div>${!editor.isNew && ['restaurant', 'banner'].includes(editor.type) ? button(editor.type === 'banner' ? 'Удалить' : 'Скрыть ресторан', 'archive', '', 'danger') : ''}${button(readOnly ? 'Закрыть' : 'Отмена', 'close-dialog')}${readOnly ? '' : `<button class="button primary" type="submit" ${editor.saving ? 'disabled' : ''}>${editor.saving ? 'Сохраняем…' : editor.type === 'topup' ? 'Пополнить' : 'Сохранить'}</button>`}</footer></form></section></div>`; document.body.style.overflow = 'hidden'; if (editor.type === 'menu-dish') updateMenuOptionLimit(modalRoot.querySelector('#editor-form')); if (editor.type === 'restaurant-promotion') updatePromotionFields(modalRoot.querySelector('#editor-form')); const first = modalRoot.querySelector('input:not([type=checkbox]):not([type=file]),button'); first?.focus({ preventScroll: true }); }
+function drawDialog() { if (!editor) return; const readOnly = ['order', 'application', 'driver-detail', 'audit'].includes(editor.type); modalRoot.innerHTML = `<div class="modal-shade"><section class="drawer ${['restaurant', 'application', 'restaurant-owner', 'restaurant-promotion', 'menu-dish', 'banner'].includes(editor.type) ? 'wide' : ''}" role="dialog" aria-modal="true" aria-labelledby="dialog-title"><div class="drawer-head"><div><h2 id="dialog-title">${esc(editor.title)}</h2>${editor.subtitle ? `<p>${esc(editor.subtitle)}</p>` : ''}</div>${button(icon('close'), 'close-dialog', 'aria-label="Закрыть"', 'ghost')}</div><form id="editor-form" style="display:contents"><div class="drawer-body">${dialogBody()}</div><footer class="drawer-footer"><div class="error-inline" role="alert">${esc(editor.error)}</div>${!editor.isNew && ['restaurant', 'banner'].includes(editor.type) ? button(editor.type === 'banner' ? 'Удалить' : 'Скрыть ресторан', 'archive', '', 'danger') : ''}${button(readOnly ? 'Закрыть' : 'Отмена', 'close-dialog')}${readOnly ? '' : `<button class="button primary" type="submit" ${editor.saving ? 'disabled' : ''}>${editor.saving ? 'Сохраняем…' : editor.type === 'topup' ? 'Пополнить' : 'Сохранить'}</button>`}</footer></form></section></div>`; document.body.style.overflow = 'hidden'; updateEditorFields(modalRoot.querySelector('#editor-form'), editor.type); if (editor.type === 'menu-dish') updateMenuOptionLimit(modalRoot.querySelector('#editor-form')); if (editor.type === 'restaurant-promotion') updatePromotionFields(modalRoot.querySelector('#editor-form')); const first = modalRoot.querySelector('input:not([type=checkbox]):not([type=file]),button'); first?.focus({ preventScroll: true }); }
 function closeEditor(force = false) { if (!editor) return true; if (editor.saving && !force) return false; if (editor.dirty && !force && !confirm('Закрыть без сохранения изменений?')) return false; editor = null; modalRoot.innerHTML = ''; document.body.style.overflow = ''; dialogReturnFocus?.focus?.(); return true; }
 function captureDraft() {
   const form = modalRoot.querySelector('#editor-form');
@@ -281,6 +298,8 @@ function saveMenuEditor(form) {
     const value = readMenuDish(form, editor.value, catalog);
     if (value.originalPrice !== undefined && value.originalPrice <= value.price) { showEditorError('Цена до скидки должна быть больше текущей цены блюда.'); return true; }
     if (value.optionIds.length > 10) { showEditorError('К одному блюду можно назначить не больше 10 дополнений.'); updateMenuOptionLimit(form); return true; }
+    const validationError = validateMenuDish(value, catalog);
+    if (validationError) { showEditorError(validationError); return true; }
     if (!catalog.menuCategories.includes(value.category)) catalog.menuCategories.push(value.category);
     if (editor.menuIndex < 0) catalog.dishes.push(value); else catalog.dishes[editor.menuIndex] = value;
   } else if (editor.type === 'menu-option') {
@@ -309,7 +328,6 @@ async function saveMenu() {
   if (!menuDraft || !menuDirty || menuSaving) return;
   const restaurantId = menuDraft.id;
   const draftCatalog = structuredClone(menuDraft.catalog);
-  const expectedVersion = menuDraft.updatedAt;
   const baseSignature = menuBaseSignature;
   const saveGeneration = ++menuGeneration;
   ++sequence;
@@ -325,7 +343,7 @@ async function saveMenu() {
     if (!latest) throw new Error('Ресторан больше не доступен. Обновите страницу.');
     if (menuSignature(latest.catalog) !== baseSignature) throw new Error('Меню уже изменено на сервере. Обновите страницу и повторите изменения, чтобы не перезаписать чужую работу.');
     const catalog = mergeMenuCatalog(latest.catalog, draftCatalog);
-    const saved = await api(`/admin/restaurants/${encodeURIComponent(restaurantId)}`, { method: 'PATCH', body: { catalog, ...(expectedVersion ? { updatedAt: expectedVersion } : {}) } });
+    const saved = await api(`/admin/restaurants/${encodeURIComponent(restaurantId)}`, { method: 'PATCH', body: { catalog, ...(latest.updatedAt ? { updatedAt: latest.updatedAt } : {}) } });
     if (menuGeneration !== saveGeneration || menuDraft?.id !== restaurantId || route !== 'menu') return;
     restaurants = latestRestaurants.map(restaurant => restaurant.id === saved.id ? saved : restaurant);
     data = { ...latestResult, items: restaurants, total: restaurants.length };
@@ -464,7 +482,19 @@ async function openApplicationFile(path) {
     setTimeout(() => URL.revokeObjectURL(url), 300000);
   } catch (error) { preview?.close(); throw error; }
 }
-async function editItem(type, id) { let item = items(data).find(i => i.id === id); if (type === 'driver') item = await api(`/admin/drivers/${id}`); if (!item) throw new Error('Запись не найдена. Обновите страницу.'); if (type === 'banner') restaurants = items(await api('/admin/restaurants')); openDialog(type, item, { city: 'Редактирование города', tariff: 'Настройки тарифа', driver: 'Редактирование водителя', restaurant: item.catalog?.name || 'Ресторан', banner: 'Редактирование баннера' }[type], '', false); }
+async function editItem(type, id) {
+  let item = items(data).find(i => i.id === id);
+  if (type === 'driver') item = await api(`/admin/drivers/${id}`);
+  if (['restaurant', 'banner'].includes(type)) {
+    const result = await api(`/admin/${type === 'banner' ? 'banners' : 'restaurants'}`);
+    item = items(result).find(row => row.id === id);
+    if (route === (type === 'banner' ? 'banners' : 'restaurants')) { data = result; renderPage(); }
+    if (type === 'restaurant') restaurants = items(result);
+    if (type === 'banner') restaurants = items(await api('/admin/restaurants'));
+  }
+  if (!item) throw new Error('Запись не найдена. Обновите страницу.');
+  openDialog(type, item, { city: 'Редактирование города', tariff: 'Настройки тарифа', driver: 'Редактирование водителя', restaurant: item.catalog?.name || 'Ресторан', banner: 'Редактирование баннера' }[type], item.updatedAt ? `Актуальные данные · ${date(item.updatedAt)}` : '', false);
+}
 async function createItem(type) { if (type === 'restaurant-owner') { restaurants = items(await api('/admin/restaurants')); return openDialog(type, { restaurantIds: [], active: true }, 'Новый владелец ресторана', '', true); } if (type === 'banner') restaurants = items(await api('/admin/restaurants')); openDialog(type, type === 'restaurant' ? newRestaurant() : {}, { city: 'Новый город', driver: 'Новый водитель', tariff: 'Новый тариф', restaurant: 'Новый ресторан', banner: 'Новый баннер' }[type], '', true); }
 async function handleAction(target) {
   const action = target.dataset.action;
@@ -545,7 +575,14 @@ async function handleAction(target) {
     const index = Number(target.dataset.index), option = menuDraft.catalog.options[index];
     if (option && confirm(`Удалить дополнение «${option.name}»? Оно будет убрано из всех блюд.`)) {
       menuDraft.catalog.options.splice(index, 1);
-      menuDraft.catalog.dishes.forEach(dish => { dish.optionIds = (dish.optionIds || []).filter(id => id !== option.id); });
+      menuDraft.catalog.dishes.forEach(dish => {
+        dish.optionIds = (dish.optionIds || []).filter(id => id !== option.id);
+        if (dish.defaultOptionIds) dish.defaultOptionIds = dish.defaultOptionIds.filter(id => id !== option.id);
+        if (dish.optionGroups) dish.optionGroups = dish.optionGroups.map(group => {
+          const optionIds = group.optionIds.filter(id => id !== option.id);
+          return {...group, optionIds, minSelected: Math.min(group.minSelected || 0, optionIds.length), maxSelected: Math.min(group.maxSelected ?? 1, optionIds.length)};
+        }).filter(group => group.optionIds.length);
+      });
       markMenuDirty(); renderPage();
     }
     return;
@@ -583,9 +620,31 @@ async function handleAction(target) {
   if (action === 'food-status') { if (!confirm(`Изменить статус заказа на «${statuses[target.dataset.status]}»?`)) return; const id = editor.value.id; await api(`/admin/food/orders/${id}/status`, { method: 'PATCH', body: { status: target.dataset.status } }); await openOrder(id, 'food'); toast('Статус заказа обновлён'); return load(true); }
   if (action === 'cancel-order') { const reason = prompt('Укажите причину отмены заказа:'); if (!reason) return; if (reason.trim().length < 3) throw new Error('Укажите причину отмены, минимум 3 символа.'); const order = editor.value; await api(order.kind === 'food' ? `/admin/food/orders/${order.id}/status` : `/admin/orders/taxi/${order.id}/cancel`, { method: order.kind === 'food' ? 'PATCH' : 'POST', body: order.kind === 'food' ? { status: 'CANCELLED', reason: reason.trim() } : { reason: reason.trim() } }); await openOrder(order.id, order.kind); toast('Заказ отменён'); return load(true); }
   if (action === 'archive') { if (!confirm(editor.type === 'banner' ? 'Удалить этот баннер?' : 'Скрыть ресторан из приложения? История заказов сохранится.')) return; await api(`/admin/${editor.type === 'banner' ? 'banners' : 'restaurants'}/${editor.value.id}`, { method: 'DELETE' }); closeEditor(true); toast('Изменения сохранены'); return load(true); }
+  if (['menu-group-add', 'menu-group-remove', 'restaurant-review-add', 'restaurant-review-remove'].includes(action)) {
+    captureDraft();
+    if (action.startsWith('menu-group') && editor.type === 'menu-dish') {
+      const groups = editor.value.optionGroups || [];
+      if (action === 'menu-group-add') {
+        if (groups.length >= 10) return toast('У блюда может быть не больше 10 групп выбора.');
+        editor.value.optionGroups = [...groups, { id: 'group-' + crypto.randomUUID().slice(0, 8), name: 'Новая группа', optionIds: [], minSelected: 0, maxSelected: 1 }];
+      } else editor.value.optionGroups = groups.filter(group => group.id !== target.dataset.groupId);
+    } else if (action.startsWith('restaurant-review') && editor.type === 'restaurant') {
+      const reviews = editor.value.catalog.reviews || [];
+      if (action === 'restaurant-review-add') {
+        if (reviews.length >= 500) return toast('В каталоге может быть не больше 500 отзывов.');
+        editor.value.catalog.reviews = [...reviews, {id:'review-' + crypto.randomUUID().slice(0, 8), authorName:'', rating:5, createdAt:new Date().toISOString(), text:'', source:''}];
+      } else editor.value.catalog.reviews = reviews.filter(review => review.id !== target.dataset.reviewId);
+    } else return;
+    editor.dirty = true;
+    const scrollTop = modalRoot.querySelector('.drawer-body').scrollTop;
+    drawDialog();
+    modalRoot.querySelector('.drawer-body').scrollTop = scrollTop;
+    return;
+  }
   if (action === 'clear-image') {
     captureDraft();
     setPath(editor.value, target.dataset.path, undefined);
+    setPath(editor.value, target.dataset.path.replace(/Url$/, 'Key'), '');
     editor.dirty = true;
     const scrollTop = modalRoot.querySelector('.drawer-body').scrollTop;
     drawDialog();
@@ -593,21 +652,58 @@ async function handleAction(target) {
   }
 }
 function setPath(object, path, value) { const keys = path.split('.'); let current = object; for (const key of keys.slice(0, -1)) current = current[key]; if (value === undefined) delete current[keys.at(-1)]; else current[keys.at(-1)] = value; }
+async function uploadEditorImage(path, fileOrFactory, restoreImage) {
+  if (!editor || editor.saving) return;
+  const original = editor;
+  captureDraft();
+  editor.saving = true;
+  modalRoot.querySelectorAll('button,input,select,textarea').forEach(control => { control.disabled = true; });
+  try {
+    toast('Загружаем изображение…');
+    const file = typeof fileOrFactory === 'function' ? await fileOrFactory() : fileOrFactory;
+    const result = await upload(file);
+    if (editor === original) { setPath(editor.value, path, result.url); editor.dirty = true; editor.error = ''; }
+  } catch (error) {
+    if (editor === original) { restoreImage?.(editor.value); editor.error = error.message; }
+  } finally {
+    if (editor === original) {
+      editor.saving = false;
+      const scrollTop = modalRoot.querySelector('.drawer-body').scrollTop;
+      drawDialog();
+      modalRoot.querySelector('.drawer-body').scrollTop = scrollTop;
+    }
+  }
+}
 document.addEventListener('click', event => { const navigation = event.target.closest('[data-nav]'), tab = event.target.closest('[data-kind]:not([data-action])'), target = event.target.closest('[data-action]'); if (navigation) void navigate(navigation.dataset.nav); else if (tab) { kind = tab.dataset.kind; filter = ''; page = 1; data = null; loadError = ''; void load(); } else if (target && !target.disabled) void handleAction(target).catch(e => toast(e.message)); });
 document.addEventListener('submit', event => { event.preventDefault(); if (event.target.id === 'login-form') { const form = event.target, f = new FormData(form), b = form.querySelector('button'); b.disabled = true; b.textContent = 'Входим…'; document.querySelector('#login-error').textContent = ''; void signIn(String(f.get('username')).trim(), String(f.get('password')), f.get('remember') === 'on').then(() => { shell(); connect(); return load(); }).catch(e => { document.querySelector('#login-error').textContent = e.message; b.disabled = false; b.textContent = 'Войти'; }); } else if (event.target.id === 'editor-form') void saveEditor(event.target); });
 document.addEventListener('input', event => {
-  if (event.target.closest('#editor-form') && editor) editor.dirty = true;
+  if (event.target.closest('#editor-form') && editor) { editor.dirty = true; updateEditorFields(event.target.form, editor.type, event.target); }
   if (event.target.matches('#editor-form input[name="optionIds"]')) updateMenuOptionLimit(event.target.form);
   if (event.target.id === 'account-search') { search = event.target.value; renderPage(); return; }
   if (event.target.id === 'menu-search') { if (menuSaving) return; menuSearch = event.target.value; renderPage(); return; }
   if (event.target.id === 'search') {
     search = event.target.value;
     page = 1;
+    if (['restaurants', 'banners'].includes(route)) { renderPage(); return; }
     clearTimeout(filterTimer);
     filterTimer = setTimeout(() => { const selection = event.target.selectionStart; void load(true).then(() => { const next = document.querySelector('#search'); next?.focus(); next?.setSelectionRange(selection, selection); }); }, 350);
   }
 });
 document.addEventListener('change', async event => {
+  if (event.target.closest('#editor-form') && editor) { editor.dirty = true; updateEditorFields(event.target.form, editor.type, event.target); }
+  if (event.target.matches('[data-image-key]') && editor?.type === 'menu-dish' && event.target.value && event.target.closest('[data-image-editor]').dataset.imagePath === 'imageUrl') {
+    const asset = contentAssets[event.target.value];
+    if (!asset) return showEditorError('Фотография недоступна. Обновите страницу.');
+    const path = event.target.closest('[data-image-editor]').dataset.imagePath;
+    const previous = {url:editor.value.imageUrl,key:editor.value.imageKey};
+    await uploadEditorImage(path, async () => {
+      const response = await fetch(new URL(asset.src, location.href), {cache:'no-store'});
+      if (!response.ok) throw new Error('Не удалось открыть выбранную фотографию.');
+      const blob = await response.blob();
+      return new File([blob], asset.src.split('/').at(-1), {type:blob.type});
+    }, value => { setPath(value, path, previous.url); setPath(value, 'imageKey', previous.key); });
+    return;
+  }
   if (event.target.id === 'promotion-restaurant') { void navigate('promotions', event.target.value); return; }
   if (editor?.type === 'restaurant-promotion' && event.target.closest('#editor-form') && ['type', 'scope'].includes(event.target.name)) { updatePromotionFields(event.target.form); return; }
   if (event.target.matches('[data-banner-selection]')) { updateBannerSelection(); return; }
@@ -625,25 +721,7 @@ document.addEventListener('change', async event => {
   if (event.target.dataset.upload && editor) {
     const file = event.target.files[0];
     if (!file) return;
-    const original = editor, path = event.target.dataset.upload;
-    captureDraft();
-    editor.saving = true;
-    const controls = modalRoot.querySelectorAll('button,input,select,textarea');
-    controls.forEach(control => { control.disabled = true; });
-    try {
-      toast('Загружаем изображение…');
-      const result = await upload(file);
-      if (editor === original) { setPath(editor.value, path, result.url); editor.dirty = true; }
-    } catch (e) {
-      if (editor === original) editor.error = e.message;
-    } finally {
-      if (editor === original) {
-        editor.saving = false;
-        const scrollTop = modalRoot.querySelector('.drawer-body').scrollTop;
-        drawDialog();
-        modalRoot.querySelector('.drawer-body').scrollTop = scrollTop;
-      }
-    }
+    await uploadEditorImage(event.target.dataset.upload, file);
   }
 });
 document.addEventListener('keydown', event => { if (event.key === 'Escape' && editor) closeEditor(); if (event.key === 'Enter' && event.target.matches('tr[data-action]')) { event.preventDefault(); void handleAction(event.target).catch(e => toast(e.message)); } if (event.key === 'Tab' && editor) { const nodes = [...modalRoot.querySelectorAll('button:not(:disabled),input:not(:disabled),select:not(:disabled),textarea:not(:disabled)')].filter(n => n.offsetParent && !n.classList.contains('file-input')); const first = nodes[0], last = nodes.at(-1); if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus(); } else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); } } });

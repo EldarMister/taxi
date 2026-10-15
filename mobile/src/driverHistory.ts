@@ -22,9 +22,14 @@ export function historyRange(period: DriverHistoryPeriod, day: string): HistoryR
   return { from: historyBoundary(first), to: historyBoundary(end) };
 }
 export function historyChartRange(period: DriverHistoryPeriod, day: string): HistoryRange {
-  return period === 'today'
-    ? { from: historyBoundary(shiftHistoryDay(day, -6)), to: historyBoundary(shiftHistoryDay(day, 2)) }
-    : historyRange(period, day);
+  return historyRange(period === 'today' ? 'week' : period, day);
+}
+export function shiftHistoryPeriod(period: DriverHistoryPeriod, day: string, direction: -1 | 1, today = historyDay()): string {
+  if (period !== 'month') return [shiftHistoryDay(day, direction * 7), today].sort()[0];
+  const next = new Date(Date.UTC(Number(day.slice(0, 4)), Number(day.slice(5, 7)) - 1 + direction, 1, 12));
+  const last = new Date(Date.UTC(next.getUTCFullYear(), next.getUTCMonth() + 1, 0)).getUTCDate();
+  next.setUTCDate(Math.min(Number(day.slice(8)), last));
+  return [next.toISOString().slice(0, 10), today].sort()[0];
 }
 export function ordersInHistoryRange(orders: Order[], range: HistoryRange): Order[] {
   const start = Date.parse(range.from), end = Date.parse(range.to);
@@ -34,20 +39,25 @@ export function historyTotals(orders: Order[]) {
   const completed = orders.filter(order => order.status === 'COMPLETED');
   return completed.reduce((total, order) => {
     const price = Number(order.price);
+    const distance = Number(order.distanceMeters);
+    if (Number.isFinite(distance) && distance > 0) total.distanceMeters += distance;
     total.income += price;
     total[order.paymentMethod === 'CARD' ? 'card' : 'cash'] += price;
     total.commission += Number(order.commissionAmount ?? 0);
     return total;
-  }, { income: 0, card: 0, cash: 0, bonus: 0, commission: 0, count: completed.length });
+  }, { income: 0, card: 0, cash: 0, bonus: 0, commission: 0, distanceMeters: 0, count: completed.length });
+}
+export function historyDistanceLabel(meters: number, language: Language): string {
+  const distance = (meters / 1000).toLocaleString(historyLocale(language), { maximumFractionDigits: 1 });
+  return `${language === 'en' ? 'Distance travelled' : language === 'ky' ? 'Жүрүлгөн жол' : 'Пройдено'} · ${distance} ${language === 'en' ? 'km' : 'км'}`;
 }
 export function historyBuckets(orders: Order[], period: DriverHistoryPeriod, day: string): HistoryBucket[] {
   const range = historyChartRange(period, day);
   const first = historyDay(range.from), end = historyDay(range.to);
   const days = Math.round((Date.parse(`${end}T12:00:00Z`) - Date.parse(`${first}T12:00:00Z`)) / DAY);
-  const count = period === 'month' ? 8 : days;
-  return Array.from({ length: count }, (_, index) => {
-    const key = shiftHistoryDay(first, Math.floor(index * days / count));
-    const next = shiftHistoryDay(first, Math.floor((index + 1) * days / count));
+  return Array.from({ length: days }, (_, index) => {
+    const key = shiftHistoryDay(first, index);
+    const next = shiftHistoryDay(key, 1);
     const bucket = { from: historyBoundary(key), to: historyBoundary(next) };
     return { ...bucket, key, lastDay: shiftHistoryDay(next, -1), amount: historyTotals(ordersInHistoryRange(orders, bucket)).income };
   });

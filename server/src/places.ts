@@ -6,6 +6,7 @@ import { Actor, AuthGuard, RateLimits } from './auth';
 import { AppConfig } from './config';
 import { PhotonSearch } from './photon';
 import { compactAddress, formatPlaceAddress } from './address';
+import { placeCategory, type PlaceCategory } from './place-category';
 
 class SearchDto {
   @ApiProperty() @Transform(({value})=>typeof value === 'string' ? value.trim() : value) @IsString() @MinLength(2) @MaxLength(250) q!: string;
@@ -18,9 +19,9 @@ class ReverseDto {
   @ApiProperty() @Type(()=>Number) @IsNumber() @Min(-180) @Max(180) longitude!: number;
   @ApiPropertyOptional({enum:['ru','ky']}) @IsOptional() @IsIn(['ru','ky']) language?: 'ru'|'ky';
 }
-export type Place = {id: string; address: string; latitude: number; longitude: number};
+export type Place = {id: string; address: string; latitude: number; longitude: number; category?: PlaceCategory};
 type GeocodedPlace = Place & { settlement: boolean };
-const publicPlace = ({id,address,latitude,longitude}: Place): Place => ({id,address,latitude,longitude});
+const publicPlace = ({id,address,latitude,longitude,category}: Place): Place => ({id,address,latitude,longitude,...(category ? {category} : {})});
 const CACHE_LIMIT = 500;
 const CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 const QUEUE_LIMIT = 16;
@@ -47,7 +48,8 @@ export function parseNominatimPlace(value: unknown): Place {
   const named = ((place.category ?? place.class) !== 'highway' || ['bus_stop','services','rest_area'].includes(String(place.type))) && !['city','town','village','hamlet','municipality','borough','suburb','neighbourhood'].includes(String(place.addresstype ?? place.type));
   const structured = formatPlaceAddress(name, street, number, apartment, city, named);
   const address = structured || compactAddress(place.display_name);
-  return {id, address: (address || place.display_name.trim()).slice(0, 250), latitude, longitude};
+  const category = placeCategory(place.category ?? place.class, place.type);
+  return {id, address: (address || place.display_name.trim()).slice(0, 250), latitude, longitude, ...(category ? {category} : {})};
 }
 
 @Injectable()

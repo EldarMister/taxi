@@ -5,16 +5,21 @@ import * as ImageManipulator from 'expo-image-manipulator';
 import * as ImagePicker from 'expo-image-picker';
 import * as Location from 'expo-location';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { BackHandler, Image, KeyboardAvoidingView, Linking, Modal, Platform, Pressable, ScrollView, StyleSheet, View, type ImageStyle } from 'react-native';
+import { BackHandler, Image, Linking, Modal, Platform, Pressable, ScrollView, StyleSheet, View, type ImageStyle } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { ApiError, api, messageOf, requestId } from './api';
-import { useTheme } from './design/theme';
+import { useRegistrationDesign as useTheme } from './registration/design';
 import { trackRegistration } from './registration/analytics';
 import { BottomActionSheet, ErrorCard, FormInput, InfoCard, LoadingState, OfflineState, PrimaryButton, RegistrationHeader, SecondaryButton, StatusBadge } from './registration/components';
 import { additionalVehicleForUploadSlot, buildRegistrationSteps, firstIncompleteStep, normalizeStep, performerRoleForVehicleUsage, validateRegistrationStep } from './registration/flow';
 import { clearRegistrationFiles, deleteRegistrationFile, isManagedRegistrationFile, persistRegistrationFile, pruneRegistrationFiles, registrationFileExists } from './registration/files';
 import { clearRegistrationDraft, readRegistrationDraft, writeRegistrationDraft } from './registration/storage';
+import { RegistrationKeyboardLayout } from './registration/RegistrationKeyboardLayout';
+import { UploadSourceSheet } from './registration/UploadSourceSheet';
+import { UploadedPhotoViewer } from './registration/UploadedPhotoViewer';
+import { previousPhoto } from './registration/photoUploads';
 import { RegistrationStepContent } from './registration/steps';
+import { workCities } from './registration/workCities';
 import { MAX_ADDITIONAL_VEHICLES, additionalVehicleClientIdPattern, emptyCargoEquipmentDraft, emptyRegistrationApplication, emptyRegistrationData, emptyVehicleDraft, performerRoles, registrationStatuses, vehicleUsages, type AdditionalVehicleDraft, type PerformerRole, type RegistrationApplication, type RegistrationConfig, type RegistrationData, type RegistrationEnvelope, type RegistrationStatus, type RegistrationStepId, type RegistrationUpload } from './registration/types';
 import type { User } from './types';
 import { Icon, colors } from './ui';
@@ -26,17 +31,16 @@ type SaveState = 'idle' | 'saving' | 'saved' | 'offline' | 'error';
 
 const fallbackConfig: RegistrationConfig = {
   roles: [
-    { id: 'TAXI_DRIVER', title: 'Водитель такси', description: 'Перевозите пассажиров на легковом автомобиле.' },
+    { id: 'TAXI_DRIVER', title: 'Такси и доставка', description: 'Перевозите пассажиров и доставляйте заказы на машине.' },
     { id: 'CARGO_DRIVER', title: 'Грузовой водитель', description: 'Выполняйте грузовые перевозки на своём или арендованном транспорте.' },
-    { id: 'COURIER', title: 'Курьер', description: 'Доставляйте посылки, документы, продукты и другие заказы.' },
   ],
   minimumAge: 18,
   minimumAgeByRole: { TAXI_DRIVER: 18, CARGO_DRIVER: 18, COURIER: 18 },
   countries: ['Кыргызстан', 'Казахстан', 'Россия', 'Узбекистан', 'Таджикистан'],
-  cities: ['Бишкек', 'Ош', 'Джалал-Абад', 'Каракол', 'Токмок', 'Нарын', 'Талас', 'Баткен'],
-  districts: { Бишкек: ['Ленинский', 'Октябрьский', 'Первомайский', 'Свердловский'], Ош: ['Центр', 'Ак-Тилек', 'Черёмушки'] },
+  cities: workCities, comingSoonCities: ['Кочкор-Ата', 'Кербен'],
+  districts: {},
   driverLicenseCategories: ['A', 'A1', 'B', 'B1', 'C', 'C1', 'D', 'D1', 'BE', 'CE'],
-  cargoVehicleTypes: ['Пикап', 'Минивэн', 'Каблук', 'Фургон', 'Бортовой', 'Тентованный', 'Рефрижератор', 'Эвакуатор', 'Самосвал', 'Тягач', 'Другое'],
+  cargoVehicleTypes: ['Каблук', 'Грузовой минивэн', 'Фургон', 'Бортовой', 'Тентованный', 'Рефрижератор'],
   taxiBodyTypes: ['Седан', 'Хэтчбек', 'Универсал', 'Кроссовер', 'Минивэн'],
   tariffs: [{ id: 'ECONOMY', title: 'Эконом' }, { id: 'COMFORT', title: 'Комфорт' }, { id: 'BUSINESS', title: 'Бизнес' }],
   payoutMethods: ['CARD', 'BANK_ACCOUNT', 'WALLET'],
@@ -46,16 +50,8 @@ const fallbackConfig: RegistrationConfig = {
   loadingTypes: ['REAR', 'SIDE', 'TOP'],
   documents: [],
   documentRequirements: [
-    { id: 'profile-photo', title: 'Фотография профиля', kind: 'PROFILE_PHOTO', slots: ['profile_photo'], requiredFor: ['TAXI_DRIVER', 'CARGO_DRIVER', 'COURIER'] },
-    { id: 'identity', title: 'Удостоверение личности', kind: 'IDENTITY_DOCUMENT', slots: ['identity_front', 'identity_back'], requiredFor: ['TAXI_DRIVER', 'CARGO_DRIVER', 'COURIER'] },
-    { id: 'driver-license', title: 'Водительское удостоверение', kind: 'DRIVER_LICENSE', slots: ['license_front', 'license_back'], requiredFor: ['TAXI_DRIVER', 'CARGO_DRIVER'], condition: 'Также требуется для моторизованной доставки' },
-    { id: 'taxi-registration', title: 'Документы автомобиля', kind: 'VEHICLE_DOCUMENT', slots: ['taxi_registration', 'taxi_insurance'], expirySlots: ['taxi_insurance'], requiredFor: ['TAXI_DRIVER'] },
-    { id: 'taxi-photos', title: 'Фотографии автомобиля такси', kind: 'VEHICLE_PHOTO', slots: ['taxi_photo_front'], requiredFor: ['TAXI_DRIVER'] },
-    { id: 'cargo-registration', title: 'Документы грузового автомобиля', kind: 'VEHICLE_DOCUMENT', slots: ['cargo_registration', 'cargo_insurance'], expirySlots: ['cargo_insurance'], requiredFor: ['CARGO_DRIVER'] },
-    { id: 'cargo-photos', title: 'Фотографии грузового автомобиля', kind: 'VEHICLE_PHOTO', slots: ['cargo_photo_front'], requiredFor: ['CARGO_DRIVER'] },
-    { id: 'courier-vehicle', title: 'Документы транспорта курьера', kind: 'VEHICLE_DOCUMENT', slots: ['courier_registration', 'courier_insurance'], expirySlots: ['courier_insurance'], requiredFor: ['COURIER'], condition: 'Только для моторизованной доставки с отдельным транспортом' },
-    { id: 'courier-vehicle-photo', title: 'Фотография транспорта курьера', kind: 'VEHICLE_PHOTO', slots: ['courier_photo'], requiredFor: ['COURIER'], condition: 'Только для моторизованной доставки с отдельным транспортом' },
-    { id: 'rental-proof', title: 'Договор аренды или доверенность', kind: 'VEHICLE_DOCUMENT', slots: [], requiredFor: ['TAXI_DRIVER', 'CARGO_DRIVER'], condition: 'Только для арендованного транспорта' },
+    { id: 'taxi-photos', title: 'Четыре фото автомобиля', kind: 'VEHICLE_PHOTO', slots: ['taxi_photo_front', 'taxi_photo_back', 'taxi_photo_left', 'taxi_photo_right'], requiredFor: ['TAXI_DRIVER'] },
+    { id: 'cargo-photos', title: 'Четыре фото автомобиля', kind: 'VEHICLE_PHOTO', slots: ['cargo_photo_front', 'cargo_photo_back', 'cargo_photo_left', 'cargo_photo_right'], requiredFor: ['CARGO_DRIVER'] },
   ],
   legalConsents: [{ id: 'truth-confirmation', required: true, title: 'Подтверждаю достоверность указанных данных' }, { id: 'performer-terms', required: true, title: 'Принимаю условия работы исполнителя' }],
   upload: { maxBytes: 12 * 1024 * 1024, allowedMimeTypes: ['image/jpeg', 'image/png', 'image/webp', 'application/pdf'] },
@@ -94,7 +90,7 @@ function normalizeAdditionalVehicles(raw: unknown): AdditionalVehicleDraft[] {
 }
 
 function normalizeStoredApplication(application: RegistrationApplication, language: 'ru' | 'ky'): RegistrationApplication {
-  return { ...application, data: mergeRegistrationData(emptyRegistrationData(language), application.data) };
+  return { ...application, roles: ['NOT_STARTED', 'DRAFT'].includes(application.status) ? application.roles.filter(role => role !== 'COURIER') : application.roles, data: { ...mergeRegistrationData(emptyRegistrationData(language), application.data), vehicles: ['NOT_STARTED', 'DRAFT'].includes(application.status) ? (application.data.vehicles || []).filter(vehicle => vehicle.usage !== 'COURIER') : application.data.vehicles } };
 }
 
 function normalizeConfig(raw: unknown): RegistrationConfig {
@@ -103,15 +99,15 @@ function normalizeConfig(raw: unknown): RegistrationConfig {
   return {
     ...fallbackConfig,
     ...value,
-    roles: Array.isArray(value.roles) && value.roles.length ? value.roles : fallbackConfig.roles,
+    roles: (Array.isArray(value.roles) && value.roles.length ? value.roles : fallbackConfig.roles).filter(role => role.id !== 'COURIER').map(role => role.id === 'TAXI_DRIVER' ? { ...role, title: 'Такси и доставка', description: 'Перевозите пассажиров и доставляйте заказы на машине.' } : role),
     minimumAgeByRole: { ...fallbackConfig.minimumAgeByRole, ...(value.minimumAgeByRole || {}) },
     districts: { ...fallbackConfig.districts, ...(value.districts || {}) },
     courierTransportModes: Array.isArray(value.courierTransportModes) && value.courierTransportModes.length ? value.courierTransportModes : fallbackConfig.courierTransportModes,
     courierOrderTypes: Array.isArray(value.courierOrderTypes) && value.courierOrderTypes.length ? value.courierOrderTypes : fallbackConfig.courierOrderTypes,
     languages: Array.isArray(value.languages) && value.languages.length ? value.languages : fallbackConfig.languages,
     loadingTypes: Array.isArray(value.loadingTypes) && value.loadingTypes.length ? value.loadingTypes : fallbackConfig.loadingTypes,
-    documents: Array.isArray(value.documents) ? value.documents : fallbackConfig.documents,
-    documentRequirements: Array.isArray(value.documentRequirements) && value.documentRequirements.length ? value.documentRequirements : fallbackConfig.documentRequirements,
+    documents: [],
+    documentRequirements: fallbackConfig.documentRequirements,
     legalConsents: Array.isArray(value.legalConsents) && value.legalConsents.length ? value.legalConsents : fallbackConfig.legalConsents,
     upload: { ...fallbackConfig.upload, ...(value.upload || {}) },
   };
@@ -126,7 +122,7 @@ function normalizeApplication(raw: unknown, language: 'ru' | 'ky', localUploads:
   if (!raw || typeof raw !== 'object') return empty;
   const source = raw as Record<string, unknown>;
   const rolesSource = Array.isArray(source.roles) ? source.roles : [];
-  const roles = rolesSource.map(item => typeof item === 'string' ? item : item && typeof item === 'object' ? String((item as Record<string, unknown>).role || (item as Record<string, unknown>).type || '') : '').filter((role): role is PerformerRole => (performerRoles as readonly string[]).includes(role));
+  const roles = rolesSource.map(item => typeof item === 'string' ? item : item && typeof item === 'object' ? String((item as Record<string, unknown>).role || (item as Record<string, unknown>).type || '') : '').filter((role): role is PerformerRole => (performerRoles as readonly string[]).includes(role) && (!['NOT_STARTED', 'DRAFT'].includes(String(source.status)) || role !== 'COURIER'));
   const roleStatuses = (Array.isArray(source.roleStatuses) ? source.roleStatuses : rolesSource).filter(item => item && typeof item === 'object').map(item => {
     const value = item as Record<string, unknown>; const role = String(value.role || value.type || '') as PerformerRole;
     return {
@@ -169,6 +165,7 @@ function normalizeApplication(raw: unknown, language: 'ru' | 'ky', localUploads:
     canActivate: source.canActivate === true,
     activatedAt: typeof source.activatedAt === 'string' ? source.activatedAt : null,
   };
+  if (['NOT_STARTED', 'DRAFT'].includes(application.status)) application.data.vehicles = application.data.vehicles.filter(vehicle => vehicle.usage !== 'COURIER');
   return { ...application, currentStep: normalizeStep(application) };
 }
 
@@ -393,6 +390,7 @@ export function DriverRegistrationScreen({ user, deepLink, statusRevision = 0, o
   const [error, setError] = useState('');
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState(false);
+  const [viewedPhoto, setViewedPhoto] = useState<{ slotKey: string; title: string } | null>(null);
   const [sourceRequest, setSourceRequest] = useState<UploadRequest | null>(null);
   const [cameraIntro, setCameraIntro] = useState(false);
   const [cameraRequest, setCameraRequest] = useState<UploadRequest | null>(null);
@@ -456,7 +454,7 @@ export function DriverRegistrationScreen({ user, deepLink, statusRevision = 0, o
     persistLocal(next);
   }, [applyApplication, persistLocal]);
 
-  useEffect(() => () => { activeRef.current = false; }, []);
+  useEffect(() => { activeRef.current = true; return () => { activeRef.current = false; }; }, []);
 
   const mergeServerMetadata = useCallback((raw: unknown, local: RegistrationApplication) => {
     const remote = normalizeApplication(raw, registrationLanguage, local.data.uploads);
@@ -774,13 +772,15 @@ export function DriverRegistrationScreen({ user, deepLink, statusRevision = 0, o
         const response = await api.upload<{ upload?: RegistrationUpload }>(`/driver/registration/uploads/${encodeURIComponent(request.slotKey)}`, form);
         if (!activeRef.current || uploadGenerationRef.current[request.slotKey] !== generation) return;
         const remote = (response && typeof response === 'object' && 'upload' in response ? response.upload : response) as RegistrationUpload;
-        updateData(data => ({ ...data, uploads: { ...data.uploads, [request.slotKey]: { ...data.uploads[request.slotKey], ...remote, slotKey: request.slotKey, kind: request.kind, localUri: undefined, name: file.name, mimeType: file.type, status: remote?.status || 'UPLOADED', progress: 1, pendingDelete: false } } }));
+        updateData(data => ({ ...data, uploads: { ...data.uploads, [request.slotKey]: { ...data.uploads[request.slotKey], ...remote, slotKey: request.slotKey, kind: request.kind, localUri: undefined, name: file.name, mimeType: file.type, status: remote?.status || 'UPLOADED', progress: 1, pendingDelete: false, previousUpload: undefined } } }));
         delete uploadFilesRef.current[request.slotKey];
         await deleteRegistrationFile(user.id, file.uri);
         trackRegistration('document_upload_success', { documentType: request.kind });
       } catch (caught) {
         if (uploadGenerationRef.current[request.slotKey] !== generation) return;
-        updateData(data => ({ ...data, uploads: { ...data.uploads, [request.slotKey]: { ...data.uploads[request.slotKey], status: 'QUEUED', progress: 0 } } }));
+        const previous = appRef.current.data.uploads[request.slotKey]?.previousUpload;
+        updateData(data => ({ ...data, uploads: { ...data.uploads, [request.slotKey]: previous || { ...data.uploads[request.slotKey], status: 'QUEUED', progress: 0 } } }));
+        if (previous) { delete uploadFilesRef.current[request.slotKey]; await deleteRegistrationFile(user.id, file.uri); }
         setError(messageOf(caught));
         trackRegistration('document_upload_failed', { documentType: request.kind });
       }
@@ -796,7 +796,7 @@ export function DriverRegistrationScreen({ user, deepLink, statusRevision = 0, o
       const generation = (uploadGenerationRef.current[selected.request.slotKey] || 0) + 1;
       uploadGenerationRef.current[selected.request.slotKey] = generation;
       uploadFilesRef.current[selected.request.slotKey] = file;
-      updateData(data => ({ ...data, uploads: { ...data.uploads, [selected.request.slotKey]: { ...data.uploads[selected.request.slotKey], slotKey: selected.request.slotKey, kind: selected.request.kind, name: file.name, localUri: file.uri, mimeType: file.type, status: onlineRef.current ? 'UPLOADING' : 'QUEUED', progress: 0, reasonCode: null, reasonText: null, pendingDelete: false } } }));
+      updateData(data => ({ ...data, uploads: { ...data.uploads, [selected.request.slotKey]: { ...data.uploads[selected.request.slotKey], previousUpload: previousPhoto(data.uploads[selected.request.slotKey]), slotKey: selected.request.slotKey, kind: selected.request.kind, name: file.name, localUri: file.uri, mimeType: file.type, status: onlineRef.current ? 'UPLOADING' : 'QUEUED', progress: 0, reasonCode: null, reasonText: null, pendingDelete: false } } }));
       setPreview(null);
       if (onlineRef.current) void uploadFile(selected.request, file, generation);
     } catch (caught) { setError(messageOf(caught)); }
@@ -810,7 +810,11 @@ export function DriverRegistrationScreen({ user, deepLink, statusRevision = 0, o
       if (!activeRef.current || uploadGenerationRef.current[slotKey] !== generation) return;
       updateData(data => { const uploads = { ...data.uploads }; delete uploads[slotKey]; return { ...data, uploads }; });
     } catch (caught) {
-      if (uploadGenerationRef.current[slotKey] === generation) setError(messageOf(caught));
+      if (uploadGenerationRef.current[slotKey] === generation) {
+        const previous = appRef.current.data.uploads[slotKey]?.previousUpload;
+        if (previous) updateData(data => ({ ...data, uploads: { ...data.uploads, [slotKey]: previous } }));
+        setError(messageOf(caught));
+      }
     }
   }), [queueUploadOperation, updateData]);
 
@@ -822,7 +826,7 @@ export function DriverRegistrationScreen({ user, deepLink, statusRevision = 0, o
     }
     const generation = (uploadGenerationRef.current[slotKey] || 0) + 1;
     uploadGenerationRef.current[slotKey] = generation;
-    updateData(data => ({ ...data, uploads: { ...data.uploads, [slotKey]: { ...data.uploads[slotKey], localUri: undefined, remoteUrl: undefined, status: 'NOT_UPLOADED', pendingDelete: true } } }));
+    updateData(data => ({ ...data, uploads: { ...data.uploads, [slotKey]: { ...data.uploads[slotKey], previousUpload: previousPhoto(data.uploads[slotKey]), localUri: undefined, remoteUrl: undefined, status: 'NOT_UPLOADED', pendingDelete: true } } }));
     delete uploadFilesRef.current[slotKey];
     void deleteRegistrationFile(user.id, existing?.localUri);
     if (onlineRef.current) void removeRemoteUpload(slotKey, generation);
@@ -936,14 +940,14 @@ export function DriverRegistrationScreen({ user, deepLink, statusRevision = 0, o
   const openSupport = () => { trackRegistration('support_opened', { step: appRef.current.currentStep }); setSupportSheet(true); };
   const contactSupport = (topic: string, message: string, attachmentName?: string) => {
     const phone = config.supportPhone || '+996000000000';
-    const problemDocuments = Object.values(application.data.uploads).filter(upload => ['CORRECTION_REQUIRED', 'REJECTED', 'BLOCKED', 'EXPIRED'].includes(upload.status)).map(upload => upload.slotKey).join(', ');
+    const problemDocuments = Object.values(application.data.uploads).filter(upload => upload.kind === 'VEHICLE_PHOTO' && ['CORRECTION_REQUIRED', 'REJECTED', 'BLOCKED', 'EXPIRED'].includes(upload.status)).map(upload => upload.slotKey).join(', ');
     const body = [
       `Пользователь ${user.id}`,
       `Анкета ${application.applicationNumber || application.applicationId || application.id || 'черновик'}`,
       `Направления: ${application.roles.join(', ') || 'не выбраны'}`,
       `Шаг: ${application.currentStep}; статус: ${application.status}`,
       `Тема: ${topic}`,
-      problemDocuments ? `Проблемные документы: ${problemDocuments}` : '',
+      problemDocuments ? `Фотографии для исправления: ${problemDocuments}` : '',
       message.trim() ? `Сообщение: ${message.trim()}` : '',
       attachmentName ? `Вложение для отправки: ${attachmentName}` : '',
     ].filter(Boolean).join('\n');
@@ -990,26 +994,18 @@ export function DriverRegistrationScreen({ user, deepLink, statusRevision = 0, o
   ><SupportSheet visible={supportSheet} application={application} onClose={() => setSupportSheet(false)} onContact={contactSupport}/></RegistrationStatusScreen>;
 
   return <SafeAreaView style={[r.screen, { backgroundColor: palette.background }]}>
-    <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined} keyboardVerticalOffset={0}>
-      <RegistrationHeader onBack={back} onHelp={openSupport} step={stepIndex + 1} total={steps.length}/>
-      <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={[r.content, { paddingBottom: 24 }]}>
-        {!online ? <OfflineState queued onRetry={() => void refresh(true)}/> : null}
-        {error ? <ErrorCard text={error} onRetry={() => { setError(''); drainUploadQueue(); void syncNow(); }}/> : null}
-        <RegistrationStepContent step={current.id} application={application} config={config} errors={fieldErrors} correctionFields={correctionFields} onRoles={updateRoles} onData={updateData} onUpload={openUpload} onDeleteUpload={deleteUpload} onRequestLocation={requestLocation} onGoTo={goTo}/>
-        <View style={{ height: 12 }}/>
-      </ScrollView>
-      <View style={[r.bottom, { borderColor: palette.line, backgroundColor: palette.background, paddingBottom: Math.max(10, insets.bottom) }]}>
-        <SaveIndicator state={saveState}/>
+    <RegistrationKeyboardLayout header={<RegistrationHeader onBack={back} onHelp={openSupport} step={stepIndex + 1} total={steps.length}/>} footer={<View style={[r.bottom, { borderColor: palette.line, backgroundColor: palette.background, paddingBottom: Math.max(10, insets.bottom) }]}>
         {correctionEditing && current.id === 'REVIEW' ? <PrimaryButton label="Отправить исправления" busy={busy} onPress={() => void submit(true)}/> : correctionEditing ? <PrimaryButton label="Сохранить исправление" busy={busy} onPress={() => void finishCorrection()}/> : current.id === 'REVIEW' ? <PrimaryButton label="Отправить на проверку" busy={busy} onPress={() => void submit()}/> : <PrimaryButton label="Продолжить" busy={busy} disabled={current.id === 'ROLES' && !application.roles.length} onPress={continueFlow}/>}
         {!correctionEditing && current.optional && current.id !== 'REVIEW' ? <SecondaryButton label="Пропустить" onPress={skip}/> : null}
-      </View>
-    </KeyboardAvoidingView>
+      </View>} contentContainerStyle={[r.content, { paddingTop: ['TAXI_VEHICLE', 'CARGO_VEHICLE', 'COURIER_VEHICLE'].includes(current.id) ? 20 : 28, paddingBottom: 24 }]}>
+        {!online ? <OfflineState queued onRetry={() => void refresh(true)}/> : null}
+        {error ? <ErrorCard text={error} onRetry={() => { setError(''); drainUploadQueue(); void syncNow(); }}/> : null}
+        <RegistrationStepContent step={current.id} application={application} config={config} errors={fieldErrors} correctionFields={correctionFields} onRoles={updateRoles} onData={updateData} onUpload={openUpload} onDeleteUpload={deleteUpload} onViewUpload={(slotKey, title) => setViewedPhoto({ slotKey, title })} onRequestLocation={requestLocation} onGoTo={goTo}/>
+        <View style={{ height: 12 }}/>
+    </RegistrationKeyboardLayout>
 
-    <BottomActionSheet visible={!!sourceRequest} title={sourceRequest?.title || 'Добавить файл'} onClose={() => setSourceRequest(null)}>
-      <SheetAction icon="camera-outline" title="Сфотографировать" text="Откроется камера" onPress={() => void chooseSource('camera')}/>
-      <SheetAction icon="images-outline" title="Выбрать из галереи" text="JPEG, PNG или WEBP" onPress={() => void chooseSource('gallery')}/>
-      <SheetAction icon="document-outline" title="Выбрать файл" text="Изображение или PDF, до 12 МБ" onPress={() => void chooseSource('file')}/>
-    </BottomActionSheet>
+    {viewedPhoto && application.data.uploads[viewedPhoto.slotKey] && <UploadedPhotoViewer upload={application.data.uploads[viewedPhoto.slotKey]} title={viewedPhoto.title} onClose={() => setViewedPhoto(null)} onReplace={() => { const photo = application.data.uploads[viewedPhoto.slotKey]; const selected = viewedPhoto; setViewedPhoto(null); openUpload(selected.slotKey, photo.kind, selected.title, true); }}/>}
+    {sourceRequest && !cameraIntro && <UploadSourceSheet title={sourceRequest.title} onClose={() => setSourceRequest(null)} onSelect={source => void chooseSource(source, sourceRequest)}/>}
     <CameraIntro
       visible={cameraIntro}
       onClose={() => { setCameraIntro(false); setSourceRequest(null); }}
@@ -1028,16 +1024,9 @@ export function DriverRegistrationScreen({ user, deepLink, statusRevision = 0, o
   </SafeAreaView>;
 }
 
-function SaveIndicator({ state }: { state: SaveState }) {
-  const { palette } = useTheme();
-  const data = state === 'saving' ? ['sync-outline', 'Сохраняем изменения'] : state === 'saved' ? ['checkmark', 'Черновик сохранён'] : state === 'offline' ? ['cloud-offline-outline', 'Сохранено на устройстве'] : state === 'error' ? ['alert-circle-outline', 'Не удалось сохранить локально'] : ['', ''];
-  if (!data[1]) return null;
-  return <View style={r.save}><Icon name={data[0] as React.ComponentProps<typeof Icon>['name']} size={14} color={state === 'error' ? colors.danger : palette.muted}/><Text style={[r.saveText, { color: state === 'error' ? colors.danger : palette.muted }]}>{data[1]}</Text></View>;
-}
-
 function RegistrationLoadFailure({ error, onRetry, onExit, exitLabel }: { error: string; onRetry: () => void; onExit: () => void; exitLabel: string }) {
   const { palette } = useTheme();
-  return <SafeAreaView style={[r.failureScreen, { backgroundColor: palette.background }]}><View style={r.failureDecorationTop}/><View style={r.failureDecorationSide}/><View style={r.failureContent}><Image source={require('../assets/registration/load-error-3d.png')} resizeMode="contain" style={r.failureIllustration}/><Text style={[r.failureTitle, { color: palette.ink }]}>Не удалось загрузить данные</Text><Text style={[r.failureText, { color: palette.muted }]}>Проверьте подключение к интернету и попробуйте ещё раз. Ваши заполненные данные останутся на устройстве.</Text>{error ? <Text accessibilityRole="alert" style={r.failureReason}>{error}</Text> : null}</View><View style={r.failureBottom}><PrimaryButton icon="refresh-outline" label="Попробовать снова" onPress={onRetry}/><SecondaryButton label={exitLabel} onPress={onExit}/></View></SafeAreaView>;
+  return <SafeAreaView style={[r.failureScreen, { backgroundColor: palette.background }]}><View style={r.failureDecorationTop}/><View style={r.failureDecorationSide}/><View style={r.failureContent}><Image source={require('../assets/registration/load-error-3d.webp')} resizeMode="contain" style={r.failureIllustration}/><Text style={[r.failureTitle, { color: palette.ink }]}>Не удалось загрузить данные</Text><Text style={[r.failureText, { color: palette.muted }]}>Проверьте подключение к интернету и попробуйте ещё раз. Ваши заполненные данные останутся на устройстве.</Text>{error ? <Text accessibilityRole="alert" style={r.failureReason}>{error}</Text> : null}</View><View style={r.failureBottom}><PrimaryButton icon="refresh-outline" label="Попробовать снова" onPress={onRetry}/><SecondaryButton label={exitLabel} onPress={onExit}/></View></SafeAreaView>;
 }
 
 function SheetAction({ icon, title, text, onPress }: { icon: React.ComponentProps<typeof Icon>['name']; title: string; text: string; onPress: () => void }) {
@@ -1048,12 +1037,10 @@ function SheetAction({ icon, title, text, onPress }: { icon: React.ComponentProp
 function CameraIntro({ visible, onClose, onContinue, onGallery }: { visible: boolean; onClose: () => void; onContinue: () => void; onGallery: () => void }) {
   const { palette } = useTheme();
   const benefits: { icon: React.ComponentProps<typeof Icon>['name']; title: string; text: string }[] = [
-    { icon: 'person-outline', title: 'Фото профиля', text: 'Чтобы клиенты узнавали вас' },
-    { icon: 'card-outline', title: 'Документы', text: 'Для быстрой и безопасной проверки' },
     { icon: 'car-sport-outline', title: 'Транспорт', text: 'Чтобы подтвердить данные автомобиля' },
     { icon: 'shield-checkmark-outline', title: 'Безопасность', text: 'Фото защищены и доступны только проверке' },
   ];
-  return <Modal visible={visible} animationType="slide" onRequestClose={onClose}><SafeAreaView style={[r.permissionScreen, { backgroundColor: palette.background }]}><View style={r.modalHeader}><Pressable accessibilityRole="button" accessibilityLabel="Закрыть" onPress={onClose} style={[r.modalClose, { backgroundColor: palette.surface, borderColor: palette.line }]}><Icon name="close" color={palette.ink}/></Pressable></View><ScrollView bounces={false} contentContainerStyle={r.permissionScroll}><View style={r.permissionContent}><Image source={require('../assets/registration/camera-permission-3d.png')} resizeMode="contain" style={r.permissionIllustration}/><Text style={[r.permissionTitle, { color: palette.ink }]}>Разрешите доступ к камере</Text><Text style={[r.permissionText, { color: palette.muted }]}>Камера нужна, чтобы быстро сделать фотографию профиля, документов и транспорта.</Text><View style={[r.permissionBenefits, { backgroundColor: palette.surface, borderColor: palette.line }]}>{benefits.map(item => <View key={item.title} style={r.permissionBenefit}><View style={[r.permissionBenefitIcon, { backgroundColor: palette.elevated }]}><Icon name={item.icon} size={21} color={palette.accent}/></View><View style={{ flex: 1, gap: 2 }}><Text style={[r.permissionBenefitTitle, { color: palette.ink }]}>{item.title}</Text><Text style={[r.permissionBenefitText, { color: palette.muted }]}>{item.text}</Text></View></View>)}</View><View style={r.privacyRow}><Icon name="lock-closed-outline" size={15} color={palette.muted}/><Text style={[r.privacyText, { color: palette.muted }]}>Все данные защищены и используются только для проверки</Text></View></View></ScrollView><View style={r.permissionBottom}><PrimaryButton icon="camera-outline" label="Продолжить" onPress={onContinue}/><SecondaryButton label="Выбрать из галереи" onPress={onGallery}/></View></SafeAreaView></Modal>;
+  return <Modal visible={visible} animationType="slide" onRequestClose={onClose}><SafeAreaView style={[r.permissionScreen, { backgroundColor: palette.background }]}><View style={r.modalHeader}><Pressable accessibilityRole="button" accessibilityLabel="Закрыть" onPress={onClose} style={[r.modalClose, { backgroundColor: palette.surface, borderColor: palette.line }]}><Icon name="close" color={palette.ink}/></Pressable></View><ScrollView bounces={false} contentContainerStyle={r.permissionScroll}><View style={r.permissionContent}><Image source={require('../assets/registration/camera-permission-3d.webp')} resizeMode="contain" style={r.permissionIllustration}/><Text style={[r.permissionTitle, { color: palette.ink }]}>Разрешите доступ к камере</Text><Text style={[r.permissionText, { color: palette.muted }]}>Камера нужна, чтобы сделать четыре фотографии автомобиля: спереди, сзади, слева и справа.</Text><View style={[r.permissionBenefits, { backgroundColor: palette.surface, borderColor: palette.line }]}>{benefits.map(item => <View key={item.title} style={r.permissionBenefit}><View style={[r.permissionBenefitIcon, { backgroundColor: palette.elevated }]}><Icon name={item.icon} size={21} color={palette.accent}/></View><View style={{ flex: 1, gap: 2 }}><Text style={[r.permissionBenefitTitle, { color: palette.ink }]}>{item.title}</Text><Text style={[r.permissionBenefitText, { color: palette.muted }]}>{item.text}</Text></View></View>)}</View><View style={r.privacyRow}><Icon name="lock-closed-outline" size={15} color={palette.muted}/><Text style={[r.privacyText, { color: palette.muted }]}>Все данные защищены и используются только для проверки</Text></View></View></ScrollView><View style={r.permissionBottom}><PrimaryButton icon="camera-outline" label="Продолжить" onPress={onContinue}/><SecondaryButton label="Выбрать из галереи" onPress={onGallery}/></View></SafeAreaView></Modal>;
 }
 
 function DocumentCameraModal({ request, onClose, onGallery, onCaptured }: { request: UploadRequest | null; onClose: () => void; onGallery: () => void; onCaptured: (file: SelectedFile) => void }) {
@@ -1078,7 +1065,7 @@ function DocumentCameraModal({ request, onClose, onGallery, onCaptured }: { requ
       if (photo) onCaptured({ uri: photo.uri, name: `${request.slotKey}.jpg`, type: 'image/jpeg', isImage: true, width: photo.width, height: photo.height });
     } finally { setCapturing(false); }
   };
-  return <Modal visible animationType="fade" onRequestClose={onClose}><View style={r.cameraScreen}>{permission?.granted ? <CameraView ref={camera} style={StyleSheet.absoluteFill} facing={facing}><SafeAreaView style={r.cameraOverlay}><View style={r.cameraTop}><Pressable onPress={onClose} style={r.cameraRound}><Icon name="close" color="#FFFFFF"/></Pressable><View style={r.cameraHint}><Text style={r.cameraHintText}>{request.profile ? 'Расположите лицо в центре' : 'Поместите объект полностью в рамку'}</Text></View><View style={{ width: 44 }}/></View><View style={[request.profile ? r.faceGuide : r.cameraGuide]}><View style={r.guideCorner}/></View><Text style={r.cameraHelp}>Все края видны · без бликов · держите камеру ровно</Text><View style={r.cameraControls}><Pressable onPress={onGallery} style={r.cameraControl}><Icon name="images-outline" size={27} color="#FFFFFF"/></Pressable><Pressable disabled={capturing} onPress={() => void take()} style={[r.shutter, capturing && { opacity: .5 }]}><View style={r.shutterInner}/></Pressable><Pressable onPress={() => setFacing(value => value === 'back' ? 'front' : 'back')} style={r.cameraControl}><Icon name="camera-reverse-outline" size={27} color="#FFFFFF"/></Pressable></View></SafeAreaView></CameraView> : <SafeAreaView style={r.cameraDenied}><Icon name="camera-outline" size={54} color="#FFFFFF"/><Text style={r.cameraDeniedTitle}>{permission ? 'Камера недоступна' : 'Запрашиваем доступ к камере'}</Text><Text style={r.cameraDeniedText}>{permission?.canAskAgain === false ? 'Разрешите доступ в настройках устройства или выберите фото из галереи.' : 'Подтвердите системный запрос, чтобы продолжить.'}</Text>{permission?.canAskAgain === false ? <PrimaryButton label="Открыть настройки" onPress={() => void Linking.openSettings()}/> : null}<SecondaryButton label="Выбрать из галереи" onPress={onGallery}/><SecondaryButton label="Закрыть" onPress={onClose}/></SafeAreaView>}</View></Modal>;
+  return <Modal visible animationType="fade" onRequestClose={onClose}><View style={r.cameraScreen}>{permission?.granted ? <><CameraView ref={camera} style={StyleSheet.absoluteFill} facing={facing}/><SafeAreaView style={r.cameraOverlay}><View style={r.cameraTop}><Pressable onPress={onClose} style={r.cameraRound}><Icon name="close" color="#FFFFFF"/></Pressable><View style={r.cameraHint}><Text style={r.cameraHintText}>{request.profile ? 'Расположите лицо в центре' : 'Поместите объект полностью в рамку'}</Text></View><View style={{ width: 44 }}/></View><View style={[request.profile ? r.faceGuide : r.cameraGuide]}><View style={r.guideCorner}/></View><Text style={r.cameraHelp}>Все края видны · без бликов · держите камеру ровно</Text><View style={r.cameraControls}><Pressable accessibilityRole="button" accessibilityLabel="Выбрать из галереи" onPress={onGallery} style={r.cameraControl}><Icon name="images-outline" size={27} color="#FFFFFF"/></Pressable><Pressable accessibilityRole="button" accessibilityLabel="Сделать фото" disabled={capturing} onPress={() => void take()} style={[r.shutter, capturing && { opacity: .5 }]}><View style={r.shutterInner}/></Pressable><Pressable accessibilityRole="button" accessibilityLabel="Переключить камеру" onPress={() => setFacing(value => value === 'back' ? 'front' : 'back')} style={r.cameraControl}><Icon name="camera-reverse-outline" size={27} color="#FFFFFF"/></Pressable></View></SafeAreaView></> : <SafeAreaView style={r.cameraDenied}><Icon name="camera-outline" size={54} color="#FFFFFF"/><Text style={r.cameraDeniedTitle}>{permission ? 'Камера недоступна' : 'Запрашиваем доступ к камере'}</Text><Text style={r.cameraDeniedText}>{permission?.canAskAgain === false ? 'Разрешите доступ в настройках устройства или выберите фото из галереи.' : 'Подтвердите системный запрос, чтобы продолжить.'}</Text>{permission?.canAskAgain === false ? <PrimaryButton label="Открыть настройки" onPress={() => void Linking.openSettings()}/> : null}<SecondaryButton label="Выбрать из галереи" onPress={onGallery}/><SecondaryButton label="Закрыть" onPress={onClose}/></SafeAreaView>}</View></Modal>;
 }
 
 function PreviewModal({ preview, busy, onClose, onAccept, onRetake }: { preview: { request: UploadRequest; file: SelectedFile } | null; busy: boolean; onClose: () => void; onAccept: () => void; onRetake: () => void }) {
@@ -1089,21 +1076,21 @@ function PreviewModal({ preview, busy, onClose, onAccept, onRetake }: { preview:
 
 function SupportSheet({ visible, application, onClose, onContact }: { visible: boolean; application: RegistrationApplication; onClose: () => void; onContact: (topic: string, message: string, attachmentName?: string) => void }) {
   const { palette } = useTheme();
-  const [topic, setTopic] = useState('Документы');
+  const [topic, setTopic] = useState('Фото автомобиля');
   const [message, setMessage] = useState('');
   const [attachmentName, setAttachmentName] = useState<string>();
   const attach = async() => {
     const result = await DocumentPicker.getDocumentAsync({ type: ['image/jpeg', 'image/png', 'image/webp', 'application/pdf'], copyToCacheDirectory: true, multiple: false });
     if (!result.canceled) setAttachmentName(result.assets[0]?.name);
   };
-  return <BottomActionSheet visible={visible} title="Поддержка" onClose={onClose}><InfoCard title="Контекст уже добавлен" text={`Анкета: ${application.applicationNumber || application.applicationId || 'черновик'} · шаг: ${application.currentStep} · статус: ${application.status}`}/><Text style={[r.supportTitle, { color: palette.ink }]}>С чем помочь?</Text><View style={r.topicRow}>{['Не приходит сообщение', 'Документы', 'Статус анкеты', 'Транспорт', 'Другая проблема'].map(value => <Pressable key={value} accessibilityRole="radio" accessibilityState={{ selected: topic === value }} onPress={() => setTopic(value)} style={[r.topic, { borderColor: topic === value ? palette.accent : palette.line, backgroundColor: topic === value ? palette.elevated : palette.surface }]}><Text style={[r.topicText, { color: topic === value ? palette.accent : palette.ink }]}>{value}</Text></Pressable>)}</View><FormInput label="Сообщение" optional multiline value={message} onChangeText={setMessage} placeholder="Опишите, что произошло"/><SecondaryButton label={attachmentName ? `Файл: ${attachmentName}` : 'Прикрепить изображение или файл'} onPress={() => void attach()}/>{attachmentName ? <InfoCard text="После открытия приложения сообщений добавьте выбранный файл к обращению."/> : null}<PrimaryButton label="Написать в поддержку" onPress={() => onContact(topic, message, attachmentName)}/></BottomActionSheet>;
+  return <BottomActionSheet visible={visible} title="Поддержка" onClose={onClose}><InfoCard title="Контекст уже добавлен" text={`Анкета: ${application.applicationNumber || application.applicationId || 'черновик'} · шаг: ${application.currentStep} · статус: ${application.status}`}/><Text style={[r.supportTitle, { color: palette.ink }]}>С чем помочь?</Text><View style={r.topicRow}>{['Не приходит сообщение', 'Фото автомобиля', 'Статус анкеты', 'Транспорт', 'Другая проблема'].map(value => <Pressable key={value} accessibilityRole="radio" accessibilityState={{ selected: topic === value }} onPress={() => setTopic(value)} style={[r.topic, { borderColor: topic === value ? palette.accent : palette.line, backgroundColor: topic === value ? palette.elevated : palette.surface }]}><Text style={[r.topicText, { color: topic === value ? palette.accent : palette.ink }]}>{value}</Text></Pressable>)}</View><FormInput label="Сообщение" optional multiline value={message} onChangeText={setMessage} placeholder="Опишите, что произошло"/><SecondaryButton label={attachmentName ? `Файл: ${attachmentName}` : 'Прикрепить изображение или файл'} onPress={() => void attach()}/>{attachmentName ? <InfoCard text="После открытия приложения сообщений добавьте выбранный файл к обращению."/> : null}<PrimaryButton label="Написать в поддержку" onPress={() => onContact(topic, message, attachmentName)}/></BottomActionSheet>;
 }
 
 function RegistrationDocumentStatusList({ uploads, data, allowCorrection, onOpenCorrection }: { uploads: RegistrationUpload[]; data: RegistrationData; allowCorrection: boolean; onOpenCorrection: (step: RegistrationStepId) => void }) {
   const { palette } = useTheme();
   if (!uploads.length) return null;
   return <View style={r.statusList}>
-    <Text accessibilityRole="header" style={[r.statusSectionTitle, { color: palette.ink }]}>Документы и фотографии</Text>
+    <Text accessibilityRole="header" style={[r.statusSectionTitle, { color: palette.ink }]}>Фотографии автомобиля</Text>
     {uploads.map(upload => {
       const problematic = ['CORRECTION_REQUIRED', 'REJECTED', 'BLOCKED', 'EXPIRED'].includes(upload.status);
       const actionable = ['CORRECTION_REQUIRED', 'REJECTED', 'EXPIRED'].includes(upload.status) && upload.canReupload !== false;
@@ -1150,17 +1137,17 @@ function RegistrationStatusScreen({ application, busy, error, onRefresh, onSuppo
   return <SafeAreaView style={[r.screen, { backgroundColor: palette.background }]}><RegistrationHeader onBack={onClose} onHelp={onSupport}/><ScrollView contentContainerStyle={r.statusContent}><View style={[r.statusHero, { backgroundColor: approved ? '#EAF8F1' : correction || pending ? '#FFF6DE' : '#FFF0F1' }]}><Icon name={icon} size={52} color={color}/></View><Text style={[r.statusTitle, { color: palette.ink }]}>{title}</Text><Text style={[r.statusText, { color: palette.muted }]}>{text}</Text><InfoCard title={`Анкета ${application.applicationNumber || application.applicationId || application.id || 'создана'}`} text={application.reviewEta ? `Ориентировочный срок: ${application.reviewEta}` : 'Срок проверки обновляется сервером и появится здесь.'}/>
     {blockedUntil && blockedUntil.getTime() > Date.now() ? <InfoCard tone="amber" title="Временное ограничение" text={`До ${blockedUntil.toLocaleString('ru-RU')}`}/> : null}
     {application.roleStatuses.length ? <View style={r.statusList}>{application.roleStatuses.map(item => { const badge = item.status === 'APPROVED' ? 'APPROVED' : item.status === 'CORRECTION_REQUIRED' ? 'CORRECTION_REQUIRED' : item.status === 'REJECTED' ? 'REJECTED' : item.status === 'BLOCKED' ? 'BLOCKED' : 'UNDER_REVIEW'; const projectionText = item.status === 'APPROVED' && item.operational === false ? item.projectionIssueText || ({ DEPENDENCY_NOT_APPROVED: 'Допуск зависит от другого направления, которое ещё не одобрено.', MISSING_VEHICLE_DATA: 'Не хватает данных транспорта для подключения направления.', LEGACY_PROFILE_CONFLICT: 'Направление одобрено, но профиль требует проверки поддержки.', LEGACY_PROFILE_CAPABILITY_CONFLICT: 'Эти возможности пока нельзя одновременно подключить к профилю.', LEGACY_SINGLE_VEHICLE_LIMIT: 'Направление одобрено, но текущая версия поддерживает один активный транспорт.' } as Record<string, string>)[item.projectionIssueCode || ''] || 'Направление одобрено, но пока не подключено к рабочему профилю.' : null; return <View key={item.role} style={[r.roleStatus, { borderColor: palette.line, backgroundColor: palette.surface }]}><View style={r.roleStatusTop}><Text style={[r.roleName, { color: palette.ink }]}>{item.role === 'TAXI_DRIVER' ? 'Такси' : item.role === 'CARGO_DRIVER' ? 'Грузовые перевозки' : 'Курьер'}</Text><StatusBadge status={badge}/></View>{item.reasonText || item.reason ? <Text style={r.issueReason}>{item.reasonText || item.reason}</Text> : null}{projectionText ? <Text style={r.projectionNote}>{projectionText}</Text> : null}</View>; })}</View> : null}
-    <RegistrationDocumentStatusList uploads={uploads} data={application.data} allowCorrection={correction || rejected && application.canResubmit === true} onOpenCorrection={onOpenCorrection}/>
+    <RegistrationDocumentStatusList uploads={uploads.filter(upload => upload.kind === 'VEHICLE_PHOTO')} data={application.data} allowCorrection={correction || rejected && application.canResubmit === true} onOpenCorrection={onOpenCorrection}/>
     {correction && !actionableIssues.length ? <InfoCard text="Откройте отмеченный сервером раздел и исправьте только указанные данные."/> : null}
     {error ? <ErrorCard text={error} onRetry={onRefresh}/> : null}</ScrollView><View style={r.statusBottom}>{correction ? <PrimaryButton label="Перейти к исправлениям" onPress={() => onOpenCorrection(targetStep)}/> : application.canResubmit && rejected ? <PrimaryButton label="Исправить анкету" onPress={() => onOpenCorrection(targetStep)}/> : activatable ? <PrimaryButton label="Начать работу" busy={busy} onPress={onStart}/> : pending ? <PrimaryButton label="Обновить статус" busy={busy} onPress={onRefresh}/> : null}{activatable && (correction || rejected) ? <SecondaryButton label="Начать работу по одобренному направлению" disabled={busy} onPress={onStart}/> : null}<SecondaryButton label="Связаться с поддержкой" onPress={onSupport}/></View>{children}</SafeAreaView>;
 }
 
 const r = StyleSheet.create({
-  screen: { flex: 1, paddingHorizontal: 18 },
+  screen: { flex: 1, paddingHorizontal: 20 },
   loadingWrap: { flex: 1, gap: 22 },
   center: { flex: 1, justifyContent: 'center', gap: 12 },
-  content: { gap: 14, paddingTop: 18 },
-  bottom: { borderTopWidth: StyleSheet.hairlineWidth, paddingTop: 9, gap: 3 },
+  content: { gap: 14, paddingTop: 28 },
+  bottom: { paddingTop: 9, gap: 3 },
   save: { minHeight: 19, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 5 },
   saveText: { fontSize: 10, fontWeight: '600' },
   sheetAction: { minHeight: 72, borderWidth: 1, borderRadius: 15, padding: 10, flexDirection: 'row', alignItems: 'center', gap: 11 },

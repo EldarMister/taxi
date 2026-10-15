@@ -67,7 +67,7 @@ test('a simplified taxi application reaches the admin moderation queue',async()=
     {...application,user:{id:userId,name:'Test',phone:'',role:'CLIENT'},_count:{uploads:uploads.length}},
   ],count:async()=>1}};
   const registration=new RegistrationService(db,{} as any,{} as any,{registrationConfig:async()=>({...REGISTRATION_CONFIG,acceptedCityNames:REGISTRATION_CONFIG.cities})} as any);
-  const submitted=await registration.submit({id:userId,role:'CLIENT'} as any,{truthConfirmed:true,termsAccepted:true,
+  const submitted=await registration.submit({id:userId,role:'DRIVER'} as any,{truthConfirmed:true,termsAccepted:true,
     acceptedConsentIds:['truth-confirmation','performer-terms'],legalTermsVersion:REGISTRATION_CONFIG.legalTermsVersion});
   assert.equal(submitted.application.status,'SUBMITTED');
   assert.equal(submitted.application.roleStatuses[0].status,'SUBMITTED');
@@ -98,13 +98,15 @@ test('approved scooter courier can go online without a vehicle and cannot enable
 test('scooter approval prepares an operational profile without creating a vehicle',async()=>{
   const application={
     id:'application',data:{personal,courier:{transportModes:['SCOOTER']}},uploads:[],
-    user:{id:'courier',role:'CLIENT',name:'Асан Ибраев',driverProfile:null},
+    user:{id:'courier',role:'DRIVER',name:'Асан Ибраев',firstName:'Асан',lastName:'Ибраев',driverProfile:null},
     roles:[{id:'role',role:'COURIER',status:'APPROVED',projectedAt:null,projectionIssueCode:null}],
   };
   let createdProfile:any;
   const tx={
     performerApplication:{findUniqueOrThrow:async()=>application},
     performerApplicationRole:{update:async()=>({})},
+    order:{findFirst:async()=>null},
+    foodOrder:{findFirst:async()=>null},
     driverProfile:{upsert:async(input:any)=>{createdProfile=input.create;return createdProfile;}},
   };
   const service=new RegistrationAdminService({} as any,{} as any,{} as any);
@@ -394,7 +396,7 @@ test('exact upload replay succeeds after correction replacement commit and corre
     performerUpload:{findUnique:async()=>previous,findUniqueOrThrow:async()=>previous,count:async()=>1,aggregate:async()=>({_sum:{byteSize:bytes.length}}),upsert:async()=>{mutations++;return previous;},delete:async()=>{mutations++;}},
   };
   const db:any={$transaction:async(callback:any)=>callback(tx),performerApplication:{findUnique:async()=>({id:'application-1'})}};
-  const service=new RegistrationService(db,{} as never,{} as never,{registrationConfig:async()=>({...REGISTRATION_CONFIG,acceptedCityNames:REGISTRATION_CONFIG.cities})} as any),actor={id:'user-1',role:'CLIENT'} as any;
+  const service=new RegistrationService(db,{} as never,{} as never,{registrationConfig:async()=>({...REGISTRATION_CONFIG,acceptedCityNames:REGISTRATION_CONFIG.cities})} as any),actor={id:'user-1',role:'DRIVER'} as any;
   const result=await service.upload(actor,'identity_front',{kind:'IDENTITY_DOCUMENT'}, {buffer:bytes,mimetype:'application/pdf',size:bytes.length});
   assert.match(result.remoteUrl,/\?v=2$/);assert.equal(mutations,0);
   await assert.rejects(()=>service.removeUpload(actor,'identity_front'),(error:any)=>error?.getStatus?.()===403);

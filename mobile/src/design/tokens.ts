@@ -38,3 +38,9 @@ export const motion = {
   enter: 280,
   sheet: 320,
 } as const;
+
+export const driverAction = {
+  height: 72,
+  inset: 4,
+  bottomGap: 16,
+} as const;

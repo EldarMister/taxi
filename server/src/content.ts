@@ -22,6 +22,7 @@ export class RestaurantInputDto {
   @IsOptional() @IsInt() @Min(-10_000) @Max(10_000) sortOrder?:number;
 }
 export class BannerInputDto {
+  @IsOptional() @IsString() @MaxLength(50) updatedAt?:string;
   @IsOptional() @IsString() @MaxLength(120) title?:string;
   @IsOptional() @IsString() @MaxLength(300) subtitle?:string;
   @IsOptional() @IsString() @MaxLength(2000) imageUrl?:string|null;
@@ -95,8 +96,9 @@ export class ContentService {
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(219861074)`;
       const current=id?await tx.banner.findUnique({where:{id}}):null;
       if(id&&!current)throw new NotFoundException('Баннер не найден.');
+      if(current&&input.updatedAt!==undefined&&current.updatedAt.toISOString()!==input.updatedAt)throw new ConflictException('Баннер уже изменён. Обновите данные перед сохранением.');
       const previous=current?{title:current.title,subtitle:current.subtitle,imageUrl:current.imageUrl,imageKey:current.imageKey,actionType:current.actionType,restaurantId:current.restaurantId,sortOrder:current.sortOrder,active:current.active}:{};
-      const data=validateBanner({...previous,...Object.fromEntries(Object.entries(input).filter(([,value])=>value!==undefined))});
+      const data=validateBanner({...previous,...Object.fromEntries(Object.entries(input).filter(([key,value])=>key!=='updatedAt'&&value!==undefined))});
       if(data.restaurantId&&!await tx.foodRestaurant.findUnique({where:{id:data.restaurantId}}))throw new BadRequestException('Ресторан для баннера не найден.');
       assertBannerCapacity(await tx.banner.count({where:{active:true,...(id?{id:{not:id}}:{})}}),data.active);
       const result=id?await tx.banner.update({where:{id},data}):await tx.banner.create({data});

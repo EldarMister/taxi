@@ -52,9 +52,9 @@ async function setup(t, options = {}) {
     Keyboard: { dismiss: () => { keyboardDismisses++; } },
   };
   const api = {
-    request: url => {
+    request: (url, init) => {
       requests.push(url);
-      const custom = options.request?.(url);
+      const custom = options.request?.(url, init);
       if (custom !== undefined) return Promise.resolve(custom);
       if (url === '/content/banners') return Promise.resolve({ banners: clone(options.banners ?? []) });
       if (url === '/food/catalog') return Promise.resolve(clone(catalog));
@@ -156,6 +156,34 @@ async function checkout(h, { quantity = 1, optionIds = [] } = {}) {
   await h.press('onCheckout');
   assert.equal(h.screen, 'CheckoutScreen');
 }
+
+test('catalog declares modifier support so the server returns populated menus on load and refresh', async t => {
+  const modernCatalog = clone(catalog), headers = [];
+  const merchant = modernCatalog.restaurants[0], configuredDish = merchant.dishes[0];
+  configuredDish.optionGroups = [{ id: 'sauce', name: 'Соус', optionIds: ['soy', 'ginger'], minSelected: 1, maxSelected: 1 }];
+  configuredDish.defaultOptionIds = ['ginger'];
+  merchant.options[1].priceScope = 'PER_ITEM';
+  const h = await setup(t, { request: (url, init) => {
+    if (url !== '/food/catalog') return;
+    const capability = init?.headers?.['X-Atlas-Capabilities'];
+    headers.push(capability);
+    return capability === 'food-modifiers-v2' ? clone(modernCatalog) : {
+      ...clone(modernCatalog), restaurants: modernCatalog.restaurants.map(item => ({ ...clone(item), dishes: [], options: [] })),
+    };
+  } });
+  await h.press('onFood');
+  const loadedMerchant = h.view.restaurants[0];
+  assert.equal(loadedMerchant.dishes.length, 1, 'modern dishes must not be filtered as a legacy menu');
+  assert.deepEqual(clone(loadedMerchant.dishes[0].optionGroups), configuredDish.optionGroups);
+  assert.deepEqual(clone(loadedMerchant.dishes[0].defaultOptionIds), ['ginger']);
+  assert.equal(loadedMerchant.options[1].priceScope, 'PER_ITEM');
+  await h.press('onRestaurant', loadedMerchant);
+  await h.press('onAdd', loadedMerchant.dishes[0]);
+  assert.equal(h.screen, 'DishScreen', 'required options still open the dish configuration');
+  await h.change({ contentRevision: 1 });
+  assert.equal(h.view.restaurant.dishes.length, 1);
+  assert.deepEqual(headers, ['food-modifiers-v2', 'food-modifiers-v2']);
+});
 
 test('rapid catalog presses and cart deltas retain every update across all screens', async t => {
   const h = await setup(t);

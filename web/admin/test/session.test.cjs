@@ -13,10 +13,18 @@ function browser(local, fetch, locks) {
   const events = new Map();
   const window = { location: { origin: 'https://atlas.example' }, localStorage: local, sessionStorage: storage(), addEventListener: (name, callback) => events.set(name, callback), dispatchEvent: event => events.get(event.type)?.(event) };
   const context = vm.createContext({ window, navigator: { locks }, fetch, Event, FormData, AbortController, setTimeout, clearTimeout, URL });
-  vm.runInContext(source + '\nglobalThis.panel = { refresh, session, signIn, api };', context);
+  vm.runInContext(source + '\nglobalThis.panel = { refresh, session, signIn, api, mediaUrl };', context);
   return { panel: context.panel, events, window };
 }
 const response = (status, value) => ({ ok: status < 400, status, json: async () => value });
+
+test('uploaded and external photos resolve without doubling the API prefix', () => {
+  const { panel } = browser(storage(), async () => response(200, {}));
+  assert.equal(panel.mediaUrl('/api/content/media/current-photo'), 'https://atlas.example/api/content/media/current-photo');
+  assert.equal(panel.mediaUrl('/content/media/legacy-photo'), 'https://atlas.example/api/content/media/legacy-photo');
+  assert.equal(panel.mediaUrl('https://images.example/current.jpg'), 'https://images.example/current.jpg');
+  for (const value of ['', 'javascript:alert(1)', 'data:image/svg+xml,test', '//unknown.example/image', 'https://user:password@example.com/image']) assert.equal(panel.mediaUrl(value), '');
+});
 
 test('two tabs rotate a shared refresh token exactly once', async () => {
   const local = storage(); local.setItem(KEY, JSON.stringify(saved('old')));

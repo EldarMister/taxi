@@ -10,8 +10,36 @@ const majorRoad = '#FFF1CE';
 const majorEdge = '#E9D6AC';
 const localName = ['coalesce', ['get', 'name:ru'], ['get', 'name:ky'], ['get', 'name:nonlatin'], ['get', 'name'], ['get', 'name_en']];
 const currentOsmName = ['coalesce', ['get', 'name_ru'], ['get', 'name'], ['get', 'name_ky'], ['get', 'name_en']];
+const kyrgyzOsmName = ['coalesce', ['get', 'name_ky'], ['get', 'name'], ['get', 'name_ru'], ['get', 'name_en']];
+const kyrgyzOpenMapTilesName = ['coalesce', ['get', 'name:ky'], ['get', 'name'], ['get', 'name:ru'], ['get', 'name:nonlatin'], ['get', 'name_en']];
 const currentOsmLabels = process.env.EXPO_PUBLIC_OSM_LABELS_TILEJSON_URL?.trim() || 'https://vector.openstreetmap.org/shortbread_v1/tilejson.json';
 const detailedOsmZoom = 14;
+// Remove only the generic word for a street. Prospects, lanes, squares and
+// organizations retain their full names; their type can distinguish an address.
+function compactStreetName(name: unknown[]): unknown[] {
+  const value = ['var', 'streetName'];
+  const lower = ['downcase', value];
+  return ['let', 'streetName', ['to-string', name], ['case',
+    ['==', ['slice', lower, 0, 6], 'улица '], ['slice', value, 6],
+    ['==', ['slice', lower, 0, 4], 'ул. '], ['slice', value, 4],
+    ['==', ['slice', lower, ['max', 0, ['-', ['length', value], 6]]], ' улица'], ['slice', value, 0, ['-', ['length', value], 6]],
+    ['==', ['slice', lower, ['max', 0, ['-', ['length', value], 7]]], ' көчөсү'], ['slice', value, 0, ['-', ['length', value], 7]],
+    value,
+  ]];
+}
+const currentStreetName = compactStreetName(currentOsmName);
+const overviewStreetName = compactStreetName(localName);
+const kyrgyzStreetName = compactStreetName(kyrgyzOsmName);
+const kyrgyzOverviewStreetName = compactStreetName(kyrgyzOpenMapTilesName);
+// Repeat spacing controls anchors along a road, while padding reserves space
+// between different labels. Keep both: a large repeat gap alone cannot stop
+// two different street names from touching at an intersection.
+const streetLabelLayout = {
+  'symbol-placement': 'line', 'text-font': ['Noto Sans Regular'],
+  'text-rotation-alignment': 'map', 'text-keep-upright': true,
+  'text-max-angle': 30, 'text-padding': 5,
+  'text-allow-overlap': false, 'text-ignore-placement': false,
+};
 
 // Bright provides the full vector layer hierarchy (including street names and
 // POIs). Change the actual land, road, building and label layers here instead
@@ -23,7 +51,7 @@ function themedLayer(layer: StyleLayer): StyleLayer {
 
   if (id === 'background') paint['background-color'] = surface;
   if (id === 'landuse-residential' || id === 'landuse-suburb') paint['fill-color'] = '#F0F4F8';
-  if (id === 'landuse-commercial') paint['fill-color'] = '#F2F3F8';
+  if (id === 'landuse-commercial') { paint['fill-color'] = '#EEE4F2'; paint['fill-outline-color'] = '#D9C5DE'; }
   if (id === 'landuse-industrial' || id === 'landuse-railway') paint['fill-color'] = '#EEF1F5';
   if (id === 'landuse-hospital') paint['fill-color'] = '#F9ECEF';
   if (id === 'landuse-school') paint['fill-color'] = '#EEEFFC';
@@ -76,24 +104,19 @@ function withoutDuplicateBaseFeatures(layer: StyleLayer): StyleLayer[] {
     || id.startsWith('poi_r') || id === 'poi_transit' || id === 'park-name-local'
     || id.startsWith('water_name_') || id === 'waterway_line_label' || id === 'building-housenumber-local';
   if (!replacedAtDetail) return [layer];
-  const transitionZoom = id === 'building-housenumber-local' ? 15 : detailedOsmZoom;
+  const transitionZoom = detailedOsmZoom;
   if ((layer.minzoom ?? 0) >= transitionZoom) return [];
   return [{ ...layer, maxzoom: Math.min(layer.maxzoom ?? transitionZoom, transitionZoom) }];
 }
 
 const base = bright as unknown as { version: number; layers: StyleLayer[]; sources: Record<string, unknown> };
-// Bright omits the OpenMapTiles housenumber layer entirely, despite the tile
-// source containing building address numbers. Parks also have names in tiles.
+// Park names supplement the overview. House numbers are deliberately left to
+// the current address source at close zoom, after street names are visible.
 const extraLabelLayers: StyleLayer[] = [
   {
     id: 'park-name-local', type: 'symbol', source: 'openmaptiles', 'source-layer': 'park', minzoom: 13,
     layout: { 'text-field': localName, 'text-font': ['Noto Sans Regular'], 'text-size': ['interpolate', ['linear'], ['zoom'], 13, 11, 17, 13], 'text-max-width': 8, 'text-padding': 3 },
     paint: { 'text-color': '#4C7C62', 'text-halo-color': '#F5FBF6', 'text-halo-width': 1.4 },
-  },
-  {
-    id: 'building-housenumber-local', type: 'symbol', source: 'openmaptiles', 'source-layer': 'housenumber', minzoom: 14,
-    layout: { 'text-field': ['get', 'housenumber'], 'text-font': ['Noto Sans Regular'], 'text-size': ['interpolate', ['linear'], ['zoom'], 14, 10, 17, 12], 'text-padding': 1, 'text-max-width': 5 },
-    paint: { 'text-color': '#40536C', 'text-halo-color': '#FFFFFF', 'text-halo-width': 1.6 },
   },
 ];
 
@@ -104,7 +127,10 @@ const currentOsmAreaLayers: StyleLayer[] = [
   {
     id: 'current-osm-urban-areas', type: 'fill', source: 'osm_current_labels', 'source-layer': 'land', minzoom: detailedOsmZoom,
     filter: ['match', ['get', 'kind'], ['residential', 'commercial', 'retail', 'industrial', 'railway', 'garages', 'landfill', 'brownfield', 'greenfield'], true, false],
-    paint: { 'fill-color': ['match', ['get', 'kind'], 'residential', '#F0F4F8', ['commercial', 'retail'], '#F2F3F8', ['landfill', 'brownfield'], '#E8E4DF', 'greenfield', '#E9EFE6', '#EEF1F5'] },
+    paint: {
+      'fill-color': ['match', ['get', 'kind'], 'residential', '#F0F4F8', ['commercial', 'retail'], '#EEE4F2', ['landfill', 'brownfield'], '#E8E4DF', 'greenfield', '#E9EFE6', '#EEF1F5'],
+      'fill-outline-color': ['match', ['get', 'kind'], ['commercial', 'retail'], '#D9C5DE', 'rgba(0, 0, 0, 0)'],
+    },
   },
   {
     id: 'current-osm-agricultural-areas', type: 'fill', source: 'osm_current_labels', 'source-layer': 'land', minzoom: detailedOsmZoom,
@@ -157,6 +183,14 @@ const currentOsmAreaLayers: StyleLayer[] = [
 // layers for them. Without explicit fills a mapped stadium or playing field
 // looks like an empty patch even while its point label is visible.
 const detailedSiteLayers: StyleLayer[] = [
+  { id: 'site-retail-overview', type: 'fill', source: 'openmaptiles', 'source-layer': 'landuse', minzoom: 10, maxzoom: detailedOsmZoom,
+    filter: ['==', ['get', 'class'], 'retail'],
+    paint: { 'fill-color': '#EEE4F2', 'fill-outline-color': '#D9C5DE' } },
+  // Shortbread v1 has no kindergarten grounds. Keep the actual polygon from
+  // OpenMapTiles, whose kindergarten class is separate from school campuses.
+  { id: 'site-kindergarten', type: 'fill', source: 'openmaptiles', 'source-layer': 'landuse', minzoom: 13,
+    filter: ['==', ['get', 'class'], 'kindergarten'],
+    paint: { 'fill-color': '#E8EBFA', 'fill-outline-color': '#D4DAEF' } },
   { id: 'site-stadium', type: 'fill', source: 'openmaptiles', 'source-layer': 'landuse', minzoom: 13,
     filter: ['==', ['get', 'class'], 'stadium'],
     paint: { 'fill-color': '#B4DCC3', 'fill-outline-color': '#68AD85' } },
@@ -227,12 +261,16 @@ const currentPoiIcon = ['case',
   ['has', 'leisure'], ['match', ['get', 'leisure'], ['stadium', 'pitch'], 'pitch', 'playground', 'playground', 'park'],
   'circle',
 ];
+const landmarkPoi = ['any',
+  ['match', ['get', 'amenity'], ['bank', 'atm', 'hospital', 'clinic', 'school', 'kindergarten', 'university', 'college', 'pharmacy', 'fuel', 'police', 'place_of_worship'], true, false],
+  ['match', ['get', 'leisure'], ['park', 'stadium', 'playground'], true, false],
+];
 const currentStreetNameLayers: StyleLayer[] = [
   // City-street names take priority over route shields. On the overview the
   // name is more useful than a highway number, especially inside Bishkek.
   { id: 'current-osm-street-major', type: 'symbol', source: 'osm_current_labels', 'source-layer': 'street_labels', minzoom: 11.5, maxzoom: 15.5,
     filter: ['all', ['any', ['has', 'name'], ['has', 'name_ru'], ['has', 'name_ky']], ['match', ['get', 'kind'], ['motorway', 'trunk', 'primary', 'secondary', 'tertiary', 'motorway_link', 'trunk_link', 'primary_link', 'secondary_link', 'tertiary_link'], true, false]],
-    layout: { 'symbol-placement': 'line', 'text-field': currentOsmName, 'text-font': ['Noto Sans Regular'], 'text-size': ['interpolate', ['linear'], ['zoom'], 12, 11.5, 16, 13], 'text-padding': 5, 'symbol-spacing': 360 },
+    layout: { ...streetLabelLayout, 'text-field': currentStreetName, 'text-size': ['interpolate', ['linear'], ['zoom'], 12, 12, 16, 13.5], 'symbol-spacing': 420 },
     paint: { 'text-color': '#42536A', 'text-halo-color': '#FFFFFF', 'text-halo-width': 1.6 } },
   // Route references are secondary; delaying them prevents their shields from
   // occupying the label slot of a named arterial road at a city-wide zoom.
@@ -242,17 +280,48 @@ const currentStreetNameLayers: StyleLayer[] = [
     paint: { 'text-color': '#46586F' } },
   { id: 'current-osm-street-major-detail', type: 'symbol', source: 'osm_current_labels', 'source-layer': 'street_labels', minzoom: 15.5,
     filter: ['all', ['any', ['has', 'name'], ['has', 'name_ru'], ['has', 'name_ky']], ['match', ['get', 'kind'], ['motorway', 'trunk', 'primary', 'secondary', 'tertiary', 'motorway_link', 'trunk_link', 'primary_link', 'secondary_link', 'tertiary_link'], true, false]],
-    layout: { 'symbol-placement': 'line', 'text-field': currentOsmName, 'text-font': ['Noto Sans Regular'], 'text-size': ['interpolate', ['linear'], ['zoom'], 15.5, 13, 18, 14.5], 'text-padding': 5, 'symbol-spacing': 430 },
+    layout: { ...streetLabelLayout, 'text-field': currentStreetName, 'text-size': ['interpolate', ['linear'], ['zoom'], 15.5, 13.5, 18, 14.5], 'symbol-spacing': 360 },
     paint: { 'text-color': '#354A64', 'text-halo-color': '#FFFFFF', 'text-halo-width': 1.8 } },
   { id: 'current-osm-street-local', type: 'symbol', source: 'osm_current_labels', 'source-layer': 'street_labels', minzoom: 14,
     filter: ['all', ['any', ['has', 'name'], ['has', 'name_ru'], ['has', 'name_ky']], ['!', ['match', ['get', 'kind'], ['motorway', 'trunk', 'primary', 'secondary', 'tertiary', 'motorway_link', 'trunk_link', 'primary_link', 'secondary_link', 'tertiary_link'], true, false]]],
-    layout: { 'symbol-placement': 'line', 'text-field': currentOsmName, 'text-font': ['Noto Sans Regular'], 'text-size': ['interpolate', ['linear'], ['zoom'], 14, 10.5, 17, 12], 'text-padding': 5, 'symbol-spacing': 380 },
+    layout: { ...streetLabelLayout, 'text-field': currentStreetName, 'text-size': ['interpolate', ['linear'], ['zoom'], 14, 11.5, 17, 13, 19, 14], 'symbol-spacing': 300 },
     paint: { 'text-color': '#556780', 'text-halo-color': '#FFFFFF', 'text-halo-width': 1.5 } },
   { id: 'current-osm-street-area-names', type: 'symbol', source: 'osm_current_labels', 'source-layer': 'streets_polygons_labels', minzoom: 15,
     filter: ['any', ['has', 'name'], ['has', 'name_ru'], ['has', 'name_ky']],
-    layout: { 'text-field': currentOsmName, 'text-font': ['Noto Sans Regular'], 'text-size': 11, 'text-padding': 3, 'text-max-width': 8 },
+    layout: { 'text-field': currentStreetName, 'text-font': ['Noto Sans Regular'], 'text-size': 11, 'text-padding': 5, 'text-max-width': 8, 'text-allow-overlap': false, 'text-ignore-placement': false },
     paint: { 'text-color': '#556780', 'text-halo-color': '#FFFFFF', 'text-halo-width': 1.5 } },
 ];
+
+const currentAddressLayer: StyleLayer = {
+  id: 'current-osm-addresses', type: 'symbol', source: 'osm_current_labels', 'source-layer': 'addresses', minzoom: 15.5,
+  layout: { 'text-field': ['get', 'housenumber'], 'text-font': ['Noto Sans Regular'],
+    'text-size': ['interpolate', ['linear'], ['zoom'], 15.5, 9, 16, 10, 18, 11.5, 20, 12.5],
+    'text-padding': ['interpolate', ['linear'], ['zoom'], 15.5, 25, 16, 21, 17, 7, 18, 3, 20, 2],
+    'text-max-width': 5, 'text-allow-overlap': false, 'text-ignore-placement': false },
+  paint: { 'text-color': '#6B798B', 'text-halo-color': '#FFFFFF', 'text-halo-width': 1.2 },
+};
+// Keep a sparse set of house numbers before placing organizations on the
+// neighbourhood view. The rest fill gaps afterwards, so neither category
+// consumes all the label slots in a residential or commercial district.
+const overviewAddressLayer: StyleLayer = {
+  ...currentAddressLayer, id: 'current-osm-addresses-priority', maxzoom: 16.5,
+  filter: ['==', ['%', ['to-number', ['get', 'housenumber'], -1], 3], 0],
+  layout: { ...currentAddressLayer.layout, 'text-padding': 3 },
+};
+
+function prioritizeStreetLabels(layers: StyleLayer[]): StyleLayer[] {
+  // MapLibre places symbols in reverse layer order. Streets must reserve
+  // space before addresses/POIs; allow-overlap would just draw text on text.
+  const priority = (layer: StyleLayer) => layer.id === 'current-osm-addresses-priority' ? 1
+    : layer.id === 'current-osm-road-ref' ? 2
+    : layer.id === 'current-osm-street-area-names' ? 3
+    : layer.id === 'overview-street-local' || layer.id === 'current-osm-street-local' ? 4
+    : layer.id.startsWith('current-osm-street-major') ? 5 : 0;
+  return [
+    ...layers.filter(layer => priority(layer) === 0),
+    ...layers.filter(layer => priority(layer) > 0).sort((a, b) => priority(a) - priority(b)),
+  ];
+}
 export const taxiMapStyle = {
   ...bright,
   name: 'Atlas · City',
@@ -264,7 +333,7 @@ export const taxiMapStyle = {
       attribution: '© OpenMapTiles Bright · © OpenStreetMap contributors',
     },
   },
-  layers: ([
+  layers: prioritizeStreetLabels(([
     ...base.layers.flatMap(layer => {
       if (layer.id === 'waterway_tunnel') return [...currentOsmAreaLayers, ...detailedSiteLayers, themedLayer(layer)];
       if (layer.id === 'building-top') return [themedLayer(layer), ...currentOsmBuildingLayers];
@@ -274,8 +343,8 @@ export const taxiMapStyle = {
       if (layer.id === 'highway-name-minor') return [{
         ...themedLayer(layer), id: 'overview-street-local', minzoom: 13, maxzoom: detailedOsmZoom,
         filter: ['all', ['match', ['geometry-type'], ['LineString', 'MultiLineString'], true, false], ['==', ['get', 'class'], 'minor']],
-        layout: { 'symbol-placement': 'line', 'text-field': localName, 'text-font': ['Noto Sans Regular'], 'text-rotation-alignment': 'map',
-          'text-size': ['interpolate', ['linear'], ['zoom'], 13, 10, 14, 11], 'text-padding': 2, 'symbol-spacing': 480 },
+        layout: { ...streetLabelLayout, 'text-field': overviewStreetName,
+          'text-size': ['interpolate', ['linear'], ['zoom'], 13, 11, 14, 11.5], 'symbol-spacing': 300 },
         paint: { 'text-color': '#53667D', 'text-halo-color': '#FFFFFF', 'text-halo-width': 1.5 },
       }];
       if (layer.id === 'highway-name-path') return currentStreetNameLayers;
@@ -284,9 +353,8 @@ export const taxiMapStyle = {
     }),
     // Keep the themed vector cartography while filling address gaps in the
     // weekly OpenMapTiles planet from OSM's more current Shortbread tiles.
-    { id: 'current-osm-addresses', type: 'symbol', source: 'osm_current_labels', 'source-layer': 'addresses', minzoom: 15,
-      layout: { 'text-field': ['get', 'housenumber'], 'text-font': ['Noto Sans Regular'], 'text-size': ['interpolate', ['linear'], ['zoom'], 15, 10, 17, 11.5, 19, 13], 'text-padding': 2, 'text-max-width': 5 },
-      paint: { 'text-color': '#435770', 'text-halo-color': '#FFFFFF', 'text-halo-width': 1.6 } },
+    currentAddressLayer,
+    overviewAddressLayer,
     { id: 'current-osm-neighborhoods', type: 'symbol', source: 'osm_current_labels', 'source-layer': 'place_labels', minzoom: 13,
       filter: ['match', ['get', 'kind'], ['suburb', 'quarter', 'neighbourhood', 'locality'], true, false],
       layout: { 'text-field': currentOsmName, 'text-font': ['Noto Sans Regular'], 'text-size': 11, 'text-max-width': 9, 'text-padding': 4 },
@@ -306,12 +374,16 @@ export const taxiMapStyle = {
       filter: ['all',
         ['!', ['match', ['get', 'highway'], ['bus_stop', 'platform'], true, false]],
         ['!', ['match', ['get', 'amenity'], ['bus_station', 'ferry_terminal'], true, false]],
+        ['step', ['zoom'], landmarkPoi, 14.5,
+          ['any', landmarkPoi, ['has', 'name'], ['has', 'name_ru'], ['has', 'name_ky']], 16, true],
         ['any', ['has', 'name'], ['has', 'shop'], ['match', ['get', 'amenity'], ['bank', 'atm', 'hospital', 'clinic', 'school', 'pharmacy', 'fuel', 'police', 'parking'], true, false], ['match', ['get', 'leisure'], ['park', 'playground'], true, false]]],
       layout: { 'icon-image': currentPoiIcon, 'icon-size': 0.72, 'icon-padding': 3, 'icon-optional': true,
         'text-field': currentOsmName, 'text-font': ['Noto Sans Regular'], 'text-size': ['interpolate', ['linear'], ['zoom'], 15, 10.5, 18, 12],
-        'text-max-width': 8, 'text-padding': 2, 'text-variable-anchor': ['top', 'right', 'left', 'bottom'], 'text-radial-offset': 0.9, 'text-justify': 'auto', 'text-optional': true },
+        'text-max-width': 8, 'text-padding': ['interpolate', ['linear'], ['zoom'], 14.5, 7, 15.5, 7, 16, 5, 17, 3],
+        'text-variable-anchor': ['top', 'right', 'left', 'bottom'], 'text-radial-offset': 0.9, 'text-justify': 'auto', 'text-optional': true,
+        'text-allow-overlap': false, 'text-ignore-placement': false, 'icon-allow-overlap': false, 'icon-ignore-placement': false },
       paint: { 'text-color': '#4D667E', 'text-halo-color': '#FFFFFF', 'text-halo-width': 1.5 } },
-  ] as StyleLayer[]).flatMap(withoutDuplicateBaseFeatures),
+  ] as StyleLayer[]).flatMap(withoutDuplicateBaseFeatures)),
 };
 
 const fallbackTile = process.env.EXPO_PUBLIC_OSM_TILE_URL?.trim() || 'https://tile.openstreetmap.org/{z}/{x}/{y}.png';
@@ -345,6 +417,9 @@ function darkLayer(layer: StyleLayer): StyleLayer {
     paint['text-halo-color'] = '#101010';
     paint['text-halo-width'] = paint['text-halo-width'] ?? 1.4;
   }
+  if (id.startsWith('current-osm-addresses')) paint['text-color'] = '#ADB5BF';
+  if (id === 'current-osm-pois' || id === 'current-osm-transit') paint['text-color'] = '#A6B8C9';
+  if (id === 'current-osm-neighborhoods') paint['text-color'] = '#8FA1B4';
   if (id === 'current-osm-green-areas') {
     paint['fill-color'] = ['match', ['get', 'kind'], ['forest', 'wood'], '#1D3326', 'playground', '#3C3627', ['park', 'garden', 'grass', 'meadow', 'recreation_ground'], '#25412E', '#303A2A'];
     paint['fill-outline-color'] = ['match', ['get', 'kind'], 'playground', '#66583E', 'rgba(0, 0, 0, 0)'];
@@ -352,6 +427,12 @@ function darkLayer(layer: StyleLayer): StyleLayer {
   if (id === 'current-osm-agricultural-areas') { paint['fill-color'] = '#293326'; paint['fill-outline-color'] = '#3E4A38'; }
   if (id === 'current-osm-natural-ground') { paint['fill-color'] = '#36332E'; paint['fill-outline-color'] = '#4A4640'; }
   if (id === 'current-osm-wetlands') { paint['fill-color'] = '#233936'; paint['fill-outline-color'] = '#39534E'; }
+  if (id === 'current-osm-urban-areas') {
+    paint['fill-color'] = ['match', ['get', 'kind'], ['commercial', 'retail'], '#362D3D', '#1E1E1E'];
+    paint['fill-outline-color'] = ['match', ['get', 'kind'], ['commercial', 'retail'], '#53425D', 'rgba(0, 0, 0, 0)'];
+  }
+  if (id === 'site-kindergarten') { paint['fill-color'] = '#33354B'; paint['fill-outline-color'] = '#555B7B'; }
+  if (id === 'site-retail-overview' || id === 'landuse-commercial') { paint['fill-color'] = '#362D3D'; paint['fill-outline-color'] = '#53425D'; }
   if (id === 'current-osm-sites') {
     paint['fill-color'] = ['match', ['get', 'kind'], ['parking', 'bicycle_parking'], '#2B3A49', ['university', 'college', 'school'], '#33354B', 'hospital', '#493039', ['sports_center', 'sports_centre'], '#294235', 'construction', '#3D3731', ['prison', 'danger_area'], '#452F32', '#30343B'];
     paint['fill-outline-color'] = ['match', ['get', 'kind'], ['parking', 'bicycle_parking'], '#50687D', ['university', 'college', 'school'], '#555B7B', 'hospital', '#73505B', ['sports_center', 'sports_centre'], '#4B715A', 'construction', '#625649', ['prison', 'danger_area'], '#6C4A4F', '#4A5360'];
@@ -377,12 +458,12 @@ export const darkMapStyle = {
   layers: (taxiMapStyle.layers as StyleLayer[]).map(darkLayer),
 };
 
-const kyrgyzOsmName = ['coalesce', ['get', 'name_ky'], ['get', 'name'], ['get', 'name_ru'], ['get', 'name_en']];
-const kyrgyzOpenMapTilesName = ['coalesce', ['get', 'name:ky'], ['get', 'name'], ['get', 'name:ru'], ['get', 'name:nonlatin'], ['get', 'name_en']];
 function withKyrgyzLabels(style: typeof taxiMapStyle) {
   return { ...style, layers: (style.layers as StyleLayer[]).map(layer => {
     const textField = layer.layout?.['text-field'];
-    const replacement = textField === currentOsmName ? kyrgyzOsmName : textField === localName ? kyrgyzOpenMapTilesName : null;
+    const replacement = textField === currentStreetName ? kyrgyzStreetName
+      : textField === overviewStreetName ? kyrgyzOverviewStreetName
+      : textField === currentOsmName ? kyrgyzOsmName : textField === localName ? kyrgyzOpenMapTilesName : null;
     return replacement ? { ...layer, layout: { ...layer.layout, 'text-field': replacement } } : layer;
   }) };
 }

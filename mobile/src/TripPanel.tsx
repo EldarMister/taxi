@@ -4,6 +4,7 @@ import { Avatar, Button, Car, colors, Icon, km, localize, mins, money, Route, s 
 import { Order, User } from "./types";
 import { useTheme } from './design/theme';
 import { useThemeStyles } from './design/themeStyles';
+import { TripContactButton } from './TripContactButton';
 
 export const statusText = {
   SEARCHING: "Ищем водителя", ASSIGNED: "Водитель выехал к вам", ARRIVED: "Водитель приехал",
@@ -38,6 +39,7 @@ function SuccessIndicator() {
 function ContactAction({ icon, label, onPress, disabled, outlined = false }: { icon: React.ComponentProps<typeof Icon>['name']; label: string; onPress: () => void; disabled?: boolean; outlined?: boolean }) {
   const { isDark } = useTheme();
   const styles = useThemeStyles(baseStyles);
+  if (icon === 'call' || icon.startsWith('chat')) return <TripContactButton kind={icon === 'call' ? 'call' : 'chat'} label={label} onPress={onPress} disabled={disabled}/>;
   return <Pressable accessibilityRole="button" accessibilityLabel={label} accessibilityState={{ disabled: !!disabled }} disabled={disabled} onPress={onPress} style={({ pressed }) => [outlined ? styles.outlineAction : styles.contactAction, (pressed || disabled) && { opacity: disabled ? .4 : .65 }]}>
     <View style={!outlined && styles.contactCircle}><Icon name={icon} size={outlined ? 24 : 29} color={isDark ? '#FFFFFF' : colors.blue}/></View>
     <Text style={outlined ? styles.outlineActionText : styles.contactText}>{label}</Text>
@@ -151,7 +153,7 @@ export function TripPanel({ order, user, busy, onAction, onChat, onDone, onRatin
     {driver && coming && !terminal && <Text style={[styles.coming, isDark && { color: '#FFFFFF' }]}>{t('Пассажир выходит')}</Text>}
     {!driver && arrived && <Button label={t(coming ? 'Уже отправлено' : 'Я выхожу')} onPress={() => onAction('coming')} disabled={coming} busy={busy}/>}
     {driver && ['ASSIGNED', 'ARRIVED', 'IN_PROGRESS'].includes(order.status) && <Button label={t(({ ASSIGNED: 'Приехал', ARRIVED: 'Начать поездку', IN_PROGRESS: 'Завершить поездку' } as Record<string, string>)[order.status])} onPress={() => onAction(({ ASSIGNED: 'arrive', ARRIVED: 'start', IN_PROGRESS: 'complete' } as Record<string, string>)[order.status])} busy={busy}/>}
-    {!terminal && order.status !== 'IN_PROGRESS' && (!arrived || driver) && <Button secondary label={t('Отменить заказ')} onPress={() => onAction('cancel')} busy={busy}/>}
+    {!terminal && (driver || order.status !== 'IN_PROGRESS') && (!arrived || driver) && <Button secondary label={t('Отменить заказ')} onPress={() => onAction('cancel')} busy={busy}/>}
     {!driver && arrived && <Pressable accessibilityRole="button" disabled={busy} onPress={() => onAction('cancel')} style={styles.cancelLink}><Text style={s.caption}>{t('Отменить заказ')}</Text></Pressable>}
 
     {completed && <>

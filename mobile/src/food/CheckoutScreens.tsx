@@ -1,5 +1,5 @@
 import React, { useRef, useState } from 'react';
-import { ActivityIndicator, Keyboard, KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View, useWindowDimensions } from 'react-native';
+import { ActivityIndicator, Image, Keyboard, KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View, useWindowDimensions } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Icon } from '../ui';
 import { BottomPanel } from '../BottomPanel';
@@ -192,7 +192,7 @@ export function CartScreen({ restaurant, lines, carts, onSelectRestaurant, check
         <View onLayout={event => setMeasuredFooterHeight(event.nativeEvent.layout.height)} style={[s.deliveryFooter, { backgroundColor: c.surface, paddingHorizontal: 12, paddingBottom: Math.max(16, insets.bottom), minHeight: 76 + insets.bottom }]}>
           {restaurant && <FoodDeliveryStatus restaurant={restaurant} subtotal={summary.subtotal} subtotalBeforeDiscount={summary.subtotalBeforeDiscount} onPress={onDeliveryInfo} />}
         </View>
-      </> : <View style={[s.empty, { backgroundColor: c.surface }]}><Icon name="bag-handle-outline" size={56} color={c.ink} /><Text style={[s.emptyTitle, { color: c.ink }]}>{t('В корзине пока пусто')}</Text><Text style={[s.emptyCopy, { color: c.muted }]}>{t('Добавьте любимые блюда из меню ресторана.')}</Text><PrimaryButton label={t('Выбрать блюда')} onPress={onBack} /></View>}
+      </> : <View style={[s.empty, { backgroundColor: c.surface }]}><Image accessible={false} source={require('../../assets/food/empty-cart-atlas-3d.webp')} resizeMode="contain" style={{ width: Math.min(220, width - 64), height: Math.min(220, width - 64) }} /><Text style={[s.emptyTitle, { color: c.ink }]}>{t('В корзине пока пусто')}</Text><Text style={[s.emptyCopy, { color: c.muted }]}>{t('Добавьте любимые блюда из меню ресторана.')}</Text><PrimaryButton label={t('Выбрать блюда')} onPress={onBack} /></View>}
     </View>
     {editingComment && <CommentEditor label={t('Комментарий ресторану')} value={restaurantComment} onClose={() => setEditingComment(false)} onSave={restaurantComment => { if (details && onDetails) onDetails({ ...details, restaurantComment }); else setLocalComment(restaurantComment); }} />}
   </SafeAreaView>;

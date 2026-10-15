@@ -37,13 +37,13 @@ export class ProfileSelfService {
   constructor(private readonly db: PrismaService, private readonly auth: AuthService, private readonly cities: CitiesService, private readonly events: RealtimeEvents) {}
   private driver(actor:Actor) { if(actor.role!=='DRIVER')throw new ForbiddenException('Страница доступна водителю.'); }
   private async source(actor:Actor, tx:PrismaService|Tx=this.db) {
-    const user=await tx.user.findUniqueOrThrow({where:{id:actor.id},select:{name:true,deletedAt:true,driverProfile:{select:{transportClass:true,vehicle:{select:{make:true,color:true,plate:true}}}},performerApplication:{include:{roles:true,uploads:{select:{id:true,slotKey:true,kind:true,status:true,mimeType:true,version:true}}}}}});
+    const user=await tx.user.findUniqueOrThrow({where:{id:actor.id},select:{name:true,firstName:true,lastName:true,deletedAt:true,driverProfile:{select:{transportClass:true,vehicle:{select:{make:true,color:true,plate:true}}}},performerApplication:{include:{roles:true,uploads:{select:{id:true,slotKey:true,kind:true,status:true,mimeType:true,version:true}}}}}});
     if(user.deletedAt)throw new ForbiddenException('Аккаунт удалён.');
     const application=user.performerApplication;
     const selectedRoles=application?.roles.filter(role=>role.selected).map(role=>role.role) ?? [];
     const roles=selectedRoles.length?selectedRoles:[user.driverProfile?.transportClass==='TRUCK'?'CARGO_DRIVER':'TAXI_DRIVER'];
     const name=user.name.trim().split(/\s+/), vehicle=user.driverProfile?.vehicle;
-    const data=application ? object(application.data) : {personal:{firstName:name.slice(1).join(' ')||name[0]||'',lastName:name.length>1?name[0]:'',middleName:'',birthDate:'',city:''}, [roles.includes('CARGO_DRIVER')?'cargoVehicle':'taxiVehicle']:{ownership:'OWN',brand:vehicle?.make.split(' ')[0]||'',model:vehicle?.make.split(' ').slice(1).join(' ')||'',color:vehicle?.color||'',plateNumber:vehicle?.plate||'',year:''},vehicles:[]};
+    const data=application ? object(application.data) : {personal:{firstName:user.firstName||name.slice(1).join(' ')||name[0]||'',lastName:user.lastName||(name.length>1?name[0]:''),middleName:'',birthDate:'',city:''}, [roles.includes('CARGO_DRIVER')?'cargoVehicle':'taxiVehicle']:{ownership:'OWN',brand:vehicle?.make.split(' ')[0]||'',model:vehicle?.make.split(' ').slice(1).join(' ')||'',color:vehicle?.color||'',plateNumber:vehicle?.plate||'',year:''},vehicles:[]};
     if(!selectedRoles.length&&vehicle) {
       const key=roles.includes('CARGO_DRIVER')?'cargoVehicle':'taxiVehicle',saved=object(data[key]);
       data[key]={...saved,ownership:saved.ownership||'OWN',brand:saved.brand||vehicle.make.split(' ')[0],model:saved.model||vehicle.make.split(' ').slice(1).join(' '),color:saved.color||vehicle.color,plateNumber:saved.plateNumber||vehicle.plate};
@@ -72,7 +72,7 @@ export class ProfileSelfService {
           const errors=validateRegistrationDataValues({personal} as RegistrationData,[],new Date(),[],[...config.acceptedCityNames,...(personal.city===object(data.personal).city?[personal.city]:[])]).filter(e=>e.field.startsWith('personal.'));
           if(errors.length)throw new BadRequestException(errors[0].message);
           data.personal=personal;
-          await tx.user.update({where:{id:actor.id},data:{name:[personal.lastName,personal.firstName,personal.middleName].filter(Boolean).join(' ')}});
+          await tx.user.update({where:{id:actor.id},data:{firstName:personal.firstName,lastName:personal.lastName,name:[personal.lastName,personal.firstName,personal.middleName].filter(Boolean).join(' ')}});
         }
         if(dto.vehicle) {
           if(await tx.order.findFirst({where:{driverId:actor.id,status:{in:ACTIVE_STATUSES}},select:{id:true}}))throw new ConflictException('Сначала завершите текущую поездку.');
@@ -108,15 +108,51 @@ export class ProfileSelfService {
       await tx.$queryRaw`SELECT "id" FROM "User" WHERE "id"=${actor.id}::uuid FOR UPDATE`;
       await tx.$queryRaw`SELECT "userId" FROM "DriverProfile" WHERE "userId"=${actor.id}::uuid FOR UPDATE`;
       if(await tx.order.findFirst({where:{OR:[{clientId:actor.id},{driverId:actor.id}],status:{in:ACTIVE_STATUSES}},select:{id:true}})||await tx.foodOrder.findFirst({where:{clientId:actor.id,status:{in:ACTIVE_FOOD_STATUSES}},select:{id:true}}))throw new ConflictException('Сначала завершите или отмените активные заказы.');
-      await tx.refreshSession.updateMany({where:{userId:actor.id},data:{revokedAt:new Date()}});
+      const user=await tx.user.findUniqueOrThrow({where:{id:actor.id},select:{phone:true}});
+      const sibling=await tx.user.findFirst({where:{phone:user.phone,id:{not:actor.id}},select:{id:true}});
+      const challenge=await tx.smsChallenge.findUnique({where:{phone:user.phone},select:{role:true,codeHash:true}});
+      const otherPhoneIdentity=Boolean(sibling||challenge&&challenge.role!==actor.role);
+      const applications=await tx.performerApplication.findMany({where:{userId:actor.id},select:{id:true}});
+      const foodOrders=await tx.foodOrder.findMany({where:{clientId:actor.id},select:{id:true}});
+      const foodIds=foodOrders.map(row=>row.id);
+      const orders=await tx.order.findMany({where:{OR:[{clientId:actor.id},{driverId:actor.id},{foodOrderId:{in:foodIds}}]},select:{id:true,quoteId:true,foodOrderId:true}});
+      const orderIds=orders.map(row=>row.id);
+      const relatedIds=[actor.id,...applications.map(row=>row.id),...orderIds,...foodIds];
+
+      // Remove shared chats and routes with the account. Keep only the other
+      // driver's own financial amounts, without the deleted order or its notes.
+      await tx.pushJob.deleteMany({where:{OR:[{userId:actor.id},{orderId:{in:[...orderIds,...foodIds]}}]}});
+      await tx.message.deleteMany({where:{OR:[{senderId:actor.id},{orderId:{in:orderIds}}]}});
+      await tx.rating.deleteMany({where:{orderId:{in:orderIds}}});
+      await tx.clientRating.deleteMany({where:{orderId:{in:orderIds}}});
+      await tx.orderOffer.deleteMany({where:{OR:[{driverId:actor.id},{orderId:{in:orderIds}}]}});
+      await tx.statusHistory.deleteMany({where:{OR:[{actorId:actor.id},{orderId:{in:orderIds}}]}});
+      await tx.foodStatusHistory.deleteMany({where:{OR:[{actorId:actor.id},{orderId:{in:foodIds}}]}});
+      await tx.ledgerEntry.deleteMany({where:{driverId:actor.id}});
+      const sharedEntries=await tx.ledgerEntry.findMany({where:{OR:[{orderId:{in:orderIds}},{actorId:actor.id}]},select:{id:true}});
+      for(const entry of sharedEntries)await tx.ledgerEntry.update({where:{id:entry.id},data:{orderId:null,actorId:null,note:'Операция без персональных данных',idempotencyKey:`anonymous:${entry.id}`}});
+      await tx.foodOrder.updateMany({where:{OR:[...(!sibling?[{courierPhone:user.phone}]:[]),{id:{in:orders.flatMap(row=>row.foodOrderId?[row.foodOrderId]:[])}}]},data:{courierName:null,courierPhone:null}});
+      await tx.order.deleteMany({where:{id:{in:orderIds}}});
+      await tx.quote.deleteMany({where:{OR:[{userId:actor.id},{id:{in:orders.map(row=>row.quoteId)}}]}});
+      await tx.foodOrder.deleteMany({where:{id:{in:foodIds}}});
+      if(!sibling)await tx.order.updateMany({where:{passengerPhone:user.phone},data:{passengerName:null,passengerPhone:null}});
+      await tx.adminAudit.deleteMany({where:{OR:[{actorId:actor.id},{entityId:{in:relatedIds}}]}});
+      await tx.smsChallenge.deleteMany({where:{phone:user.phone,role:actor.role}});
+      if(challenge?.role===actor.role)await tx.otpDeliveryAttempt.deleteMany({where:{phone:user.phone,codeHash:challenge.codeHash}});
+      if(!otherPhoneIdentity)await tx.otpDeliveryAttempt.deleteMany({where:{phone:user.phone}});
+      await tx.rateLimit.deleteMany({where:{OR:[...(!otherPhoneIdentity?['sms:phone-hour:','sms:phone-minute:','verify:phone:','restaurant-login:phone:'].map(prefix=>({key:`${prefix}${user.phone}`})):[]),{key:{endsWith:`:${actor.id}`}},{key:{in:orderIds.map(id=>`coming:${id}`)}}]}});
+      await tx.refreshSession.deleteMany({where:{userId:actor.id}});
       await tx.pushToken.deleteMany({where:{userId:actor.id}});
+      await tx.adminCredential.deleteMany({where:{userId:actor.id}});
       await tx.performerApplication.deleteMany({where:{userId:actor.id}});
-      await tx.vehicle.updateMany({where:{driverId:actor.id},data:{make:'',color:'',plate:`deleted:${actor.id}`,photoData:null,photoMime:null,photoUpdatedAt:null}});
-      await tx.driverProfile.updateMany({where:{userId:actor.id},data:{online:false,verified:false,acceptsEconomy:false,acceptsComfort:false,acceptsDeliveryCar:false,acceptsDeliveryFood:false,acceptsDeliveryTruck:false,courierModes:[],locationLatitude:null,locationLongitude:null,locationAccuracyM:null,locationMeasuredAt:null}});
-      await tx.user.update({where:{id:actor.id},data:{phone:`deleted:${actor.id}`,name:'Удалённый пользователь',avatarData:null,avatarMime:null,avatarUpdatedAt:null,notifications:false,deletedAt:new Date()}});
-    });
+      await tx.vehicle.deleteMany({where:{driverId:actor.id}});
+      await tx.driverProfile.deleteMany({where:{userId:actor.id}});
+      await tx.user.delete({where:{id:actor.id}});
+    },{timeout:30_000});
     this.events.publish([actor.id],'account:deleted',{id:actor.id});
     this.events.adminChanged('drivers',actor.id);
+    this.events.adminChanged('taxi-orders');
+    this.events.adminChanged('food-orders');
     return {ok:true};
   }
 }

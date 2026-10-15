@@ -112,15 +112,14 @@ export class AdminService {
   async createDriver(actor:Actor,dto:AdminDriverDto) {
     assertAdmin(actor);const name=validateText(dto.name,'Имя'),vehicle={make:validateText(dto.carMake,'Автомобиль'),color:validateText(dto.carColor,'Цвет'),plate:validateText(dto.carPlate,'Госномер').toUpperCase()};
     const id=await this.db.$transaction(async tx=>{
-      let user=await tx.user.findUnique({where:{phone:dto.phone},select:{id:true,role:true}});
+      if(await tx.user.findUnique({where:{phone_role:{phone:dto.phone,role:'ADMIN'}},select:{id:true}}))throw new ConflictException('Этот номер используется администратором');
+      let user=await tx.user.findUnique({where:{phone_role:{phone:dto.phone,role:'DRIVER'}},select:{id:true,role:true,driverProfile:{select:{userId:true}}}});
       if(user) {
         await tx.$queryRaw`SELECT "id" FROM "User" WHERE "id"=${user.id}::uuid FOR UPDATE`;
-        user=await tx.user.findUniqueOrThrow({where:{id:user.id},select:{id:true,role:true}});
-        if(user.role!=='CLIENT')throw new ConflictException('Этот номер уже используется водителем или администратором');
-        if(await tx.order.findFirst({where:{clientId:user.id,status:{in:ACTIVE_STATUSES}}})||await tx.foodOrder.findFirst({where:{clientId:user.id,status:{in:ACTIVE_FOOD_STATUSES}}}))throw new ConflictException('У пользователя активный заказ');
-        await tx.user.update({where:{id:user.id},data:{name,role:'DRIVER'}});
-        await tx.refreshSession.updateMany({where:{userId:user.id,revokedAt:null},data:{revokedAt:new Date()}});
-      } else user=await tx.user.create({data:{phone:dto.phone,name,role:'DRIVER'},select:{id:true,role:true}});
+        user=await tx.user.findUniqueOrThrow({where:{id:user.id},select:{id:true,role:true,driverProfile:{select:{userId:true}}}});
+        if(user.role!=='DRIVER'||user.driverProfile)throw new ConflictException('Этот номер уже используется водителем');
+        await tx.user.update({where:{id:user.id},data:{name}});
+      } else user=await tx.user.create({data:{phone:dto.phone,name,role:'DRIVER'},select:{id:true,role:true,driverProfile:{select:{userId:true}}}});
       await tx.driverProfile.create({data:{userId:user.id,verified:dto.verified,transportClass:dto.transportClass,acceptsEconomy:dto.transportClass!=='TRUCK',acceptsComfort:dto.transportClass==='COMFORT',acceptsDeliveryTruck:dto.transportClass==='TRUCK',vehicle:{create:vehicle}}});
       await this.audit.record(tx,actor,'driver.create','drivers',user.id,{phone:dto.phone,name,vehicle,verified:dto.verified});return user.id;
     });
@@ -133,6 +132,13 @@ export class AdminService {
       await tx.$queryRaw`SELECT "userId" FROM "DriverProfile" WHERE "userId"=${id}::uuid FOR UPDATE`;
       const user=await tx.user.findFirst({where:{id,role:'DRIVER'},select:driverSelect});if(!user?.driverProfile)throw new NotFoundException('Водитель не найден');
       if(user.driverProfile.registrationManaged)throw new ConflictException('Профиль управляется через проверку анкеты исполнителя');
+      if(dto.phone&&dto.phone!==user.phone) {
+        const [administrator,driver]=await Promise.all([
+          tx.user.findUnique({where:{phone_role:{phone:dto.phone,role:'ADMIN'}},select:{id:true}}),
+          tx.user.findUnique({where:{phone_role:{phone:dto.phone,role:'DRIVER'}},select:{id:true}}),
+        ]);
+        if(administrator||driver&&driver.id!==id)throw new ConflictException('Этот номер уже используется водителем или администратором');
+      }
       if(await tx.order.findFirst({where:{OR:[{driverId:id},{clientId:id}],status:{in:ACTIVE_STATUSES}}}))throw new ConflictException('Сначала завершите активную поездку водителя');
       const car=user.driverProfile.vehicle;
       const vehicle={make:dto.carMake===undefined?car?.make:validateText(dto.carMake,'Автомобиль'),color:dto.carColor===undefined?car?.color:validateText(dto.carColor,'Цвет'),plate:dto.carPlate===undefined?car?.plate:validateText(dto.carPlate,'Госномер').toUpperCase()};
@@ -144,7 +150,7 @@ export class AdminService {
       await tx.vehicle.upsert({where:{driverId:id},create:{driverId:id,make:vehicle.make,color:vehicle.color,plate:vehicle.plate},update:{make:vehicle.make,color:vehicle.color,plate:vehicle.plate}});
       if(dto.phone&&dto.phone!==user.phone) {
         await tx.refreshSession.updateMany({where:{userId:id,revokedAt:null},data:{revokedAt:new Date()}});
-        await tx.smsChallenge.deleteMany({where:{phone:{in:[dto.phone,user.phone]}}});
+        await tx.smsChallenge.deleteMany({where:{phone:{in:[dto.phone,user.phone]},role:'DRIVER'}});
       }
       await this.audit.record(tx,actor,'driver.update','drivers',id,{changes:JSON.parse(JSON.stringify(dto))});
     });

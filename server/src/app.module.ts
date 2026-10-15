@@ -6,6 +6,7 @@ import { ScheduleModule } from '@nestjs/schedule';
 import { AuthGuard, AuthService, RateLimits } from './auth';
 import { OtpDelivery } from './otp-delivery';
 import { OtpFallback } from './otp-fallback';
+import { WhatsAppCloudWebhook } from './whatsapp-cloud';
 import { AppConfig } from './config';
 import { DriverService } from './driver';
 import { RealtimeEvents } from './events';
@@ -13,6 +14,7 @@ import { TaxiGateway } from './gateway';
 import { AdminController, AuthController, DriverController, OrdersController, PublicController, UsersController } from './http';
 import { BackgroundJobs } from './jobs';
 import { OrdersService } from './orders';
+import { MapEstimateController, MapEstimateService } from './map-estimate';
 import { PrismaService } from './prisma.service';
 import { PushService, RoutingService } from './providers';
 import { PlacesController, PlacesService } from './places';
@@ -35,5 +37,5 @@ import { RestaurantAuthGuard, RestaurantAuthService } from './restaurant-auth';
 import { RestaurantService } from './restaurant';
 import { RestaurantDeliveryService } from './restaurant-delivery';
 import { AdminRestaurantAccountsController, RestaurantAuthController, RestaurantController } from './restaurant.http';
-@Module({imports:[JwtModule.register({}),ScheduleModule.forRoot()],controllers:[AccountDeletionController,DriverDetailsController,AdminCitiesController,TrackingController,AuthController,UsersController,OrdersController,DriverController,RegistrationController,RegistrationAdminController,AdminController,PublicController,PlacesController,RoutesController,FoodCatalogController,FoodOrdersController,AdminFoodController,AdminAuthController,AdminOperationsController,ContentController,AdminCatalogController,RestaurantAuthController,RestaurantController,AdminRestaurantAccountsController],providers:[ProfileSelfService,CitiesService,TrackingService,PrismaService,AppConfig,OtpDelivery,OtpFallback,AuthService,AuthGuard,RateLimits,RoutingService,RoadFeaturesService,PushService,RealtimeEvents,OrdersService,DriverService,RegistrationService,RegistrationUploadGate,RegistrationAdminService,TaxiGateway,BackgroundJobs,PlacesService,FoodService,AdminAuditService,AdminGuard,AdminAuthService,AdminService,ContentService,RestaurantAuthGuard,RestaurantAuthService,RestaurantService,RestaurantDeliveryService]})
+@Module({imports:[JwtModule.register({}),ScheduleModule.forRoot()],controllers:[WhatsAppCloudWebhook,AccountDeletionController,DriverDetailsController,AdminCitiesController,TrackingController,AuthController,UsersController,OrdersController,MapEstimateController,DriverController,RegistrationController,RegistrationAdminController,AdminController,PublicController,PlacesController,RoutesController,FoodCatalogController,FoodOrdersController,AdminFoodController,AdminAuthController,AdminOperationsController,ContentController,AdminCatalogController,RestaurantAuthController,RestaurantController,AdminRestaurantAccountsController],providers:[ProfileSelfService,CitiesService,TrackingService,PrismaService,AppConfig,OtpDelivery,OtpFallback,AuthService,AuthGuard,RateLimits,RoutingService,RoadFeaturesService,PushService,RealtimeEvents,OrdersService,MapEstimateService,DriverService,RegistrationService,RegistrationUploadGate,RegistrationAdminService,TaxiGateway,BackgroundJobs,PlacesService,FoodService,AdminAuditService,AdminGuard,AdminAuthService,AdminService,ContentService,RestaurantAuthGuard,RestaurantAuthService,RestaurantService,RestaurantDeliveryService]})
 export class AppModule {}

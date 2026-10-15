@@ -41,10 +41,13 @@ export function useSheetDragToClose(onClose: () => void, enabled: boolean, measu
     closing.set(true);
     dragging.set(false);
     cancelAnimation(position);
+    if (reduced === true) {
+      position.set(travel.get());
+      runOnJS(finish)();
+      return;
+    }
     const complete = (done?: boolean) => { 'worklet'; if (done) runOnJS(finish)(); };
-    position.set(reduced === true
-      ? withTiming(travel.get(), { duration: 0 }, complete)
-      : withSpring(travel.get(), { duration: 300, dampingRatio: 1, velocity, overshootClamping: true }, complete));
+    position.set(withSpring(travel.get(), { duration: 300, dampingRatio: 1, velocity, overshootClamping: true }, complete));
   }, [closing, dragging, finish, position, reduced, travel]);
   const restore = useCallback((velocity = 0) => {
     'worklet';

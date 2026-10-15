@@ -18,16 +18,21 @@ const code = ts.transpileModule(functions.join('\n') + '\nglobalThis.actions = {
 const deferred = () => { let resolve; const promise = new Promise(done => { resolve = done; }); return { promise, resolve }; };
 const turn = () => new Promise(resolve => setImmediate(resolve));
 const driver = { id: 'driver', role: 'DRIVER', driverProfile: { online: true } };
+const identity = { exports: {} };
+vm.runInNewContext(ts.transpileModule(fs.readFileSync(require.resolve('../src/accountIdentity.ts'), 'utf8'), {
+  compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS },
+}).outputText, identity);
 function setup(request) {
   const offers = [], orders = [], errors = [];
   const context = {
-    userRef: { current: driver }, orderRef: { current: null },
+    userRef: { current: driver }, orderRef: { current: null }, profileRevisionRef: { current: 0 },
+    isCurrentProfileResponse: identity.exports.isCurrentProfileResponse,
     syncRef: { current: false }, syncAgain: { current: false }, offersSyncing: { current: false },
     offersAgain: { current: false }, offersRevision: { current: 0 }, dismissedOrderIds: { current: new Set() },
     api: { request }, isActive: order => !!order && ['ASSIGNED', 'ARRIVED', 'IN_PROGRESS'].includes(order.status),
     isDismissedOrderUpdate: (order, dismissed) => order && dismissed.has(order.id),
     setOffers: value => offers.push(value), applyOrder: value => { orders.push(value); context.orderRef.current = value; },
-    updateUser: value => { context.userRef.current = value; }, rejectMismatchedRole: async () => false,
+    updateUser: value => { context.userRef.current = value; context.profileRevisionRef.current++; }, rejectMismatchedRole: async () => false,
     writeLastOrderId: async () => {}, ApiError: class extends Error {}, messageOf: error => String(error), setError: error => errors.push(error),
   };
   vm.runInNewContext(code, context);

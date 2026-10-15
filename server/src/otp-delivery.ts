@@ -1,6 +1,8 @@
 import { Injectable, Logger, ServiceUnavailableException } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
 import { AppConfig } from './config';
+import { acceptedCloudMessage, cloudOtpPayload } from './whatsapp-cloud';
+import { NikitaDeliveryError, nikitaRequest, nikitaStatus, nikitaUnavailable, type NikitaVerification } from './nikita-otp';
 
 export type OtpChannel = 'whatsapp' | 'telegram' | 'sms' | 'development';
 const MESSAGGIO_SEND_URL = 'https://msg.messaggio.com/api/v1/send';
@@ -41,7 +43,48 @@ export class OtpDelivery {
   private readonly logger = new Logger(OtpDelivery.name);
   constructor(private readonly config: AppConfig) {}
 
+  async startNikita(phone: string): Promise<string> {
+    if (!/^\+996\d{9}$/.test(phone)) throw new ServiceUnavailableException('SMS доступны только для номеров Кыргызстана.');
+    try {
+      const result = await nikitaRequest(this.config.nikitaApiKey, 'send', {
+        transaction_id: randomUUID().replace(/-/g, ''), phone: phone.slice(1),
+      });
+      const status = nikitaStatus(result);
+      if (status !== 0) throw new NikitaDeliveryError(`status-${status}`);
+      if (typeof result.token !== 'string' || !/^[a-zA-Z0-9_-]{16,512}$/.test(result.token)) throw new NikitaDeliveryError('missing-token');
+      return result.token;
+    } catch (error) {
+      this.logger.warn(`OTP nikita send: ${error instanceof NikitaDeliveryError ? error.message : 'transport-error'}`);
+      throw new ServiceUnavailableException('Не удалось отправить SMS с кодом. Попробуйте позже.');
+    }
+  }
+
+  async verifyNikita(token: string, code: string): Promise<NikitaVerification> {
+    if (!/^\d{6}$/.test(code)) return 'invalid';
+    try {
+      const status = nikitaStatus(await nikitaRequest(this.config.nikitaApiKey, 'verify', { token, code }));
+      if (status === 0) return 'valid';
+      if (status === 14) return 'invalid';
+      if (status === 12 || status === 13) return 'expired';
+      throw new NikitaDeliveryError(`status-${status}`);
+    } catch (error) {
+      this.logger.warn(`OTP nikita verify: ${error instanceof NikitaDeliveryError ? error.message : 'transport-error'}`);
+      throw nikitaUnavailable();
+    }
+  }
+
   async sendWhatsapp(phone: string, code: string): Promise<string> {
+    if (this.config.smsProvider === 'whatsapp_cloud') {
+      const response = await fetch(`https://graph.facebook.com/${this.config.whatsappCloudVersion}/${this.config.whatsappCloudPhoneId}/messages`, {
+        method:'POST',redirect:'error',signal:AbortSignal.timeout(6000),
+        headers:{Authorization:`Bearer ${this.config.whatsappCloudToken}`,'Content-Type':'application/json',Accept:'application/json'},
+        body:JSON.stringify(cloudOtpPayload(this.config,phone,code)),
+      });
+      if (!response.ok) throw new DeliveryError(`cloud-http-${response.status}`);
+      const id=acceptedCloudMessage(await response.json(),phone);
+      if (!id) throw new DeliveryError('cloud-recipient-not-accepted');
+      return id;
+    }
     const response = await fetch(MESSAGGIO_SEND_URL, {
       method: 'POST', redirect: 'error', signal: AbortSignal.timeout(6000),
       headers: { 'Messaggio-Login': this.config.messaggioLogin, 'Content-Type': 'application/json', Accept: 'application/json' },
@@ -54,6 +97,8 @@ export class OtpDelivery {
   }
 
   async whatsappStatus(messageId: string, phone: string): Promise<'delivered' | 'failed' | 'pending'> {
+    // Cloud API reports delivery through signed webhooks; there is no poll API.
+    if (this.config.smsProvider === 'whatsapp_cloud') return 'pending';
     const response = await fetch('https://msg.messaggio.com/api/v1/statuses', {
       method: 'POST', redirect: 'error', signal: AbortSignal.timeout(5000),
       headers: { 'Messaggio-Login': this.config.messaggioLogin, 'Content-Type': 'application/json', Accept: 'application/json' },
@@ -89,7 +134,7 @@ export class OtpDelivery {
       return 'development';
     }
     try {
-      if (this.config.smsProvider === 'messaggio') {
+      if (['messaggio','whatsapp_cloud'].includes(this.config.smsProvider)) {
         await this.sendWhatsapp(phone,code);
         return 'whatsapp';
       }
@@ -105,7 +150,7 @@ export class OtpDelivery {
       // Never log request/response bodies, credentials, phone numbers or OTPs.
       this.logger.warn(`OTP ${this.config.smsProvider}: ${error instanceof DeliveryError ? error.message : 'transport-error'}`);
       // No automatic retry: a timeout can follow an accepted, billable request.
-      throw new ServiceUnavailableException(this.config.smsProvider === 'messaggio'
+      throw new ServiceUnavailableException(['messaggio','whatsapp_cloud'].includes(this.config.smsProvider)
         ? 'Не удалось отправить код в WhatsApp. Попробуйте позже.'
         : 'Не удалось отправить код. Попробуйте позже.');
     }

@@ -78,24 +78,47 @@ test('income counts completed fares once and keeps the posted commission sign an
   assert.equal(total.card, 199.3);
   assert.ok(Math.abs(total.commission - (-37.4)) < 1e-9);
   assert.equal(total.bonus, 0);
-  assert.deepEqual(plain(history.historyTotals([])), { income: 0, card: 0, cash: 0, bonus: 0, commission: 0, count: 0 });
+  assert.equal(total.distanceMeters, 8000);
+  assert.deepEqual(plain(history.historyTotals([])), { income: 0, card: 0, cash: 0, bonus: 0, commission: 0, distanceMeters: 0, count: 0 });
 });
 
-test('daily chart has eight calendar days with zeros for missing data and the selected date in the seventh column', () => {
+test('distance sums completed trips in the selected range and ignores invalid distances', () => {
+  const trips = [
+    order('previous', '2026-10-04T17:59:59Z', { distanceMeters: 50000 }),
+    order('first', '2026-10-04T18:00:00Z', { distanceMeters: 1250 }),
+    order('second', '2026-10-05T10:00:00Z', { distanceMeters: 2450 }),
+    order('cancelled', '2026-10-05T10:00:00Z', { status: 'CANCELLED', distanceMeters: 9999 }),
+    ...[undefined, NaN, Infinity, -100].map((distanceMeters, index) => order(`invalid-${index}`, '2026-10-05T10:00:00Z', { distanceMeters })),
+    order('next', '2026-10-05T18:00:00Z', { distanceMeters: 50000 }),
+  ];
+  const selected = history.ordersInHistoryRange(trips, history.historyRange('today', '2026-10-05'));
+  assert.equal(history.historyTotals(selected).distanceMeters, 3700);
+  assert.equal(history.historyDistanceLabel(3700, 'ru'), 'Пройдено · 3,7 км');
+  assert.equal(history.historyDistanceLabel(3700, 'en'), 'Distance travelled · 3.7 km');
+  assert.equal(history.historyDistanceLabel(0, 'ru'), 'Пройдено · 0 км');
+});
+
+test('day view shows seven daily bars ending on the selected date with exclusive Bishkek boundaries', () => {
   const range = history.historyChartRange('today', '2026-10-05');
   const buckets = history.historyBuckets([
     order('older', '2026-09-28T17:59:59.999Z', { price: 10000 }),
-    order('first', '2026-09-28T18:00:00Z', { price: 15 }),
+    order('previous', '2026-10-04T17:59:59.999Z', { price: 15 }),
     order('selected', '2026-10-04T18:00:00Z', { price: 40 }),
     order('cancelled', '2026-10-04T19:00:00Z', { status: 'CANCELLED', price: 500 }),
+    order('second', '2026-10-04T21:00:00Z', { price: 15 }),
+    order('last', '2026-10-05T17:59:59.999Z', { price: 30 }),
     order('next', '2026-10-05T18:00:00Z', { price: 25 }),
     order('outside', range.to, { price: 10000 }),
   ], 'today', '2026-10-05');
-  assert.equal(buckets.length, 8);
+  assert.equal(buckets.length, 7);
   assert.equal(buckets[0].key, '2026-09-29');
   assert.equal(buckets[6].key, '2026-10-05');
-  assert.equal(buckets[7].key, '2026-10-06');
-  assert.deepEqual(plain(buckets.map(value => value.amount)), [15, 0, 0, 0, 0, 0, 40, 25]);
+  assert.deepEqual(plain(buckets.map(value => value.amount)), [0, 0, 0, 0, 0, 15, 85]);
+  assert.deepEqual(plain(range), plain(history.historyRange('week', '2026-10-05')));
+  for (let index = 0; index < buckets.length; index++) {
+    assert.equal(Date.parse(buckets[index].to) - Date.parse(buckets[index].from), 24 * 3600000);
+    if (index) assert.equal(buckets[index - 1].to, buckets[index].from);
+  }
   assert.equal(buckets[0].from, range.from);
   assert.equal(buckets.at(-1).to, range.to);
 });
@@ -112,7 +135,7 @@ test('weekly chart covers exactly the seven selected days without leaking surrou
   assert.equal(buckets.at(-1).to, range.to);
 });
 
-test('eight monthly chart buckets cover 28, 29, 30 and 31 days with each fare assigned exactly once', () => {
+test('monthly chart has a selectable daily bucket for every day including leap February', () => {
   for (const [day, days] of [['2027-02-15', 28], ['2028-02-15', 29], ['2026-04-15', 30], ['2026-12-15', 31]]) {
     const range = history.historyRange('month', day);
     const first = `${day.slice(0, 7)}-01`;
@@ -120,7 +143,7 @@ test('eight monthly chart buckets cover 28, 29, 30 and 31 days with each fare as
       history.historyBoundary(history.shiftHistoryDay(first, index)), { price: index + 1 }));
     orders.push(order('next-month', range.to, { price: 9999 }));
     const buckets = history.historyBuckets(orders, 'month', day);
-    assert.equal(buckets.length, 8);
+    assert.equal(buckets.length, days);
     assert.equal(buckets[0].from, range.from);
     assert.equal(buckets.at(-1).to, range.to);
     assert.equal(buckets.at(-1).lastDay, `${day.slice(0, 7)}-${days}`);
@@ -130,6 +153,15 @@ test('eight monthly chart buckets cover 28, 29, 30 and 31 days with each fare as
       if (index) assert.equal(buckets[index - 1].to, buckets[index].from);
     }
   }
+});
+
+test('chart navigation crosses years, clamps month ends and never advances beyond today', () => {
+  assert.equal(history.shiftHistoryPeriod('today', '2027-01-02', -1, '2027-01-02'), '2026-12-26');
+  assert.equal(history.shiftHistoryPeriod('week', '2026-12-26', 1, '2027-01-02'), '2027-01-02');
+  assert.equal(history.shiftHistoryPeriod('week', '2027-01-01', 1, '2027-01-02'), '2027-01-02');
+  assert.equal(history.shiftHistoryPeriod('month', '2028-03-31', -1, '2028-04-01'), '2028-02-29');
+  assert.equal(history.shiftHistoryPeriod('month', '2027-03-31', -1, '2027-04-01'), '2027-02-28');
+  assert.equal(history.shiftHistoryPeriod('month', '2026-12-31', 1, '2027-01-10'), '2027-01-10');
 });
 
 test('period labels and Russian order counts reflect selected data rather than reference examples', () => {
@@ -178,17 +210,19 @@ const deferred = () => {
 const textChildren = node => node.children.map(child => typeof child === 'string' ? child : textChildren(child)).join('');
 const screenText = renderer => renderer.root.findAllByType('Text').map(textChildren).join(' ');
 const pressable = (renderer, label) => renderer.root.findAllByType('Pressable').find(node => node.props.accessibilityLabel === label);
-const incomeText = renderer => textChildren(pressable(renderer, 'Информация о доходе').parent.findAllByType('Text').at(-1));
+const chartColumn = (renderer, label) => renderer.root.findAllByType('Pressable').find(node => node.props.testID?.startsWith('history-bar-') && node.props.accessibilityLabel === label);
+const incomeText = renderer => textChildren(renderer.root.findByProps({ testID: 'history-income' }));
 const visibleOrders = renderer => renderer.root.findAllByType('Pressable').filter(node => node.props.accessibilityLabel?.startsWith('Детали поездки:'));
 const rangeOf = url => {
   const params = new URL(url, 'https://taxi.test').searchParams;
   return { period: params.get('period'), from: params.get('from'), to: params.get('to') };
 };
 
-function setupScreen(request, platform = 'android', width = 432) {
+function setupScreen(request, platform = 'android', width = 432, dark = false) {
+  let isDark = dark;
   const requests = [], errors = [], pickers = [], backs = [];
   const helpers = loadTypeScript('../src/driverHistory.ts', undefined, { Date: HistoryTestDate });
-  const output = loadTypeScript('../src/DriverTripHistory.tsx', id => {
+  const resolve = id => {
     if (id === 'react' || id === 'react/jsx-runtime') return require(id);
     if (id === 'react-native') return {
       ActivityIndicator: 'ActivityIndicator', View: 'View', Text: 'Text', Pressable: 'Pressable', RefreshControl: 'RefreshControl', ScrollView: 'ScrollView',
@@ -204,16 +238,20 @@ function setupScreen(request, platform = 'android', width = 432) {
     if (id === 'react-native-svg') return { __esModule: true, default: 'Svg', Path: 'Path', Rect: 'Rect' };
     if (id === './api') return { api: { request: url => { requests.push(url); return request(url); } }, messageOf: error => error.message };
     if (id === './driverHistory') return helpers;
-    if (id === './design/theme') return { LightThemeSurface: props => props.children };
+    if (id === './DriverTripHistoryDetail') return loadTypeScript('../src/DriverTripHistoryDetail.tsx', resolve, { Date: HistoryTestDate });
+    if (id === './native/HistoryRouteMap') return { HistoryRouteMap: 'HistoryRouteMap' };
+    if (id === './design/theme') return { useTheme: () => ({ isDark, palette: isDark ? { background: '#050505', surface: '#111111', ink: '#F4F4F7', muted: '#A3A5B1', line: '#33343D' } : { background: '#F4F8FD', surface: '#FFFFFF', ink: '#191C2B', muted: '#52566B', line: '#E6E6EF' } }) };
     if (id === './ui') return {
       Icon: 'Icon', money: amount => `${Number(amount.toFixed(1))} сом`, shortAddress: value => value, tr: () => value => value,
+      km: value => `${value / 1000} км`, mins: value => `${Math.ceil(value / 60)} мин`,
       s: { divider: {}, spread: {}, muted: {}, h3: {}, row: {}, body: {} },
       Route: props => React.createElement('Route', props, React.createElement('Text', null, `${props.order.pickup.address} → ${props.order.dropoff.address}`)),
     };
     throw new Error(`Unmocked driver history dependency: ${id}`);
-  }, { Date: HistoryTestDate });
+  };
+  const output = loadTypeScript('../src/DriverTripHistory.tsx', resolve, { Date: HistoryTestDate });
   const props = { user: driver, onError: error => errors.push(error), onBack: () => backs.push(true) };
-  return { component: output.DriverTripHistory, props, helpers, requests, errors, pickers, backs };
+  return { component: output.DriverTripHistory, props, helpers, requests, errors, pickers, backs, setDark: value => { isDark = value; } };
 }
 
 const screenOrders = [
@@ -229,9 +267,9 @@ test('driver period buttons and Android calendar update income, payment chips, c
   await act(async () => { renderer = create(React.createElement(h.component, h.props)); });
   assert.equal(incomeText(renderer), '300 сом');
   assert.match(screenText(renderer), /20 октября · 1 заказ/);
-  assert.match(screenText(renderer), /Картой · 300 сом/);
+  assert.match(screenText(renderer), /Пройдено · 2 км/);
+  assert.doesNotMatch(screenText(renderer), /Картой ·|Бонусы ·/);
   assert.match(screenText(renderer), /Наличными · 0 сом/);
-  assert.match(screenText(renderer), /Бонусы · 0 сом/);
   assert.match(screenText(renderer), /Комиссия сервиса · −30 сом/);
   assert.deepEqual(visibleOrders(renderer).map(node => node.props.accessibilityLabel), ['Детали поездки: Начало today — Конец today']);
   assert.deepEqual(rangeOf(h.requests[0]), { period: 'today', ...plain(h.helpers.historyChartRange('today', '2026-10-20')) });
@@ -241,6 +279,7 @@ test('driver period buttons and Android calendar update income, payment chips, c
   assert.equal(pressable(renderer, 'Сегодня').props.accessibilityState.selected, false);
   assert.equal(incomeText(renderer), '400 сом');
   assert.match(screenText(renderer), /14 октября – 20 октября · 2 заказа/);
+  assert.match(screenText(renderer), /Пройдено · 4 км/);
   assert.match(screenText(renderer), /Наличными · 100 сом/);
   assert.match(screenText(renderer), /Комиссия сервиса · −40 сом/);
   assert.equal(visibleOrders(renderer).length, 2);
@@ -249,7 +288,8 @@ test('driver period buttons and Android calendar update income, payment chips, c
   await act(async () => pressable(renderer, 'Месяц').props.onPress());
   assert.equal(incomeText(renderer), '600 сом');
   assert.match(screenText(renderer), /октябрь 2026 г\. · 3 заказа/);
-  assert.match(screenText(renderer), /Картой · 500 сом/);
+  assert.match(screenText(renderer), /Пройдено · 6 км/);
+  assert.doesNotMatch(screenText(renderer), /Картой ·|Бонусы ·/);
   assert.match(screenText(renderer), /Комиссия сервиса · −60 сом/);
   assert.equal(visibleOrders(renderer).length, 3);
   assert.deepEqual(rangeOf(h.requests.at(-1)), { period: 'month', ...plain(h.helpers.historyRange('month', '2026-10-20')) });
@@ -270,6 +310,57 @@ test('driver period buttons and Android calendar update income, payment chips, c
   await act(async () => renderer.unmount());
 });
 
+test('older history API falls back to its supported query, filters selected periods, and reads signed fees from the ledger', async () => {
+  const fixtures = screenOrders.map(value => ({ ...value, commissionAmount: undefined }));
+  const h = setupScreen(async url => {
+    if (url.includes('&from=')) throw Object.assign(new Error('property from should not exist\nproperty to should not exist'), { status: 400 });
+    if (url === '/driver/balance') return { operations: [
+      { orderId: 'today', kind: 'COMMISSION', amount: -30 },
+      { orderId: 'yesterday', kind: 'COMMISSION', amount: -10 },
+      { orderId: 'early-month', kind: 'COMMISSION', amount: -20 },
+      { orderId: 'today', kind: 'TOPUP', amount: 9999 },
+    ] };
+    assert.equal(url, '/orders/history?period=all');
+    return fixtures;
+  });
+  let renderer;
+  await act(async () => { renderer = create(React.createElement(h.component, h.props)); });
+  assert.equal(incomeText(renderer), '300 сом');
+  assert.match(screenText(renderer), /Комиссия сервиса · −30 сом/);
+  assert.equal(visibleOrders(renderer).length, 1);
+  await act(async () => pressable(renderer, 'Месяц').props.onPress());
+  assert.equal(incomeText(renderer), '600 сом');
+  assert.match(screenText(renderer), /Комиссия сервиса · −60 сом/);
+  assert.equal(h.requests.filter(url => url.includes('&from=')).length, 1, 'remember the legacy contract for subsequent selections');
+  assert.deepEqual(h.errors, []);
+  await act(async () => renderer.unmount());
+});
+
+test('unsupported history pagination is visible and unavailable ledger fees are not invented as zero', async () => {
+  const h = setupScreen(async url => {
+    if (url.includes('&from=')) throw Object.assign(new Error('property from should not exist'), { status: 400 });
+    if (url === '/driver/balance') return { operations: [] };
+    return Array.from({ length: 100 }, (_, i) => order(`recent-${i}`, '2026-10-20T06:00:00Z', { price: 1, commissionAmount: undefined }));
+  });
+  let renderer;
+  await act(async () => { renderer = create(React.createElement(h.component, h.props)); });
+  assert.match(screenText(renderer), /последние 100 поездок/);
+  assert.match(screenText(renderer), /Комиссия сервиса · —/);
+  assert.deepEqual(h.errors, []);
+  await act(async () => renderer.unmount());
+});
+
+test('authentication and unrelated validation errors never trigger legacy history retries', async () => {
+  for (const status of [401, 403, 500, 400]) {
+    const h = setupScreen(async () => { throw Object.assign(new Error('Other API failure'), { status }); });
+    let renderer;
+    await act(async () => { renderer = create(React.createElement(h.component, h.props)); });
+    assert.equal(h.requests.length, 1);
+    assert.deepEqual(h.errors, ['Other API failure']);
+    await act(async () => renderer.unmount());
+  }
+});
+
 test('an old driver history response cannot overwrite a newly selected period', async () => {
   const old = deferred(), latest = deferred();
   let count = 0;
@@ -287,42 +378,128 @@ test('an old driver history response cannot overwrite a newly selected period', 
   await act(async () => renderer.unmount());
 });
 
-test('chart heights use real relative earnings and choosing a column selects that date', async () => {
-  const h = setupScreen(async () => screenOrders);
+test('tapping a daily bar selects it in blue and filters income, distance, fees and trips to that day', async () => {
+  const fixtures = [order('morning', '2026-10-20T03:00:00Z', { price: 300 }), order('noon', '2026-10-20T06:00:00Z', { price: 100 }), screenOrders[1]];
+  const h = setupScreen(async () => fixtures);
   let renderer;
   await act(async () => { renderer = create(React.createElement(h.component, h.props)); });
-  const selected = pressable(renderer, '20 октября: 300 сом');
-  const previous = pressable(renderer, '19 октября: 100 сом');
+  const selected = chartColumn(renderer, '20 октября: 400 сом');
+  const previous = chartColumn(renderer, '19 октября: 100 сом');
   const bar = column => column.findAllByType('View').find(node => typeof node.props.style?.height === 'number' && node.props.style?.backgroundColor);
   assert.equal(selected.props.accessibilityState.selected, true);
   assert.equal(previous.props.accessibilityState.selected, false);
-  assert.ok(Math.abs(bar(selected).props.style.height / bar(previous).props.style.height - 3) < 1e-9);
+  assert.ok(Math.abs(bar(selected).props.style.height / bar(previous).props.style.height - 4) < 1e-9);
   assert.notEqual(bar(selected).props.style.backgroundColor, bar(previous).props.style.backgroundColor);
   await act(async () => previous.props.onPress());
   assert.equal(incomeText(renderer), '100 сом');
   assert.match(screenText(renderer), /19 октября · 1 заказ/);
-  assert.equal(visibleOrders(renderer)[0].props.accessibilityLabel, 'Детали поездки: Начало yesterday — Конец yesterday');
-  assert.deepEqual(rangeOf(h.requests.at(-1)), { period: 'today', ...plain(h.helpers.historyChartRange('today', '2026-10-19')) });
+  assert.match(screenText(renderer), /Пройдено · 2 км/);
+  assert.match(screenText(renderer), /Комиссия сервиса · −10 сом/);
+  assert.equal(chartColumn(renderer, '19 октября: 100 сом').props.accessibilityState.selected, true);
+  assert.equal(chartColumn(renderer, '20 октября: 400 сом').props.accessibilityState.selected, false);
+  assert.equal(visibleOrders(renderer).length, 1);
+  assert.match(visibleOrders(renderer)[0].props.accessibilityLabel, /yesterday/);
+  assert.equal(h.requests.length, 1);
   await act(async () => renderer.unmount());
 });
 
-test('future daily and monthly chart columns are disabled while past dates stay selectable', async () => {
-  const h = setupScreen(async () => screenOrders);
+test('week and month can inspect one day and return to the full period; future days are disabled', async () => {
+  const fixtures = screenOrders.map(value => ({ ...value, price: value.id === 'yesterday' ? 1000 : value.id === 'early-month' ? 2000 : value.price }));
+  const h = setupScreen(async () => fixtures);
   let renderer;
   await act(async () => { renderer = create(React.createElement(h.component, h.props)); });
-  const tomorrow = pressable(renderer, '21 октября: 0 сом');
-  assert.equal(tomorrow.props.disabled, true);
-  assert.equal(tomorrow.props.accessibilityState.disabled, true);
-  assert.equal(pressable(renderer, '19 октября: 100 сом').props.disabled, false);
+  await act(async () => pressable(renderer, 'Неделя').props.onPress());
+  assert.equal(chartColumn(renderer, '20 октября: 300 сом').props.accessibilityState.selected, false);
+  assert.equal(chartColumn(renderer, '19 октября: 1000 сом').props.accessibilityState.selected, false);
+  await act(async () => chartColumn(renderer, '19 октября: 1000 сом').props.onPress());
+  assert.equal(incomeText(renderer), '1000 сом');
+  assert.equal(chartColumn(renderer, '19 октября: 1000 сом').props.accessibilityState.selected, true);
+  await act(async () => pressable(renderer, 'Весь период').props.onPress());
+  assert.equal(incomeText(renderer), '1300 сом');
   await act(async () => pressable(renderer, 'Месяц').props.onPress());
-  const futureBucket = pressable(renderer, '24 октября – 27 октября: 0 сом');
+  const futureBucket = chartColumn(renderer, '24 октября: 0 сом');
   assert.equal(futureBucket.props.disabled, true);
-  assert.equal(futureBucket.props.accessibilityState.disabled, true);
-  assert.equal(pressable(renderer, '20 октября – 23 октября: 300 сом').props.disabled, false);
+  assert.equal(chartColumn(renderer, '20 октября: 300 сом').props.accessibilityState.selected, false);
+  await act(async () => chartColumn(renderer, '2 октября: 2000 сом').props.onPress());
+  assert.equal(incomeText(renderer), '2000 сом');
+  assert.equal(chartColumn(renderer, '2 октября: 2000 сом').props.accessibilityState.selected, true);
+  assert.equal(visibleOrders(renderer).length, 1);
+  await act(async () => pressable(renderer, 'Весь период').props.onPress());
+  assert.equal(h.requests.length, 3);
+  assert.match(screenText(renderer), /октябрь 2026 г\. · 3 заказа/);
   await act(async () => renderer.unmount());
 });
 
-test('cancelled and unassigned rows show zero payment while ongoing trips do not claim earned income', async () => {
+test('tapping left-side days reveals earlier neighbours; arrows fetch earlier and later date ranges', async () => {
+  const h = setupScreen(async url => {
+    const range = rangeOf(url);
+    const start = h.helpers.historyDay(range.from), end = h.helpers.historyDay(range.to);
+    const fixtures = [];
+    for (let day = start; day < end; day = h.helpers.shiftHistoryDay(day, 1)) {
+      fixtures.push(order(day, h.helpers.historyBoundary(day), { price: Number(day.slice(8)) }));
+    }
+    return fixtures;
+  });
+  let r;
+  await act(async () => { r = create(React.createElement(h.component, h.props)); });
+  assert.equal(pressable(r, 'Следующие дни').props.disabled, true);
+  await act(async () => chartColumn(r, '14 октября: 14 сом').props.onPress());
+  assert.equal(incomeText(r), '14 сом');
+  assert.equal(chartColumn(r, '14 октября: 14 сом').props.accessibilityState.selected, true);
+  assert.ok(chartColumn(r, '11 октября: 11 сом'), 'earlier days are now visible to the left of the selected day');
+  assert.ok(chartColumn(r, '17 октября: 17 сом'));
+  assert.deepEqual(rangeOf(h.requests.at(-1)), { period: 'today', ...plain(h.helpers.historyChartRange('today', '2026-10-17')) });
+  await act(async () => chartColumn(r, '17 октября: 17 сом').props.onPress());
+  assert.equal(incomeText(r), '17 сом');
+  assert.ok(chartColumn(r, '20 октября: 20 сом'), 'later days appear when a right-side day is tapped');
+  await act(async () => pressable(r, 'Предыдущие дни').props.onPress());
+  assert.equal(incomeText(r), '13 сом');
+  assert.equal(chartColumn(r, '13 октября: 13 сом').props.accessibilityState.selected, true);
+  assert.equal(pressable(r, 'Следующие дни').props.disabled, false);
+  await act(async () => pressable(r, 'Следующие дни').props.onPress());
+  assert.equal(incomeText(r), '20 сом');
+  assert.equal(pressable(r, 'Следующие дни').props.disabled, true);
+  await act(async () => pressable(r, 'Месяц').props.onPress());
+  await act(async () => pressable(r, 'Предыдущие дни').props.onPress());
+  assert.match(screenText(r), /сентябрь 2026 г/);
+  assert.deepEqual(rangeOf(h.requests.at(-1)), { period: 'month', ...plain(h.helpers.historyRange('month', '2026-09-20')) });
+  await act(async () => pressable(r, 'Следующие дни').props.onPress());
+  assert.match(screenText(r), /октябрь 2026 г/);
+  await act(async () => r.unmount());
+});
+
+test('quick chart navigation ignores stale responses and details preserve the selected historical day on Android back', async () => {
+  const initial = deferred(), previous = deferred();
+  const h = setupScreen(url => rangeOf(url).to === h.helpers.historyBoundary('2026-10-21') ? initial.promise : previous.promise);
+  let r;
+  await act(async () => { r = create(React.createElement(h.component, h.props)); });
+  await act(async () => pressable(r, 'Предыдущие дни').props.onPress());
+  await act(async () => previous.resolve([order('past', '2026-10-13T06:00:00Z', { price: 135, passenger: { name: 'Асан', phone: '+996555123456' }, tariff: { name: 'Комфорт' }, completedAt: '2026-10-13T06:25:00Z', actualDurationSeconds: 1500, rating: 4, driverRating: 5, waiting: { billedMinutes: 2, charge: 20 } })]));
+  assert.equal(incomeText(r), '135 сом');
+  await act(async () => initial.resolve(screenOrders));
+  assert.equal(incomeText(r), '135 сом');
+  assert.equal(chartColumn(r, '13 октября: 135 сом').props.accessibilityState.selected, true);
+  const calls = h.requests.length;
+  await act(async () => visibleOrders(r)[0].props.onPress());
+  const detail = r.root.findByProps({ testID: 'driver-history-detail' });
+  const text = detail.findAllByType('Text').map(textChildren).join(' ');
+  assert.match(text, /Номер заказа past/);
+  assert.match(text, /Время заказа 13 октября 2026 г\..*12:00/);
+  assert.match(text, /Время завершения 13 октября 2026 г\..*12:25/);
+  assert.match(text, /Время в пути 25 мин/);
+  assert.match(text, /Асан.*\+996555123456/);
+  assert.match(text, /Тариф Комфорт/);
+  assert.match(text, /Ожидание 2 мин.*Платное ожидание 20 сом/);
+  assert.match(text, /Оценка пассажира 4 \/ 5.*Ваша оценка 5 \/ 5/);
+  await act(async () => r.root.findByType('Modal').props.onRequestClose());
+  assert.equal(r.root.findAllByProps({ testID: 'driver-history-detail' }).length, 0);
+  assert.equal(incomeText(r), '135 сом');
+  assert.equal(h.requests.length, calls);
+  assert.equal(h.backs.length, 0);
+  await act(async () => r.unmount());
+});
+
+test('cancelled and unassigned trips open details showing no payment and ongoing trips do not claim income', async () => {
   const fixtures = [screenOrders[0],
     order('cancelled', '2026-10-20T11:00:00Z', { status: 'CANCELLED', price: 900 }),
     order('no-driver', '2026-10-20T12:00:00Z', { status: 'NO_DRIVER', price: 900 }),
@@ -341,22 +518,23 @@ test('cancelled and unassigned rows show zero payment while ongoing trips do not
     assert.ok(labelsIn(row).includes(status));
     assert.doesNotMatch(labelsIn(row), /900 сом/);
     await act(async () => row.props.onPress());
-    assert.match(labelsIn(rowFor(id).parent), /Оплата не проводилась.*0 сом/);
-    assert.doesNotMatch(labelsIn(rowFor(id).parent), /900 сом/);
+    const detail = renderer.root.findByProps({ testID: 'driver-history-detail' });
+    assert.match(labelsIn(detail), /Предварительная стоимость.*900 сом.*Оплата не проводилась.*Итого.*0 сом/);
     assert.equal(renderer.root.findByType('Route').props.fullAddresses, true);
+    await act(async () => renderer.root.findByType('Modal').props.onRequestClose());
   }
   assert.match(labelsIn(rowFor('ongoing')), /—.*В пути/);
   assert.doesNotMatch(labelsIn(rowFor('ongoing')), /900 сом/);
   await act(async () => rowFor('today').props.onPress());
-  assert.match(labelsIn(rowFor('today').parent), /Картой.*300 сом/);
+  assert.match(labelsIn(renderer.root.findByProps({ testID: 'driver-history-detail' })), /Картой.*Комиссия сервиса.*−30 сом.*Итого.*300 сом/);
   await act(async () => renderer.unmount());
 });
 
-test('compact driver rows expand the existing full route and retain safe scrolling in the light screen', async () => {
+test('compact driver rows open a full screen detail with route and back preserves history selection', async () => {
   const h = setupScreen(async () => screenOrders, 'android', 320);
   let renderer;
   await act(async () => { renderer = create(React.createElement(h.component, h.props)); });
-  const scroll = renderer.root.findByType('ScrollView');
+  const scroll = renderer.root.findAllByType('ScrollView').find(node => !node.props.horizontal);
   assert.notEqual(scroll.props.scrollEnabled, false);
   assert.ok(scroll.props.contentContainerStyle.paddingBottom > 34);
   const surface = scroll.props.style.backgroundColor;
@@ -365,13 +543,24 @@ test('compact driver rows expand the existing full route and retain safe scrolli
   assert.ok(!scroll.findAllByType('Pressable').some(node => node.props.accessibilityLabel === 'Назад'));
   assert.equal(renderer.root.findAllByType('Route').length, 0);
   await act(async () => visibleOrders(renderer)[0].props.onPress());
-  assert.equal(visibleOrders(renderer)[0].props.accessibilityState.expanded, true);
+  assert.equal(renderer.root.findByType('Modal').props.presentationStyle, 'fullScreen');
   assert.equal(renderer.root.findByType('Route').props.order.id, 'today');
   assert.equal(renderer.root.findByType('Route').props.fullAddresses, true);
   assert.match(screenText(renderer), /Начало today → Конец today/);
   assert.match(screenText(renderer), /Подъезд 2/);
-  await act(async () => visibleOrders(renderer)[0].props.onPress());
+  const detail = renderer.root.findByProps({ testID: 'driver-history-detail' });
+  const detailScroll = renderer.root.findByProps({ testID: 'driver-history-detail-scroll' });
+  assert.ok(detailScroll.props.contentContainerStyle[1].paddingBottom > 34);
+  await act(async () => renderer.root.findByType('HistoryRouteMap').props.onInteractionChange(true));
+  assert.equal(detailScroll.props.scrollEnabled, false);
+  await act(async () => renderer.root.findByType('HistoryRouteMap').props.onInteractionChange(false));
+  assert.equal(detailScroll.props.scrollEnabled, true);
+  await act(async () => detail.findByType('Pressable').props.onPress());
   assert.equal(renderer.root.findAllByType('Route').length, 0);
+  assert.equal(chartColumn(renderer, '20 октября: 300 сом').props.accessibilityState.selected, true);
+  assert.equal(incomeText(renderer), '300 сом');
+  assert.equal(h.requests.length, 1);
+  assert.equal(h.backs.length, 0);
   await act(async () => renderer.unmount());
 });
 
@@ -392,4 +581,47 @@ test('iOS calendar applies only the confirmed date and keeps the current selecte
   assert.match(screenText(renderer), /15 сентября · 1 заказ/);
   assert.deepEqual(rangeOf(h.requests.at(-1)), { period: 'today', ...plain(h.helpers.historyChartRange('today', '2026-09-15')) });
   await act(async () => renderer.unmount());
+});
+
+test('history follows dark theme including rows, icons, info and calendar, without refetching on theme changes', async () => {
+  const h = setupScreen(async () => screenOrders, 'ios', 320, true);
+  let r;
+  await act(async () => { r = create(React.createElement(h.component, h.props)); });
+  assert.equal(r.root.findByType('StatusBar').props.style, 'light');
+  assert.equal(r.root.findAllByType('ScrollView').find(node => !node.props.horizontal).props.style.backgroundColor, '#111111');
+  const colorsOf = node => node.findAllByType('Text').map(text => Object.assign({}, ...[text.props.style].flat().filter(Boolean)).color);
+  assert.ok(colorsOf(visibleOrders(r)[0]).includes('#F4F4F7'));
+  assert.ok(colorsOf(visibleOrders(r)[0]).includes('#A3A5B1'));
+  assert.equal(r.root.findByType('Rect').props.stroke, '#F4F4F7');
+  await act(async () => pressable(r, 'Информация о доходе').props.onPress());
+  const info = r.root.findByType('Modal');
+  assert.ok(info.findAllByType('View').some(node => Object.assign({}, ...[node.props.style].flat().filter(Boolean)).backgroundColor === '#24242B'));
+  await act(async () => pressable(r, 'Закрыть').props.onPress());
+  await act(async () => pressable(r, 'Выберите дату').props.onPress());
+  assert.equal(r.root.findByType('DateTimePicker').props.themeVariant, 'dark');
+  await act(async () => pressable(r, 'Закрыть').props.onPress());
+  h.setDark(false);
+  await act(async () => r.update(React.createElement(h.component, h.props)));
+  assert.equal(r.root.findByType('StatusBar').props.style, 'dark');
+  assert.equal(r.root.findAllByType('ScrollView').find(node => !node.props.horizontal).props.style.backgroundColor, '#FDFDFF');
+  assert.equal(h.requests.length, 1);
+  assert.equal(incomeText(r), '300 сом');
+  await act(async () => r.unmount());
+});
+
+test('selected day stays selected even when empty; tapping an empty day shows zero and no trips', async () => {
+  for (const fixtures of [[], [order('first', '2026-10-20T00:00:00Z'), order('second', '2026-10-20T06:00:00Z')]]) {
+    const h = setupScreen(async () => fixtures);
+    let r;
+    await act(async () => { r = create(React.createElement(h.component, h.props)); });
+    const selected = r.root.findAllByType('Pressable').filter(node => node.props.testID?.startsWith('history-bar-') && node.props.accessibilityState.selected);
+    assert.equal(selected.length, 1);
+    assert.equal(selected[0].props.accessibilityLabel, `20 октября: ${fixtures.length ? 200 : 0} сом`);
+    await act(async () => chartColumn(r, '19 октября: 0 сом').props.onPress());
+    assert.equal(incomeText(r), '0 сом');
+    assert.match(screenText(r), /19 октября · 0 заказов/);
+    assert.match(screenText(r), /Поездок пока нет/);
+    assert.equal(visibleOrders(r).length, 0);
+    await act(async () => r.unmount());
+  }
 });

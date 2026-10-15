@@ -1,0 +1,53 @@
+const assert=require('node:assert/strict'),fs=require('node:fs'),path=require('node:path'),vm=require('node:vm'),{test}=require('node:test'),React=require('react'),{act,create}=require('react-test-renderer'),ts=require('typescript');
+globalThis.IS_REACT_ACT_ENVIRONMENT=true;
+const user={id:'driver',role:'DRIVER',language:'ru',phone:'+996700123456',photoUrl:'/avatars/current'};
+function setup(){
+  let fail=false,finisher=null;
+  const data={version:7,personal:{firstName:'Иван',lastName:'Иванов',birthDate:'1990-01-02',city:'Шамалды-Сай'},vehicles:[{key:'taxiVehicle',label:'Основной автомобиль',usage:'TAXI',vehicle:{brand:'Toyota',model:'Camry',ownership:'OWN',year:'2020',color:'Белый',plateNumber:'01 123 AAA'}}],uploads:[],config:{cities:['Шамалды-Сай'],cargoVehicleTypes:[]}};
+  const calls=[],users=[],alerts=[],backs=[],avatar=[];
+  const node=name=>props=>React.createElement(name,props,props.children);
+  const exports={};vm.runInNewContext(ts.transpileModule(fs.readFileSync(path.join(__dirname,'../src/DriverDetailsScreen.tsx'),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX,esModuleInterop:true}}).outputText,{exports,require:id=>{
+    if(id==='react'||id==='react/jsx-runtime')return require(id);
+    if(id==='react-native-safe-area-context')return {useSafeAreaInsets:()=>({top:44,left:0,right:0,bottom:34})};
+    if(id==='expo-status-bar')return {StatusBar:'StatusBar'};
+    if(id==='react-native')return {View:'View',Text:'Text',Pressable:'Pressable',ActivityIndicator:'ActivityIndicator',StyleSheet:{create:x=>x,hairlineWidth:.5},Alert:{alert:(...a)=>alerts.push(a)},BackHandler:{addEventListener:(_n,f)=>{backs.push(f);return {remove(){}};}}};
+    if(id==='./api')return {api:{request:async url=>{calls.push({url});return structuredClone(url==='/users/me'?user:data);},patch:async(url,body)=>{calls.push({url,body});if(fail)throw Error('Version conflict');if(finisher)await finisher;data.version++;if(body.personal)Object.assign(data.personal,body.personal);if(body.vehicle)Object.assign(data.vehicles[0].vehicle,body.vehicle);return structuredClone(data);}},messageOf:e=>e.message};
+    if(id==='./ui')return {Avatar:node('Avatar'),Icon:node('Icon'),IconButton:p=>React.createElement('Pressable',{onPress:p.onPress,accessibilityLabel:p.label}),tr:()=>x=>x,Button:p=>React.createElement('Pressable',{accessibilityLabel:p.label,onPress:p.onPress,disabled:p.disabled},p.label)};
+    if(id==='./design/typography')return {fonts:{regular:'regular',medium:'medium',bold:'bold'}};
+    if(id==='./registration/design')return {useRegistrationDesign:()=>({palette:{ink:'#111',background:'#fff',muted:'#777',line:'#ddd',accent:'#3478F6'}})};
+    if(id==='./registration/RegistrationKeyboardLayout')return {RegistrationKeyboardLayout:p=>React.createElement('View',null,p.header,p.children,p.footer)};
+    if(id==='./registration/components')return {FormInput:node('FormInput'),NativeDateInput:node('NativeDateInput'),OptionSheet:node('OptionSheet'),SelectInput:node('SelectInput')};
+    if(id==='./registration/OnboardingVehicleForm')return {OnboardingVehicleForm:node('VehicleForm')};
+    if(id==='./registration/NativeNumberInput')return {NativeNumberInput:node('NumberInput')};
+    if(id==='./registration/workCities')return {cityOptionsFor:()=>[]};
+    if(id==='./registration/types')return {emptyVehicleDraft:()=>({})};
+    if(id==='./registration/vehicleData')return {readPlate:x=>x.plate,validPlate:()=>true};
+    if(id==='./registration/VehiclePhotoCard')return {VehiclePhotoCard:node('Photo')};
+    if(id==='./registration/UploadedPhotoViewer')return {UploadedPhotoViewer:node('Viewer')};
+    throw Error('Unknown dependency '+id);
+  }});
+  const control=(r,label)=>r.root.findAllByType('Pressable').find(n=>n.props.accessibilityLabel===label);
+  const props={user,onUser:u=>users.push(u),onBack:()=>backs.push('back'),onAvatar:()=>avatar.push('choose'),onRemoveAvatar:()=>avatar.push('remove'),onDeleteAccount:()=>alerts.push('delete-account'),avatarBusy:false};
+  return {Component:exports.DriverDetailsScreen,props,calls,users,alerts,backs,avatar,control,fail:()=>{fail=true;},pause:()=>{let resolve;finisher=new Promise(r=>{resolve=r;});return resolve;}};
+}
+test('personal page loads real fields, shows read-only phone, saves versioned data and exposes photo deletion',async()=>{const h=setup();let r;await act(async()=>{r=create(React.createElement(h.Component,{...h.props,kind:'personal'}));});assert.deepEqual(h.calls,[{url:'/driver/profile-details'}]);assert.equal(r.root.findAllByType('FormInput').length,0);await act(async()=>h.control(r,'Удалить фото').props.onPress());assert.equal(h.alerts[0][2][1].style,'destructive');h.alerts[0][2][1].onPress();assert.deepEqual(h.avatar,['remove']);await act(async()=>h.control(r,'Редактировать').props.onPress());const first=r.root.findAllByType('FormInput').find(n=>n.props.label==='Имя');await act(async()=>first.props.onChangeText('Пётр'));await act(async()=>h.control(r,'Сохранить').props.onPress());assert.equal(h.calls[1].body.version,7);assert.equal(h.calls[1].body.personal.firstName,'Пётр');assert.equal(h.calls[1].body.personal.birthDate,'02.01.1990');assert.equal(h.users.length,1);assert.ok(h.control(r,'Редактировать'));await act(async()=>r.unmount());});
+test('car editor saves only selected vehicle and blocks duplicate submissions',async()=>{const h=setup();let r;await act(async()=>{r=create(React.createElement(h.Component,{...h.props,kind:'vehicles'}));});await act(async()=>h.control(r,'Редактировать').props.onPress());await act(async()=>r.root.findByType('VehicleForm').props.onChange({model:'Corolla'}));const finish=h.pause();await act(async()=>{h.control(r,'Сохранить').props.onPress();h.control(r,'Сохранить').props.onPress();});assert.equal(h.calls.filter(c=>c.body).length,1);assert.equal(h.calls.find(c=>c.body).body.vehicleKey,'taxiVehicle');assert.equal(h.calls.find(c=>c.body).body.vehicle.model,'Corolla');await act(async()=>finish());await act(async()=>r.unmount());});
+test('save errors retain the entered personal values instead of showing success',async()=>{const h=setup();let r;await act(async()=>{r=create(React.createElement(h.Component,{...h.props,kind:'personal'}));});await act(async()=>h.control(r,'Редактировать').props.onPress());await act(async()=>r.root.findAllByType('FormInput').find(n=>n.props.label==='Имя').props.onChangeText('Пётр'));h.fail();await act(async()=>h.control(r,'Сохранить').props.onPress());assert.equal(h.users.length,0);assert.equal(r.root.findAllByType('FormInput').find(n=>n.props.label==='Имя').props.value,'Пётр');assert.ok(h.control(r,'Сохранить'));await act(async()=>r.unmount());});
+test('detail headers respect the status area and account deletion belongs only to personal data',async()=>{
+  const h=setup();let r;
+  await act(async()=>{r=create(React.createElement(h.Component,{...h.props,kind:'personal'}));});
+  const header=Object.assign({},...r.root.findByProps({testID:'driver-details-header'}).props.style);
+  assert.equal(header.paddingTop,56);
+  let exited=0;
+  await act(async()=>r.update(React.createElement(h.Component,{...h.props,kind:'personal',onLogout:()=>exited++})));
+  await act(async()=>h.control(r,'Выйти из аккаунта').props.onPress());
+  assert.equal(exited,1);
+  await act(async()=>h.control(r,'Удалить аккаунт').props.onPress());
+  assert.ok(h.alerts.includes('delete-account'));
+  await act(async()=>r.update(React.createElement(h.Component,{...h.props,kind:'vehicles'})));
+  assert.equal(h.control(r,'Удалить аккаунт'),undefined);
+  assert.ok(r.root.findAllByType('Text').some(n=>n.children.includes('Автомобиль')));
+  assert.ok(!r.root.findAllByType('Text').some(n=>n.children.includes('Автомобили')));
+  assert.equal(r.root.findAllByProps({accessibilityRole:'radio'}).length,0);
+  await act(async()=>r.unmount());
+});

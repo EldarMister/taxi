@@ -4,7 +4,7 @@ import { getMessaging } from 'firebase-admin/messaging';
 import { PrismaService } from './prisma.service';
 import { AppConfig } from './config';
 export { RoutingService } from './routing';
-import { pushPresentation } from './pushPresentation';
+import { driverOfferPresentation, pushPresentation } from './pushPresentation';
 import { sendExpoPushIndividually } from './expo-push';
 
 const PUSH_TTL = {
@@ -90,26 +90,30 @@ export class PushService {
         const user = await this.db.user.findUnique({where:{id:job.userId},select:{
           notifications:true,
           role:true,
-          pushTokens:{select:{id:true,token:true}},
+          language:true,
+          pushTokens:{select:{id:true,token:true,platform:true,driverOfferActions:true}},
         }});
-        const presentation = user ? pushPresentation(job.event, user.role) : null;
+        let presentation = user ? pushPresentation(job.event, user.role) : null;
         if (!presentation) {
           // Consume obsolete queued events without sending or retrying them.
           await this.db.pushJob.update({where:{id:job.id},data:{sentAt:new Date()}});
           return;
         }
         if (user?.notifications && user.pushTokens.length && this.config.pushProvider !== 'development') {
-          const { title, body, sound, channelId } = presentation;
           let ttl = pushTtlSeconds(job.event);
+          let data = pushDeliveryData(job);
           if (job.event === 'order:offer') {
-            if(!job.orderId) {await this.db.pushJob.update({where:{id:job.id},data:{sentAt:new Date()}});return;}
+            if(!job.orderId || user.role !== 'DRIVER') {await this.db.pushJob.update({where:{id:job.id},data:{sentAt:new Date()}});return;}
             const offer = await this.db.orderOffer.findFirst({where:{orderId:job.orderId,driverId:job.userId,skipped:false,expiresAt:{gt:new Date()},driver:{online:true,verified:true},order:{status:'SEARCHING'}},include:{order:true}});
             if (!offer) { await this.db.pushJob.update({where:{id:job.id},data:{sentAt:new Date()}}); return; }
             ttl = pushTtlSeconds(job.event, offer.expiresAt);
+            presentation = driverOfferPresentation(offer.order, user.language);
+            data = { ...data, recipientId: job.userId, offerExpiresAt: offer.expiresAt.toISOString() };
           }
+          const { title, body, sound, channelId, categoryId } = presentation;
           if (this.config.pushProvider === 'expo') {
             const report = await sendExpoPushIndividually(user.pushTokens,
-              {title,body,sound,channelId,ttl,priority:'high',data:pushDeliveryData(job)},this.config.expoAccessToken);
+              {title,body,sound,channelId,categoryId,ttl,priority:'high',data},this.config.expoAccessToken);
             for (const id of report.invalidIds) await this.db.pushToken.deleteMany({where:{id}});
             if (report.failures.length) {
               const reasons = [...new Set(report.failures)].sort().join(',');
@@ -117,7 +121,12 @@ export class PushService {
               this.logger.warn(`Push job ${job.id} delivered to ${report.delivered} device(s), removed ${report.invalidIds.length} stale token(s), ${report.failures.length} device(s) failed: ${reasons}`);
             }
           } else {
-            const result = await getMessaging().sendEachForMulticast({tokens:user.pushTokens.map(t=>t.token),notification:{title,body},data:pushDeliveryData(job),android:{priority:'high',ttl:ttl*1000,notification:{channelId,sound:sound.replace(/\.wav$/,'')}},apns:{headers:{'apns-expiration':String(Math.floor(Date.now()/1000)+ttl)},payload:{aps:{sound}}}});
+            // Data-only Android offers reach Expo's native builder, which adds
+            // the registered action buttons even when the app is backgrounded.
+            const result = await getMessaging().sendEachForMulticast({tokens:user.pushTokens.map(t=>t.token),
+              ...(categoryId ? {data:{title,message:body,body:JSON.stringify(data),categoryId,channelId,sound}} : {notification:{title,body},data}),
+              android:{priority:'high',ttl:ttl*1000,...(!categoryId ? {notification:{channelId,sound:sound.replace(/\.wav$/,'')}} : {})},
+              apns:{headers:{'apns-expiration':String(Math.floor(Date.now()/1000)+ttl)},payload:{aps:{sound,...(categoryId ? {category:categoryId,alert:{title,body}} : {})}}}});
             const temporaryFailures = new Set<string>();
             for (let i=0;i<result.responses.length;i++) {
               const error = result.responses[i].error;

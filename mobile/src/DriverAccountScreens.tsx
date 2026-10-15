@@ -1,7 +1,9 @@
-import React, { useState } from 'react';
+import React, { useRef, useState } from 'react';
 import { Image, Modal, Pressable, ScrollView, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
+import { BottomPanel } from './BottomPanel';
 import { api } from './api';
 import { useTheme, type ThemePreference } from './design/theme';
 import { fonts } from './design/typography';
@@ -57,10 +59,21 @@ export function DriverSettingsScreen({ user, saving, voiceEnabled, onVoiceEnable
   const profile = user.driverProfile;
   const [deliveryOpen, setDeliveryOpen] = useState(true);
   const [languageOpen, setLanguageOpen] = useState(false);
+  const [languageClosing, setLanguageClosing] = useState(false);
+  const [languageSaving, setLanguageSaving] = useState(false);
+  const languageRequest = useRef(false);
+  const selectLanguage = async (language: Language) => {
+    if (saving || languageRequest.current) return;
+    languageRequest.current = true;
+    setLanguageSaving(true);
+    try { if (await onLanguage(language)) setLanguageClosing(true); }
+    finally { languageRequest.current = false; setLanguageSaving(false); }
+  };
   const driverClass = t(profile?.transportClass === 'COMFORT' ? 'Комфорт' : profile?.transportClass === 'TRUCK' ? 'Грузовой' : 'Эконом');
   const comfortAvailable = profile?.transportClass === 'COMFORT';
   const carAvailable = profile?.transportClass !== 'TRUCK';
   return <View style={{ flex: 1, backgroundColor: colors.background }}>
+    <View style={{ flex: 1 }} accessibilityElementsHidden={languageOpen} importantForAccessibility={languageOpen ? 'no-hide-descendants' : 'auto'}>
     <AccountHeader title={t('Настройки')} menuLabel={t('Меню')} onMenu={onMenu}/>
     <ScrollView showsVerticalScrollIndicator={false} style={{ flex: 1 }} contentContainerStyle={{ paddingLeft: Math.max(insets.left, 19.5 * scale), paddingRight: Math.max(insets.right, 19.5 * scale), paddingBottom: Math.max(insets.bottom, 16) + 14 * scale }}>
       <View style={{ borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.line }}>
@@ -86,12 +99,24 @@ export function DriverSettingsScreen({ user, saving, voiceEnabled, onVoiceEnable
         <Pressable accessibilityRole="button" accessibilityLabel={t('Язык интерфейса')} onPress={() => setLanguageOpen(true)} style={({ pressed }) => [styles.settingRow, { minHeight: 59 * scale, borderBottomColor: colors.line, opacity: pressed ? .6 : 1 }]}><Text style={{ flex: 1, color: colors.ink, fontFamily: fonts.bold, fontSize: 15.5 * scale, lineHeight: 22 * scale }}>{t('Язык интерфейса')}</Text><Icon name="chevron-forward" size={20 * scale} color={colors.secondary}/></Pressable>
       </View>
     </ScrollView>
-    <Modal visible={languageOpen} transparent animationType="slide" onRequestClose={() => setLanguageOpen(false)}><View style={styles.modalRoot}><Pressable accessibilityLabel={t('Закрыть')} onPress={() => setLanguageOpen(false)} style={styles.backdrop}/><View style={{ backgroundColor: colors.background, padding: 20, paddingBottom: Math.max(insets.bottom, 20) }}><View style={styles.modalHeader}><Text style={{ color: colors.ink, fontFamily: fonts.bold, fontSize: 18 }}>{t('Язык интерфейса')}</Text><Pressable accessibilityRole="button" accessibilityLabel={t('Закрыть')} hitSlop={8} onPress={() => setLanguageOpen(false)}><Icon name="close" color={colors.ink}/></Pressable></View>{(['ru', 'ky', 'en'] as Language[]).map(language => <Pressable key={language} accessibilityRole="radio" accessibilityLabel={language === 'ru' ? 'Русский' : language === 'ky' ? 'Кыргызча' : 'English'} accessibilityState={{ checked: user.language === language, disabled: saving }} disabled={saving} onPress={() => void onLanguage(language).then(saved => { if (saved) setLanguageOpen(false); })} style={[styles.settingRow, { minHeight: 58, borderBottomColor: colors.line }]}><Text style={{ flex: 1, color: colors.ink, fontFamily: fonts.regular, fontSize: 17 }}>{language === 'ru' ? 'Русский' : language === 'ky' ? 'Кыргызча' : 'English'}</Text><Icon name={user.language === language ? 'radio-button-on' : 'radio-button-off'} color={user.language === language ? colors.accent : colors.secondary} size={24}/></Pressable>)}</View></View></Modal>
+    </View>
+    <Modal visible={languageOpen} transparent statusBarTranslucent animationType="none" onRequestClose={() => setLanguageClosing(true)}>
+      {languageOpen && <GestureHandlerRootView style={{ flex: 1 }}>
+        <BottomPanel label={t('Закрыть')} closeRequested={languageClosing} onClose={() => { setLanguageOpen(false); setLanguageClosing(false); }}>
+          <View style={{ paddingHorizontal: Math.max(insets.left, insets.right, 20), paddingTop: 18 }}>
+            <View style={styles.modalHeader}><Text accessibilityRole="header" style={{ color: colors.ink, fontFamily: fonts.bold, fontSize: 18 }}>{t('Язык интерфейса')}</Text><Pressable accessibilityRole="button" accessibilityLabel={t('Закрыть')} hitSlop={8} onPress={() => setLanguageClosing(true)}><Icon name="close" color={colors.ink}/></Pressable></View>
+            <ScrollView testID="driver-language-options" showsVerticalScrollIndicator={false}>
+              {(['ru', 'ky', 'en'] as Language[]).map(language => <Pressable key={language} accessibilityRole="radio" accessibilityLabel={language === 'ru' ? 'Русский' : language === 'ky' ? 'Кыргызча' : 'English'} accessibilityState={{ checked: user.language === language, disabled: saving || languageSaving }} disabled={saving || languageSaving} onPress={() => void selectLanguage(language)} style={[styles.settingRow, { minHeight: 58, borderBottomColor: colors.line }]}><Text style={{ flex: 1, color: colors.ink, fontFamily: fonts.regular, fontSize: 17 }}>{language === 'ru' ? 'Русский' : language === 'ky' ? 'Кыргызча' : 'English'}</Text><Icon name={user.language === language ? 'radio-button-on' : 'radio-button-off'} color={user.language === language ? colors.accent : colors.secondary} size={24}/></Pressable>)}
+            </ScrollView>
+          </View>
+        </BottomPanel>
+      </GestureHandlerRootView>}
+    </Modal>
   </View>;
 }
 
-export function DriverProfileScreen({ user, busy, editing, editor, onEdit, onOnline, onNavigate, onMenu }: { user: User; busy: boolean; editing: boolean; editor: React.ReactNode; onEdit: () => void; onOnline: (value: boolean) => void; onNavigate: (page: Page) => void; onMenu: () => void }) {
-  const { scale, colors } = useAccountDesign();
+export function DriverProfileScreen({ user, busy, editing, editor, onEdit, onOnline, onNavigate, onMenu, onVehicle }: { user: User; busy: boolean; editing: boolean; editor: React.ReactNode; onEdit: () => void; onOnline: (value: boolean) => void; onNavigate: (page: Page) => void; onMenu: () => void; onVehicle?: () => void }) {
+  const { scale, colors, isDark } = useAccountDesign();
   const insets = useSafeAreaInsets(), t = tr(user.language), profile = user.driverProfile;
   const local = (ru: string, ky: string) => localize(user.language, ru, ky);
   const photo = profile?.carPhotoUrl;
@@ -101,19 +126,19 @@ export function DriverProfileScreen({ user, busy, editing, editor, onEdit, onOnl
     <ScrollView showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled" contentContainerStyle={{ paddingLeft: Math.max(insets.left, 18.5 * scale), paddingRight: Math.max(insets.right, 18.5 * scale), paddingBottom: Math.max(insets.bottom, 16) + 16 * scale }}>
       <Pressable accessibilityRole="button" accessibilityLabel={local('Редактировать профиль', 'Профилди түзөтүү')} accessibilityState={{ expanded: editing }} onPress={onEdit} style={({ pressed }) => [styles.profilePerson, { minHeight: 106 * scale, paddingTop: 18 * scale, paddingBottom: 14 * scale, gap: 20 * scale, borderBottomColor: colors.line, opacity: pressed ? .6 : 1 }]}>
         <View><Avatar user={user} size={74 * scale} fallbackBackground={colors.inactive} fallbackColor={colors.ink}/>{profile && <View style={{ position: 'absolute', right: 4 * scale, bottom: 3 * scale, width: 18 * scale, height: 18 * scale, borderRadius: 9 * scale, borderWidth: 2.5 * scale, borderColor: colors.background, backgroundColor: profile.online ? '#4ABB70' : colors.secondary }}/>}</View>
-        <View style={{ flex: 1, gap: 5 * scale }}><Text numberOfLines={2} style={{ color: colors.ink, fontFamily: fonts.bold, fontSize: 18 * scale, lineHeight: 24 * scale }}>{user.name || t('Профиль')}</Text><Text style={{ color: colors.secondary, fontFamily: fonts.regular, fontSize: 13.5 * scale, lineHeight: 19 * scale }}>{user.phone}</Text><View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 * scale, marginTop: 2 * scale }}><Icon name="star" size={18 * scale} color={colors.ink}/><Text style={{ color: colors.ink, fontFamily: fonts.medium, fontSize: 15 * scale, lineHeight: 20 * scale }}>{profile?.rating == null ? '—' : Number(profile.rating).toFixed(1)}</Text></View></View>
+        <View style={{ flex: 1, gap: 5 * scale }}><Text numberOfLines={2} style={{ color: colors.ink, fontFamily: fonts.bold, fontSize: 18 * scale, lineHeight: 24 * scale }}>{user.name || t('Профиль')}</Text><Text style={{ color: colors.secondary, fontFamily: fonts.regular, fontSize: 13.5 * scale, lineHeight: 19 * scale }}>{user.phone}</Text><View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 * scale, marginTop: 2 * scale }}><Icon name="star" size={18 * scale} color={isDark ? colors.ink : '#FFBE12'}/><Text style={{ color: colors.ink, fontFamily: fonts.medium, fontSize: 15 * scale, lineHeight: 20 * scale }}>{profile?.rating == null ? '—' : Number(profile.rating).toFixed(1)}</Text></View></View>
         <Icon name={editing ? 'chevron-down' : 'chevron-forward'} color={colors.secondary} size={20 * scale}/>
       </Pressable>
       {editing && <View style={{ paddingVertical: 16 * scale, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.line }}>{editor}</View>}
       {profile && <>
-        <Pressable accessibilityRole="button" accessibilityLabel={t('Автомобиль')} onPress={() => onNavigate('registration')} style={({ pressed }) => [styles.profilePerson, { minHeight: 104 * scale, gap: 18 * scale, borderBottomColor: colors.line, opacity: pressed ? .6 : 1 }]}>
+        <Pressable accessibilityRole="button" accessibilityLabel={t('Автомобиль')} onPress={onVehicle} style={({ pressed }) => [styles.profilePerson, { minHeight: 104 * scale, gap: 18 * scale, borderBottomColor: colors.line, opacity: pressed ? .6 : 1 }]}>
           <View style={{ width: 116 * scale, alignItems: 'center' }}>{photoUri ? <Image source={{ uri: photoUri, headers: { Authorization: `Bearer ${api.getTokens()?.accessToken ?? ''}` } }} resizeMode="contain" style={{ width: 116 * scale, height: 70 * scale }}/> : <Car size={130 * scale}/>}</View>
           <View style={{ flex: 1, gap: 6 * scale }}><Text style={{ color: colors.ink, fontFamily: fonts.bold, fontSize: 16 * scale, lineHeight: 21 * scale }}>{profile.carMake || '—'}</Text><Text style={{ color: colors.ink, fontFamily: fonts.regular, fontSize: 15 * scale, lineHeight: 20 * scale }}>{profile.carPlate || '—'}</Text><Text style={{ color: colors.secondary, fontFamily: fonts.regular, fontSize: 13 * scale, lineHeight: 18 * scale, letterSpacing: -.15 }}>{profile.carColor || '—'}</Text></View><Icon name="chevron-forward" color={colors.secondary} size={20 * scale}/>
         </Pressable>
         <View style={[styles.settingRow, { minHeight: 76 * scale, borderBottomColor: colors.line }]}><View style={{ flex: 1, gap: 3 * scale, marginRight: 10 * scale }}><Text style={{ color: colors.ink, fontFamily: fonts.bold, fontSize: 16 * scale, lineHeight: 22 * scale }}>{t(profile.online ? 'На линии' : 'Не на линии')}</Text><Text style={{ color: colors.secondary, fontFamily: fonts.regular, fontSize: 13 * scale, lineHeight: 18 * scale, letterSpacing: -.15 }}>{profile.verified ? profile.online ? local('Готов принимать заказы', 'Буюртмаларды кабыл алууга даяр') : local('Включите, чтобы принимать заказы', 'Буюртмаларды алуу үчүн күйгүзүңүз') : t('Ожидаем подтверждение')}</Text></View><AccountToggle label={t('На линии')} value={profile.online} disabled={busy || !profile.verified} onChange={onOnline}/></View>
       </>}
-      {([{ icon: 'shield-checkmark-outline', label: 'Допуски и документы', page: 'registration' }, { icon: 'settings-outline', label: 'Настройки', page: 'settings' }, { icon: 'help-circle-outline', label: 'Поддержка', page: 'support' }, { icon: 'receipt-outline', label: 'История заказов', page: 'history' }] as const).map((item, index) => <Pressable key={item.page} accessibilityRole="button" accessibilityLabel={t(item.label)} onPress={() => onNavigate(item.page)} style={({ pressed }) => ({ flexDirection: 'row', alignItems: 'center', minHeight: (index === 0 ? 67 : 60) * scale, opacity: pressed ? .6 : 1 })}>
-        <View style={{ width: 49 * scale }}><Icon name={item.icon} size={26 * scale} color={colors.ink}/></View><View style={{ flex: 1, alignSelf: 'stretch', flexDirection: 'row', alignItems: 'center', borderBottomWidth: index < 3 ? StyleSheet.hairlineWidth : 0, borderBottomColor: colors.line }}><Text style={{ flex: 1, color: colors.ink, fontFamily: fonts.regular, fontSize: 15 * scale, lineHeight: 22 * scale, letterSpacing: -.4 }}>{t(item.label)}</Text><Icon name="chevron-forward" color={colors.secondary} size={20 * scale}/></View>
+      {([{ icon: 'settings-outline', label: 'Настройки', page: 'settings' }, { icon: 'help-circle-outline', label: 'Поддержка', page: 'support' }, { icon: 'receipt-outline', label: 'История заказов', page: 'history' }] as const).map((item, index) => <Pressable key={item.page} accessibilityRole="button" accessibilityLabel={t(item.label)} onPress={() => onNavigate(item.page)} style={({ pressed }) => ({ flexDirection: 'row', alignItems: 'center', minHeight: 60 * scale, opacity: pressed ? .6 : 1 })}>
+        <View style={{ width: 49 * scale }}><Icon name={item.icon} size={26 * scale} color={colors.ink}/></View><View style={{ flex: 1, alignSelf: 'stretch', flexDirection: 'row', alignItems: 'center', borderBottomWidth: index < 2 ? StyleSheet.hairlineWidth : 0, borderBottomColor: colors.line }}><Text style={{ flex: 1, color: colors.ink, fontFamily: fonts.regular, fontSize: 15 * scale, lineHeight: 22 * scale, letterSpacing: -.4 }}>{t(item.label)}</Text><Icon name="chevron-forward" color={colors.secondary} size={20 * scale}/></View>
       </Pressable>)}
       <View style={{ height: StyleSheet.hairlineWidth, backgroundColor: colors.line }}/>
     </ScrollView>
@@ -123,7 +148,5 @@ export function DriverProfileScreen({ user, busy, editing, editor, onEdit, onOnl
 const styles = StyleSheet.create({
   settingRow: { flexDirection: 'row', alignItems: 'center', borderBottomWidth: StyleSheet.hairlineWidth },
   profilePerson: { flexDirection: 'row', alignItems: 'center', borderBottomWidth: StyleSheet.hairlineWidth },
-  modalRoot: { flex: 1, justifyContent: 'flex-end' },
-  backdrop: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(17,20,30,.3)' },
   modalHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingBottom: 12 },
 });

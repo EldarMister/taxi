@@ -59,6 +59,7 @@ export type RegistrationUpload = {
   pendingDelete?: boolean;
   expiresAt?: string | null;
   updatedAt?: string;
+  previousUpload?: RegistrationUpload;
 };
 
 export type VehicleDraft = {
@@ -70,6 +71,7 @@ export type VehicleDraft = {
   year: string;
   color: string;
   plateNumber: string;
+  plate?: { format: 'CURRENT' | 'LEGACY'; region: string; digits: string; series: string };
   vin: string;
   passengerSeats: string;
   bodyType: string;
@@ -217,6 +219,8 @@ export type RegistrationConfig = {
   minimumAgeByRole: Record<PerformerRole, number>;
   countries: string[];
   cities: string[];
+  comingSoonCities?: string[];
+  workCities?: { id: string; name: string; status: 'ACTIVE' | 'SOON'; sortOrder: number }[];
   districts: Record<string, string[]>;
   driverLicenseCategories: string[];
   cargoVehicleTypes: string[];

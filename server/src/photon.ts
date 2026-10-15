@@ -1,6 +1,7 @@
 import { ServiceUnavailableException } from '@nestjs/common';
 import type { Place } from './places';
 import { formatPlaceAddress } from './address';
+import { placeCategory } from './place-category';
 
 const clean = (value: unknown) => typeof value === 'string' ? value.trim().replace(/\s+/g,' ').slice(0,250) : '';
 const nameKey=(text:string)=>text.toLocaleLowerCase('ru').replace(/^город\s+|^г\.\s*/u,'').replace(/[^\p{L}\p{N}]/gu,'').replace(/ё/g,'е');
@@ -28,7 +29,8 @@ export function parsePhotonPlace(value: unknown): Place {
   const named = (p.osm_key !== 'highway' || ['bus_stop','services','rest_area'].includes(String(p.osm_value))) && !['street','city','town','village','hamlet','district','locality'].includes(String(p.type));
   const address=formatPlaceAddress(name,street,house,p.unit,p.city || p.town || p.village,named);
   if(!name&&!street&&!house)throw new Error('Photon result has no address');
-  return {id:`osm-${osmType}-${p.osm_id}`,address,latitude,longitude};
+  const category = placeCategory(p.osm_key, p.osm_value);
+  return {id:`osm-${osmType}-${p.osm_id}`,address,latitude,longitude,...(category ? {category} : {})};
 }
 
 /** Dedicated autocomplete engine. No public-Nominatim pacing or serial queue. */

@@ -50,7 +50,7 @@ test('system changes update the live theme until a manual choice overrides them'
     exports: output,
     require: id => {
       if (id === 'react' || id === 'react/jsx-runtime') return require(id);
-      if (id === 'react-native') return { useColorScheme: () => systemScheme, View: 'View' };
+      if (id === 'react-native') return { Appearance: { setColorScheme() {} }, useColorScheme: () => systemScheme, View: 'View' };
       if (id === './themeStore') return { readThemePreference: async () => savedPreference, writeThemePreference: async value => { writes.push(value); savedPreference = value; } };
       return {};
     },
@@ -87,7 +87,7 @@ test('saved manual preference is loaded before showing application content', asy
     exports: output,
     require: id => {
       if (id === 'react' || id === 'react/jsx-runtime') return require(id);
-      if (id === 'react-native') return { useColorScheme: () => 'light', View: 'View' };
+      if (id === 'react-native') return { Appearance: { setColorScheme() {} }, useColorScheme: () => 'light', View: 'View' };
       if (id === './themeStore') return {
         readThemePreference: () => new Promise(resolve => { finishRead = resolve; }),
         writeThemePreference: async () => undefined,

@@ -13,7 +13,7 @@ globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 // so deferred close delivery, interruptions and cancellations remain observable.
 function panelHarness({ reduced = false, platform = 'android' } = {}) {
   const values = [], animations = [], keyboardListeners = new Map();
-  const state = { closes: 0, keyboardDismisses: 0, back: null, frame: { y: 0, height: 914 },
+  const state = { closes: 0, keyboardDismisses: 0, back: null, screenOrigin: 0, frame: { y: 0, height: 914 },
     scrollFrame: { pageY: 200, pageX: 0, x: 0, y: 0, width: 412, height: 400 } };
   function shared(initial) {
     let value = initial;
@@ -30,7 +30,7 @@ function panelHarness({ reduced = false, platform = 'android' } = {}) {
     } };
     values.push(object); return object;
   }
-  const animated = { __esModule: true, default: { View: 'MotionView', ScrollView: 'MotionScrollView' },
+  const animated = { __esModule: true, default: { View: 'MotionView', ScrollView: 'MotionScrollView', FlatList: 'MotionFlatList' },
     useSharedValue: initial => { const ref = React.useRef(); if (!ref.current) ref.current = shared(initial); return ref.current; },
     useAnimatedStyle: evaluate => ({ evaluate }), useAnimatedScrollHandler: handler => handler,
     useAnimatedRef: () => { const ref = React.useRef(); if (!ref.current) {
@@ -53,10 +53,13 @@ function panelHarness({ reduced = false, platform = 'android' } = {}) {
     return result;
   }
   const native = {
-    View: 'View', Pressable: 'Pressable', ScrollView: 'ScrollView', KeyboardAvoidingView: 'KeyboardAvoidingView',
+    findNodeHandle: view => view,
+    NativeModules: { AtlasNumberPicker: { measureOnScreen: (view, callback) => view.measureInWindow((x, y, width, height) => callback(x, y + state.screenOrigin, width, height)) } },
+    View: 'View', Pressable: 'Pressable', ScrollView: 'ScrollView', FlatList: 'FlatList', KeyboardAvoidingView: 'KeyboardAvoidingView',
     BackHandler: { addEventListener(_event, listener) { state.back = listener; return { remove() { if (state.back === listener) state.back = null; } }; } },
     Keyboard: {
       dismiss: () => { state.keyboardDismisses++; },
+      metrics: () => state.existingKeyboard,
       addListener(event, listener) { keyboardListeners.set(event, listener); return { remove() { if (keyboardListeners.get(event) === listener) keyboardListeners.delete(event); } }; },
     },
     Platform: { OS: platform }, StyleSheet: { create: styles => styles, absoluteFill: {}, absoluteFillObject: {} },
@@ -78,6 +81,7 @@ function panelHarness({ reduced = false, platform = 'android' } = {}) {
       if (id === './design/motion') return { useMotionPreference: () => reduced };
       if (id === './design/theme') return { useTheme: () => ({ isDark: false, palette: { surface: '#fff', background: '#fff' } }) };
       if (id === './useSheetDragToClose') return load('useSheetDragToClose.ts');
+      if (id === './measureInScreen') return load('measureInScreen.ts');
       throw new Error('Unexpected import: ' + id);
     } });
     return exports;
@@ -89,7 +93,7 @@ function panelHarness({ reduced = false, platform = 'android' } = {}) {
     async mount(t, extra = {}, content = React.createElement('Child'), ready = true) {
       props = { onClose: () => { state.closes++; }, label: 'Закрыть', ...extra }; children = content;
       await act(async () => { renderer = create(React.createElement(BottomPanel, props, children), {
-        createNodeMock: () => ({ measureInWindow: callback => callback(0, state.frame.y, 412, state.frame.height) }),
+        createNodeMock: () => ({ measureInWindow: callback => callback(0, state.frame.y, 412, state.frame.height), getNativeScrollRef: () => ({}) }),
       }); });
       if (t) t.after(async () => { await h.unmount(); assert.equal(keyboardListeners.size, 0); assert.equal(state.back, null); });
       if (ready) { await h.layout(300); await h.step(1); }
@@ -127,6 +131,19 @@ function panelHarness({ reduced = false, platform = 'android' } = {}) {
   return h;
 }
 
+test('virtualized catalog remains a FlatList and forwards scrolling to the panel gesture', async t => {
+  const events = [], rows = Array.from({ length: 500 }, (_, index) => ({ key: String(index) }));
+  const h = await panelHarness().mount(t, { expanded: true }, React.createElement('FlatList', { data: rows, initialNumToRender: 18, renderItem: () => React.createElement('Row'), onScroll: event => events.push(event) }));
+  const list = h.renderer.root.findByType('MotionFlatList');
+  assert.equal(list.props.data, rows); assert.equal(list.props.initialNumToRender, 18);
+  assert.equal(h.renderer.root.findAllByType('MotionScrollView').length, 0);
+  await act(async () => list.props.onScroll({ contentOffset: { y: 220 } }));
+  assert.equal(events.at(-1).nativeEvent.contentOffset.y, 220);
+  const manager = { failed: 0, fail() { this.failed++; } };
+  h.contentGesture().handlers.onTouchesDown({ allTouches: [{ y: 100, absoluteX: 20, absoluteY: 300 }] }, manager);
+  assert.equal(manager.failed, 1);
+});
+
 test('Android keyboard overlap resets after hide and is not applied twice after native resize', async t => {
   const h = await panelHarness().mount(t);
   assert.equal(h.renderer.root.findByType('KeyboardAvoidingView').props.enabled, false);
@@ -140,6 +157,25 @@ test('Android keyboard overlap resets after hide and is not applied twice after 
   assert.equal(h.dock().props.style[1].paddingBottom, 0);
   await h.pressClose();
   assert.equal(h.state.keyboardDismisses, 1);
+});
+
+test('Android cutout offset is included when lifting a panel, without duplicating native resize', async t => {
+  const h = await panelHarness().mount(t);
+  h.state.screenOrigin = 80;
+  await act(async () => h.keyboardListeners.get('keyboardDidShow')({ endCoordinates: { screenY: 590 } }));
+  assert.equal(h.dock().props.style[1].paddingBottom, 412);
+  h.state.frame.height = 510;
+  await act(async () => h.renderer.root.findAllByType('View').find(node => node.props.onLayout).props.onLayout());
+  assert.equal(h.dock().props.style[1].paddingBottom, 8);
+  await act(async () => h.keyboardListeners.get('keyboardDidHide')());
+  assert.equal(h.dock().props.style[1].paddingBottom, 0);
+});
+
+test('panel opened while the keyboard is already visible uses its current frame', async t => {
+  const h = panelHarness();
+  h.state.screenOrigin = 80; h.state.existingKeyboard = { screenY: 590 };
+  await h.mount(t);
+  assert.equal(h.dock().props.style[1].paddingBottom, 412);
 });
 
 test('content-sized panel has its handle in a transparent strip outside the card', async t => {
@@ -307,9 +343,11 @@ test('every BottomPanel caller hides its underlying accessibility tree', () => {
     .sort();
   assert.deepEqual(callers, [
     'AddressPicker.tsx',
+    'BalanceTopupSheet.tsx',
     'BookingPanel.tsx',
     'ClientTripPanel.tsx',
     'DeliveryPanel.tsx',
+    'DriverAccountScreens.tsx',
     'DriverPanel.tsx',
     'Overlays.tsx',
     'food/CatalogScreens.tsx',
@@ -319,12 +357,20 @@ test('every BottomPanel caller hides its underlying accessibility tree', () => {
     'food/FoodFiltersSheet.tsx',
     'food/HomeScreen.tsx',
     'food/RestaurantReviewsSheet.tsx',
+    'registration/UploadSourceSheet.tsx',
+    'registration/VehicleSelectionSheet.tsx',
+    'registration/components.tsx',
   ]);
 
+  // The topup panel is inside a native Modal, which isolates the underlying window.
+  const topup = fs.readFileSync(path.join(sourceRoot, 'BalanceTopupSheet.tsx'), 'utf8');
+  assert.match(topup, /<Modal[\s\S]*<BottomPanel[\s\S]*<\/Modal>/);
+
   const expectations = [
-    ['BookingPanel.tsx', 'accessibilityElementsHidden={surface !== \'summary\'}', "importantForAccessibility={surface === 'summary' ? 'auto' : 'no-hide-descendants'}"],
+    ['DriverAccountScreens.tsx', 'accessibilityElementsHidden={languageOpen}', "importantForAccessibility={languageOpen ? 'no-hide-descendants' : 'auto'}"],
+    // BookingPanel's underlay is checked by rendered behavior in booking-panels.test.cjs.
     ['ClientTripPanel.tsx', 'accessibilityElementsHidden={surface !== \'summary\'}', "importantForAccessibility={surface === 'summary' ? 'auto' : 'no-hide-descendants'}"],
-    ['DeliveryPanel.tsx', 'accessibilityElementsHidden={surface !== null}', "importantForAccessibility={surface !== null ? 'no-hide-descendants' : 'auto'}"],
+    ['DeliveryPanel.tsx', 'accessibilityElementsHidden={!rootVisible}', "importantForAccessibility={!rootVisible ? 'no-hide-descendants' : 'auto'}"],
     ['DriverPanel.tsx', 'accessibilityElementsHidden={!!(confirmation || showComment)}', "importantForAccessibility={confirmation || showComment ? 'no-hide-descendants' : 'auto'}"],
     ['Overlays.tsx', 'accessibilityElementsHidden={attachmentOpen}', "importantForAccessibility={attachmentOpen ? 'no-hide-descendants' : 'auto'}"],
     ['food/CatalogScreens.tsx', 'accessibilityElementsHidden={showInfo || showReviews}', "importantForAccessibility={showInfo || showReviews ? 'no-hide-descendants' : 'auto'}"],

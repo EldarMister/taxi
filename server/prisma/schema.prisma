@@ -71,8 +71,10 @@ enum RegistrationUploadKind {
 }
 model User {
   id String @id @default(uuid()) @db.Uuid
-  phone String @unique
+  phone String
   name String @default("")
+  firstName String @default("")
+  lastName String @default("")
   avatarData Bytes?
   avatarMime String?
   avatarUpdatedAt DateTime?
@@ -91,6 +93,7 @@ model User {
   foodOrders FoodOrder[]
   adminCredential AdminCredential?
   performerApplication PerformerApplication?
+  @@unique([phone,role])
 }
 model DriverProfile {
   userId String @id @db.Uuid
@@ -407,7 +410,10 @@ model MediaAsset {
 }
 model SmsChallenge {
   phone String @id
+  role Role @default(CLIENT)
   codeHash String
+  provider String @default("local")
+  providerTokenCiphertext String?
   attempts Int @default(0)
   expiresAt DateTime
   consumedAt DateTime?
@@ -439,6 +445,7 @@ model PushToken {
   user User @relation(fields:[userId],references:[id])
   token String @unique
   platform String
+  driverOfferActions Boolean @default(false)
   updatedAt DateTime @updatedAt
 }
 model PushJob {

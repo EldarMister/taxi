@@ -33,7 +33,7 @@ function chatHarness(platform = 'android', isDark = true) {
   };
   const exports = {};
   vm.runInNewContext(code, { exports, FormData: Form, setInterval: () => 1, clearInterval: () => {},
-    require: id => {
+    require: function mockRequire(id) {
       if (id === 'react' || id === 'react/jsx-runtime') return require(id);
       if (id === 'react-native') return {
         ActivityIndicator: 'ActivityIndicator', Image: 'Image', Keyboard: {
@@ -55,6 +55,11 @@ function chatHarness(platform = 'android', isDark = true) {
       if (id === 'react-native-safe-area-context') return { SafeAreaView: 'SafeAreaView', useSafeAreaInsets: () => ({ bottom: 20 }) };
       if (id === 'react-native-gesture-handler') return { GestureHandlerRootView: 'GestureHandlerRootView' };
       if (id === './BottomPanel') return { BottomPanel: 'BottomPanel' };
+      if (id === './measureInScreen') {
+        const helper = {};
+        vm.runInNewContext(ts.transpileModule(fs.readFileSync(path.join(__dirname, '../src/measureInScreen.ts'), 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS } }).outputText, { exports: helper, require: mockRequire });
+        return helper;
+      }
       if (id === './api') return { api, messageOf: error => String(error), requestId: () => 'client-message-id' };
       if (id === './design/theme') return { useTheme: () => ({ isDark, palette: isDark ? {
         background: '#050505', surface: '#111111', line: '#333333', ink: '#ffffff', muted: '#aaaaaa', accent: '#ffffff', accentText: '#000000',

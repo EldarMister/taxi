@@ -8,6 +8,7 @@ import { SpringPressable } from '../design/motion';
 import { palette } from '../design/tokens';
 import { fonts } from '../design/typography';
 import { useTheme } from '../design/theme';
+import { ratingStarColor } from '../ui';
 import { FoodButton, FoodIconButton, foodColors as c, money } from './components';
 import { useFoodColors, useFoodStyles } from './foodTheme';
 import { RestaurantAdvertisements } from './RestaurantAdvertisements';
@@ -20,7 +21,7 @@ import { FoodFiltersSheet } from './FoodFiltersSheet';
 import { RestaurantReviewsSheet } from './RestaurantReviewsSheet';
 import { FoodDeliveryStatus } from './FoodDeliveryStatus';
 import type { CartLine, FoodDish, FoodRestaurant, HomeBanner } from './types';
-import { emptyRestaurantFilters, filterRestaurants, restaurantCategories, type RestaurantFilters } from './restaurantDiscovery';
+import { emptyRestaurantFilters, filterRestaurants, restaurantCategories, restaurantCuisines, type RestaurantFilters } from './restaurantDiscovery';
 import { useFoodT } from './i18n';
 
 export { DishScreen } from './DishScreen';
@@ -37,11 +38,11 @@ const MenuDishes = memo(function MenuDishes({ dishes, width, quantities, orderin
     onOpen={() => onDish(dish)} onIncrease={() => onAdd(dish)} onDecrease={() => onDecrease(dish)}/>)}</View>;
 });
 
-function EmptyState({ title, subtitle, dishes = false }: { title: string; subtitle?: string; dishes?: boolean }) {
+function EmptyState({ title, subtitle, dishes = false, search = false }: { title: string; subtitle?: string; dishes?: boolean; search?: boolean }) {
   const s = useFoodStyles(baseStyles);
   const c = useFoodColors();
   return <View style={s.empty}>
-    {dishes ? <Image source={require('../../assets/food/empty-dishes-3d.png')} resizeMode="contain" style={s.emptyDishesImage}/> : <Ionicons name="restaurant-outline" size={36} color={c.muted}/>}
+    {dishes || search ? <Image accessible={false} source={require('../../assets/food/empty-search-atlas-3d.webp')} resizeMode="contain" style={s.emptyDishesImage}/> : <Ionicons name="restaurant-outline" size={36} color={c.muted}/>}
     <Text style={s.emptyTitle}>{title}</Text>{!!subtitle && <Text style={s.emptySubtitle}>{subtitle}</Text>}
   </View>;
 }
@@ -67,30 +68,19 @@ function RestaurantCard({ restaurant, width, favorite, onFavorite, onPress }: { 
   const t = useFoodT();
   const s = useFoodStyles(baseStyles);
   const c = useFoodColors();
-  const [page, setPage] = useState(0);
-  const slides = useMemo(() => {
-    const seen = new Set([restaurant.imageUrl || restaurant.imageKey]);
-    const dishes = restaurant.dishes.filter(dish => { const key = dish.imageUrl || dish.imageKey; if (!dish.available || !key || seen.has(key)) return false; seen.add(key); return true; }).slice(0, 2);
-    return [{ key: restaurant.id, imageKey: restaurant.imageKey, imageUrl: restaurant.imageUrl, dish: undefined as FoodDish | undefined }, ...dishes.map(dish => ({ key: dish.id, imageKey: dish.imageKey, imageUrl: dish.imageUrl, dish }))];
-  }, [restaurant]);
-  const selectedPage = Math.min(page, slides.length - 1);
-  const photoHeight = selectedPage === 0 ? width / 2.04 : width * .95;
+  const photoHeight = width / 2.04;
   return <View testID={`restaurant-card-${restaurant.id}`} style={s.discoveryRestaurantCard}>
     <View style={[s.discoveryRestaurantPhoto, { height: photoHeight }]}>
-      <ScrollView horizontal pagingEnabled showsHorizontalScrollIndicator={false} onMomentumScrollEnd={event => setPage(Math.round(event.nativeEvent.contentOffset.x / width))}>
-        {slides.map(slide => <Pressable key={slide.key} accessibilityRole="button" accessibilityLabel={`${t('Открыть')} ${restaurant.name}${slide.dish ? `, ${slide.dish.name}` : ''}`} onPress={onPress} style={{ width, height: photoHeight }}>
-          <FoodPhoto imageKey={slide.imageKey} imageUrl={slide.imageUrl} resizeMode="cover" style={s.restaurantImage}/>
-          {!!slide.dish && <View style={s.discoveryDishCaption}><Text style={s.discoveryDishPrice}>{money(slide.dish.price)}</Text><Text style={s.discoveryDishName}>{slide.dish.name}</Text></View>}
-        </Pressable>)}
-      </ScrollView>
-      {selectedPage === 0 && !!restaurant.discountPercent && restaurant.discountPercent > 0 && <View style={s.discoveryDiscount}><Text style={s.discoveryDiscountText}>−{restaurant.discountPercent}%</Text></View>}
+      <Pressable accessibilityRole="button" accessibilityLabel={`${t('Открыть')} ${restaurant.name}`} onPress={onPress} style={{ width, height: photoHeight }}>
+        <FoodPhoto imageKey={restaurant.imageKey} imageUrl={restaurant.imageUrl} resizeMode="cover" style={s.restaurantImage}/>
+      </Pressable>
+      {!!restaurant.discountPercent && restaurant.discountPercent > 0 && <View style={s.discoveryDiscount}><Text style={s.discoveryDiscountText}>−{restaurant.discountPercent}%</Text></View>}
       {onFavorite && <Pressable accessibilityRole="button" accessibilityLabel={`${t(favorite ? 'Убрать из избранного' : 'Добавить в избранное')}: ${restaurant.name}`} accessibilityState={{ selected: favorite }} onPress={onFavorite} style={s.discoveryFavorite}>
         {favorite && <Ionicons name="heart" size={29} color="#FFFFFF" style={s.discoveryHeartOutline}/>}<Ionicons name={favorite ? 'heart' : 'heart-outline'} size={25} color={favorite ? '#FF4D40' : '#FFFFFF'} style={s.discoveryHeartShadow}/>
       </Pressable>}
-      {slides.length > 1 && <View pointerEvents="none" style={s.discoveryPagination}>{slides.map((slide, index) => <View key={slide.key} style={[s.discoveryDot, index === selectedPage && s.discoveryDotSelected]}/>)}</View>}
     </View>
     <Pressable accessibilityRole="button" accessibilityLabel={`${t('Открыть')} ${restaurant.name}`} onPress={onPress} style={s.discoveryRestaurantCopy}>
-      <View style={s.discoveryRestaurantHeading}><Text numberOfLines={2} style={s.discoveryRestaurantName}>{restaurant.name}</Text>{restaurant.rating > 0 && <View style={s.discoveryRating}><Ionicons name="star" size={16} color={c.ink}/><Text style={s.discoveryRatingText}>{restaurant.rating.toFixed(1)}</Text></View>}</View>
+      <View style={s.discoveryRestaurantHeading}><Text numberOfLines={2} style={s.discoveryRestaurantName}>{restaurant.name}</Text>{restaurant.rating > 0 && <View style={s.discoveryRating}><Ionicons name="star" size={16} color={ratingStarColor}/><Text style={s.discoveryRatingText}>{restaurant.rating.toFixed(1)}</Text></View>}</View>
       <View style={s.discoveryRestaurantMeta}><View style={s.discoveryEta}><Ionicons name="walk" size={17} color={c.ink}/><Text style={s.discoveryMetaText}>{restaurant.etaMin}–{restaurant.etaMax} {t('мин')}</Text></View><Text numberOfLines={2} style={s.discoveryCuisine}>{t(restaurant.categories.join(', ') || restaurant.cuisine)}</Text></View>
       {restaurant.deliveryFee === 0 && <View style={s.discoveryFreeDelivery}><Text style={s.discoveryFreeDeliveryText}>{t('Бесплатная доставка')}</Text></View>}
     </Pressable>
@@ -104,14 +94,14 @@ export function RestaurantsScreen({ restaurants, onBack, onRestaurant, onFavorit
 }) {
   const t = useFoodT(); const s = useFoodStyles(baseStyles); const c = useFoodColors(); const theme = useTheme();
   const insets = useSafeAreaInsets(); const { width } = useWindowDimensions();
-  const [category, setCategory] = useState('Все');
   const [filters, setFilters] = useState<RestaurantFilters>(emptyRestaurantFilters);
   const [filtersOpen, setFiltersOpen] = useState(false);
   const categories = useMemo(() => restaurantCategories(restaurants), [restaurants]);
-  useEffect(() => { if (category !== 'Все' && !categories.some(item => item.name === category)) setCategory('Все'); }, [categories, category]);
-  const filtered = filterRestaurants(restaurants, '', category, filters);
+  const cuisines = useMemo(() => restaurantCuisines(restaurants), [restaurants]);
+  const toggleFilter = (field: 'dishes' | 'cuisines', name: string) => setFilters(current => ({ ...current, [field]: current[field].includes(name) ? current[field].filter(item => item !== name) : [...current[field], name] }));
+  const filtered = filterRestaurants(restaurants, '', 'Все', filters);
   const contentWidth = Math.max(1, width - insets.left - insets.right - 32);
-  const activeCount = (category === 'Все' ? 0 : 1) + filters.dishes.length + filters.cuisines.length + Number(filters.sort !== 'default');
+  const activeCount = filters.dishes.length + filters.cuisines.length + Number(filters.sort !== 'default');
   return <SafeAreaView style={[s.screen, { backgroundColor: theme.isDark ? theme.palette.background : '#FFFFFF' }]} edges={['top', 'left', 'right']}>
     <View style={s.flex} accessibilityElementsHidden={filtersOpen} importantForAccessibility={filtersOpen ? 'no-hide-descendants' : 'auto'}>
       <ScrollView testID="restaurants-list" style={s.flex} showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: cartLines.length ? 88 + Math.max(insets.bottom, 14) : Math.max(insets.bottom, 24) }}>
@@ -122,24 +112,29 @@ export function RestaurantsScreen({ restaurants, onBack, onRestaurant, onFavorit
         <Text accessibilityRole="header" style={s.discoveryTitle}>{t('Рестораны')}</Text>
         <RestaurantAdvertisements restaurants={restaurants} banners={banners} width={contentWidth} onBanner={onBanner} onRestaurant={onRestaurant}/>
         {!!categories.length && <ScrollView testID="restaurant-categories" horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.discoveryCategories}>
-          {categories.map(item => <Pressable key={item.name} accessibilityRole="button" accessibilityLabel={t(item.name)} accessibilityState={{ selected: item.name === category }} onPress={() => setCategory(value => value === item.name ? 'Все' : item.name)} style={s.discoveryCategory}>
-            <CategoryArtwork name={item.name} imageKey={item.imageKey} imageUrl={item.imageUrl} size={70}/><Text numberOfLines={1} style={[s.discoveryCategoryName, item.name === category && s.discoveryCategorySelected]}>{t(item.name)}</Text>
+          {categories.map(item => <Pressable key={item.name} accessibilityRole="checkbox" accessibilityLabel={t(item.name)} accessibilityState={{ checked: filters.dishes.includes(item.name) }} onPress={() => toggleFilter('dishes', item.name)} style={s.discoveryCategory}>
+            <CategoryArtwork name={item.name} imageKey={item.imageKey} imageUrl={item.imageUrl} size={70}/><Text numberOfLines={1} style={[s.discoveryCategoryName, filters.dishes.includes(item.name) && s.discoveryCategorySelected]}>{t(item.name)}</Text>
           </Pressable>)}
         </ScrollView>}
-        <View style={s.discoveryFilterRow}>
+        <View style={s.discoveryCuisineRow}>
+        <ScrollView testID="restaurant-cuisines" horizontal style={s.flex} showsHorizontalScrollIndicator={false} contentContainerStyle={s.discoveryCuisines}>
+          {[...cuisines, ...filters.cuisines.filter(name => !cuisines.includes(name))].map(name => <Pressable key={name} accessibilityRole="checkbox" accessibilityLabel={t(name)} accessibilityState={{ checked: filters.cuisines.includes(name) }} onPress={() => toggleFilter('cuisines', name)} style={[s.discoveryCuisineChip, { backgroundColor: filters.cuisines.includes(name) ? palette.blue : theme.isDark ? theme.palette.elevated : palette.surface }]}>
+            <Text style={[s.discoverySelectedFilterText, { color: filters.cuisines.includes(name) ? '#FFFFFF' : c.ink }]}>{t(name)}</Text>{filters.cuisines.includes(name) && <Ionicons name="checkmark" size={16} color="#FFFFFF"/>}
+          </Pressable>)}
+        </ScrollView>
           <View><FoodIconButton name="options" label={activeCount ? `${t('Фильтры')}: ${activeCount}` : t('Фильтры')} onPress={() => setFiltersOpen(true)} size={23} style={s.discoveryFilterButton}/>{activeCount > 0 && <View pointerEvents="none" style={s.filterCount}><Text style={s.filterCountText}>{activeCount}</Text></View>}</View>
-          {activeCount > 0 && <Pressable accessibilityRole="button" onPress={() => { setFilters(emptyRestaurantFilters()); setCategory('Все'); }} style={s.discoverySelectedFilter}><Text style={s.discoverySelectedFilterText}>{t('Сбросить')}</Text><Ionicons name="close" size={16} color={c.ink}/></Pressable>}
         </View>
+        {activeCount > 0 && <View style={s.discoveryFilterRow}><Pressable accessibilityRole="button" onPress={() => setFilters(emptyRestaurantFilters())} style={s.discoverySelectedFilter}><Text style={s.discoverySelectedFilterText}>{t('Сбросить')}</Text><Ionicons name="close" size={16} color={c.ink}/></Pressable></View>}
         {loading && !restaurants.length ? <View style={s.empty}><ActivityIndicator color={c.ink} size="large"/><Text style={s.emptySubtitle}>{t('Ищем рестораны…')}</Text></View>
           : error && !restaurants.length ? <View style={s.empty}><Text style={s.emptyTitle}>{t('Не удалось загрузить рестораны')}</Text><Text style={s.emptySubtitle}>{error}</Text>{onRetry && <FoodButton label={t('Повторить')} onPress={onRetry}/>}</View>
           : <View style={s.discoveryRestaurantList}>
             {filtered.map(restaurant => <RestaurantCard key={restaurant.id} restaurant={restaurant} width={contentWidth} favorite={favoriteIds.includes(restaurant.id)} onFavorite={onToggleFavorite ? () => onToggleFavorite(restaurant) : undefined} onPress={() => onRestaurant(restaurant)}/>)}
-            {!filtered.length && <EmptyState title={t(!restaurants.length ? 'Рестораны скоро появятся' : 'Ничего не найдено')} subtitle={t(!restaurants.length ? 'Мы готовим каталог. Загляните немного позже.' : 'Попробуйте другую кухню или измените фильтры.')}/>}
+            {!filtered.length && <EmptyState search={!!restaurants.length} title={t(!restaurants.length ? 'Рестораны скоро появятся' : 'Ничего не найдено')} subtitle={t(!restaurants.length ? 'Мы готовим каталог. Загляните немного позже.' : 'Попробуйте другую кухню или измените фильтры.')}/>}
           </View>}
       </ScrollView>
       <CartDock catalog lines={cartLines} restaurant={cartRestaurant} cartRestaurantCount={cartRestaurantCount} onPress={onCart} onDeliveryInfo={onDeliveryInfo} bottom={Math.max(insets.bottom, 12)}/>
     </View>
-    {filtersOpen && <FoodFiltersSheet value={{ ...filters, dishes: category === 'Все' ? filters.dishes : [...new Set([...filters.dishes, category])] }} onApply={next => { setCategory('Все'); setFilters(next); }} onClose={() => setFiltersOpen(false)}/>}
+    {filtersOpen && <FoodFiltersSheet value={filters} onApply={setFilters} onClose={() => setFiltersOpen(false)}/>}
   </SafeAreaView>;
 }
 
@@ -232,7 +227,7 @@ export function RestaurantScreen({ restaurant, onBack, onDish, onAdd, onDecrease
           <Text accessibilityRole="header" style={s.restaurantTitle}>{restaurant.name}</Text>
           <View style={s.detailMetaRow}>
             {restaurant.rating > 0 && <><Pressable accessibilityRole="button" accessibilityLabel={t('Отзывы о ресторане')} onPress={() => setShowReviews(true)} style={s.detailRating}>
-              <Ionicons name="star" size={28} color={c.ink}/><View><Text style={s.detailRatingText}>{restaurant.rating.toFixed(1)}{restaurant.reviewCount > 0 ? ` (${restaurant.reviewCount})` : ''}</Text><View style={s.detailMetaLink}><Text style={s.detailMetaCaption}>{t('Смотреть')}</Text><Ionicons name="chevron-forward" size={14} color={c.muted}/></View></View>
+              <Ionicons name="star" size={28} color={ratingStarColor}/><View><Text style={s.detailRatingText}>{restaurant.rating.toFixed(1)}{restaurant.reviewCount > 0 ? ` (${restaurant.reviewCount})` : ''}</Text><View style={s.detailMetaLink}><Text style={s.detailMetaCaption}>{t('Смотреть')}</Text><Ionicons name="chevron-forward" size={14} color={c.muted}/></View></View>
             </Pressable><View style={s.metaDivider}/></>}
             <Pressable accessibilityRole="button" accessibilityLabel={t('Условия доставки')} onPress={onDeliveryInfo} style={s.detailRating}><Ionicons name="walk" size={28} color={c.ink}/><View><Text style={s.detailRatingText}>{restaurant.etaMin}–{restaurant.etaMax} {t('минут')}</Text><Text style={s.detailMetaCaption}>{t('Доставка')}</Text></View></Pressable>
             <View style={s.metaDivider}/><FoodIconButton name="ellipsis-vertical" label={t('Информация о ресторане')} onPress={() => setShowInfo(true)} size={23} style={s.detailInfoButton}/>
@@ -291,6 +286,9 @@ const baseStyles = StyleSheet.create({
   discoveryBanners: { paddingHorizontal: 16, gap: 8, paddingBottom: 20 }, discoveryBanner: { overflow: 'hidden', borderRadius: 17, backgroundColor: '#E9F7F0' },
   discoveryBannerCopy: { flex: 1, justifyContent: 'center', padding: 14, gap: 4 }, discoveryBannerTitle: { color: c.ink, fontFamily: fonts.extraBold, fontSize: 20, lineHeight: 24 }, discoveryBannerSubtitle: { color: c.muted, fontFamily: fonts.medium, fontSize: 13, lineHeight: 18 },
   discoveryCategories: { paddingHorizontal: 12, paddingTop: 5, paddingBottom: 13, gap: 3 }, discoveryCategory: { width: 74, alignItems: 'center', gap: 6 },
+  discoveryCuisineRow: { marginHorizontal: 16, marginBottom: 28, flexDirection: 'row', alignItems: 'center', gap: 8 },
+  discoveryCuisines: { paddingRight: 2, gap: 8 },
+  discoveryCuisineChip: { minHeight: 40, paddingHorizontal: 14, borderRadius: 20, flexDirection: 'row', alignItems: 'center', gap: 6 },
   discoveryCategoryName: { color: c.ink, fontFamily: fonts.medium, fontSize: 12, lineHeight: 19, textAlign: 'center', paddingHorizontal: 4, borderRadius: 6, overflow: 'hidden' }, discoveryCategorySelected: { color: '#FFFFFF', backgroundColor: palette.blue },
   discoveryFilterRow: { marginHorizontal: 14, marginTop: 1, marginBottom: 28, minHeight: 40, flexDirection: 'row', alignItems: 'center', gap: 9 }, discoveryFilterButton: { width: 40, height: 40, borderRadius: 20, backgroundColor: palette.surface },
   filterCount: { position: 'absolute', top: -2, right: -2, minWidth: 17, height: 17, paddingHorizontal: 3, borderRadius: 9, alignItems: 'center', justifyContent: 'center', backgroundColor: palette.blue }, filterCountText: { color: '#FFFFFF', fontFamily: fonts.bold, fontSize: 10 },
@@ -302,8 +300,6 @@ const baseStyles = StyleSheet.create({
   discoveryDiscount: { position: 'absolute', left: 12, top: 12, paddingHorizontal: 6, paddingVertical: 4, borderRadius: 6, backgroundColor: '#009B61' }, discoveryDiscountText: { color: '#FFFFFF', fontFamily: fonts.semibold, fontSize: 13, lineHeight: 17 },
   discoveryFreeDelivery: { alignSelf: 'flex-start', marginTop: 4, paddingHorizontal: 6, paddingVertical: 4, borderRadius: 6, backgroundColor: '#009B61' }, discoveryFreeDeliveryText: { color: '#FFFFFF', fontFamily: fonts.medium, fontSize: 12, lineHeight: 16 },
   discoveryFavorite: { position: 'absolute', top: 5, right: 5, width: 40, height: 40, alignItems: 'center', justifyContent: 'center' }, discoveryHeartOutline: { position: 'absolute' }, discoveryHeartShadow: { textShadowColor: 'rgba(0,0,0,.18)', textShadowRadius: 3, textShadowOffset: { width: 0, height: 1 } },
-  discoveryPagination: { position: 'absolute', bottom: 9, right: 12, flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 7, height: 21, borderRadius: 12, backgroundColor: 'rgba(0,0,0,.30)' }, discoveryDot: { width: 5, height: 5, borderRadius: 3, backgroundColor: '#FFFFFF', opacity: .9 }, discoveryDotSelected: { width: 8, height: 8, borderRadius: 4, opacity: 1 },
-  discoveryDishCaption: { position: 'absolute', left: 13, right: 55, bottom: 14, gap: 3 }, discoveryDishPrice: { color: '#FFFFFF', fontFamily: fonts.bold, fontSize: 21, lineHeight: 28, textShadowColor: 'rgba(0,0,0,.3)', textShadowRadius: 6 }, discoveryDishName: { color: '#FFFFFF', fontFamily: fonts.regular, fontSize: 16, lineHeight: 22, textShadowColor: 'rgba(0,0,0,.3)', textShadowRadius: 6 },
   search: { minHeight: 48, flexDirection: 'row', alignItems: 'center', gap: 9, paddingHorizontal: 12, borderRadius: 16, backgroundColor: palette.surface }, searchInput: { flex: 1, paddingVertical: 11, color: c.ink, fontFamily: fonts.regular, fontSize: 16, lineHeight: 22 },
   empty: { flex: 1, padding: 28, alignItems: 'center', justifyContent: 'center', gap: 12 }, emptyDishesImage: { width: 190, height: 190 }, emptyTitle: { color: c.ink, fontFamily: fonts.semibold, fontSize: 19, textAlign: 'center' }, emptySubtitle: { color: c.muted, fontFamily: fonts.regular, fontSize: 15, lineHeight: 22, textAlign: 'center' },
   restaurantIntro: { backgroundColor: '#FFFFFF', borderBottomLeftRadius: 26, borderBottomRightRadius: 26, paddingBottom: 22 }, restaurantTitle: { marginHorizontal: 16, marginTop: 6, marginBottom: 14, color: c.ink, fontFamily: 'FoodDisplayBold', fontSize: 34, lineHeight: 42, letterSpacing: -.6 },

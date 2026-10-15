@@ -3,15 +3,16 @@ import 'dotenv/config';
 import { NestFactory } from '@nestjs/core';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import helmet from 'helmet';
-import { json, Request, urlencoded } from 'express';
+import { Request, urlencoded } from 'express';
 import { AppModule } from './app.module';
 import { AppConfig } from './config';
 import { ApiExceptionFilter, apiValidation, stripLegacyCacheQuery } from './http';
 import { mountSiteRedirects } from './site';
+import { whatsappWebhookBodyParser } from './whatsapp-cloud';
 
 async function bootstrap() {
   const app=await NestFactory.create(AppModule,{bodyParser:false});
-  app.use(json({limit:'2mb'}));
+  app.use(whatsappWebhookBodyParser());
   app.use(urlencoded({extended:false,limit:'64kb'}));
   // Older Android networking stacks retry cached GETs with `?_=...` or
   // `?_fresh=...`. Remove only those legacy cache keys before Nest parses query

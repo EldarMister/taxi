@@ -15,6 +15,8 @@
   <uses-permission android:name="android.permission.VIBRATE"/>
   <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" tools:node="remove"/>
   <queries>
+    <package android:name="com.whatsapp" />
+    <package android:name="com.whatsapp.w4b" />
     <intent>
       <action android:name="android.intent.action.VIEW"/>
       <category android:name="android.intent.category.BROWSABLE"/>
@@ -22,9 +24,22 @@
     </intent>
   </queries>
   <application android:name=".MainApplication" android:label="${taxiAppName}" android:icon="${taxiAppIcon}" android:roundIcon="${taxiAppRoundIcon}" android:allowBackup="true" android:theme="@style/AppTheme" android:supportsRtl="true" android:enableOnBackInvokedCallback="false" android:fullBackupContent="@xml/secure_store_backup_rules" android:dataExtractionRules="@xml/secure_store_data_extraction_rules" android:usesCleartextTraffic="${taxiAllowCleartext}">
+    <service android:name="expo.modules.notifications.service.ExpoFirebaseMessagingService" tools:node="remove" />
+    <service android:name=".AtlasOfferMessagingService" android:exported="false">
+      <intent-filter><action android:name="com.google.firebase.MESSAGING_EVENT" /></intent-filter>
+    </service>
     <meta-data android:name="com.google.firebase.messaging.default_notification_channel_id" android:value="orders"/>
+    <receiver android:name=".WhatsAppOtpReceiver" android:enabled="true" android:exported="true">
+      <intent-filter><action android:name="com.whatsapp.otp.OTP_RETRIEVED" /></intent-filter>
+    </receiver>
+    <activity android:name=".WhatsAppOtpActivity" android:enabled="true" android:exported="true" android:excludeFromRecents="true" android:theme="@android:style/Theme.Translucent.NoTitleBar">
+      <intent-filter><action android:name="com.whatsapp.otp.OTP_RETRIEVED" /></intent-filter>
+    </activity>
     <meta-data android:name="com.google.firebase.messaging.default_notification_color" android:resource="@color/notification_icon_color"/>
     <meta-data android:name="expo.modules.notifications.default_notification_color" android:resource="@color/notification_icon_color"/>
+    <meta-data android:name="com.google.firebase.messaging.default_notification_icon" android:resource="@drawable/atlas_notification_icon"/>
+    <meta-data android:name="expo.modules.notifications.default_notification_icon" android:resource="@drawable/atlas_notification_icon"/>
+    <meta-data android:name="expo.modules.notifications.large_notification_icon" android:resource="@drawable/atlas_notification_logo"/>
     <meta-data android:name="expo.modules.updates.ENABLED" android:value="false"/>
     <meta-data android:name="expo.modules.updates.EXPO_UPDATES_CHECK_ON_LAUNCH" android:value="ALWAYS"/>
     <meta-data android:name="expo.modules.updates.EXPO_UPDATES_LAUNCH_WAIT_MS" android:value="0"/>

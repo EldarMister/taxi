@@ -81,10 +81,26 @@ function loadScreens(file = 'CheckoutScreens.tsx') {
     if (id === './i18n') return { useFoodT: () => value => value };
     if (id === '../address') return { shortAddress: value => value };
     if (id === './checkoutDetails') return loadCheckoutDetails();
+    if (id.endsWith('empty-cart-atlas-3d.webp')) return id;
     throw new Error(`Unexpected import ${id}`);
   } }, { filename: 'CheckoutScreens.tsx' });
   return exports;
 }
+
+test('empty cart shows its own transparent illustration and keeps the menu return action', async () => {
+  const { CartScreen } = loadScreens();
+  let renderer, returned = 0;
+  await act(async () => { renderer = create(React.createElement(CartScreen, { lines: [], onBack: () => returned++, onClear() {}, onQuantity() {}, onRemoveOption() {}, onCheckout() {} })); });
+  const illustration = renderer.root.findByType('Image');
+  assert.match(illustration.props.source, /empty-cart-atlas-3d.webp$/);
+  assert.equal(illustration.props.resizeMode, 'contain');
+  assert.equal(illustration.props.accessible, false);
+  const button = renderer.root.findAllByType('SpringPressable').find(node => node.findAllByType('Text').some(text => text.props.children === 'Выбрать блюда'));
+  await act(async () => button.props.onPress());
+  assert.equal(returned, 1);
+  assert.equal(renderer.root.findAllByType('Text').some(node => node.props.children === 'К оплате'), false);
+  await act(async () => renderer.unmount());
+});
 
 test('reference cart scrolls full screen and keeps live quantity and recommendation actions', async () => {
   const { CartScreen } = loadScreens();

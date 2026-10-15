@@ -131,7 +131,7 @@ const styles = StyleSheet.create({
   commentText: { flex: 1, color: '#999999', fontFamily: fonts.regular, fontSize: 16 },
   filledComment: { color: '#222222' },
   done: { marginTop: 20, minHeight: 56, borderRadius: 16 },
-  back: { position: 'absolute', left: 10, width: 48, height: 48, borderRadius: 24, backgroundColor: '#FFFFFF', alignItems: 'center', justifyContent: 'center', elevation: 3, shadowColor: '#000000', shadowRadius: 8, shadowOpacity: .1, shadowOffset: { width: 0, height: 3 } },
+  back: { position: 'absolute', left: 10, width: 48, height: 48, borderRadius: 0, backgroundColor: 'transparent', alignItems: 'center', justifyContent: 'center', elevation: 0, shadowColor: '#000000', shadowRadius: 8, shadowOpacity: 0, shadowOffset: { width: 0, height: 3 } },
   error: { color: '#B74747', fontSize: 13, paddingVertical: 8 },
   commentSheet: { backgroundColor: '#FFFFFF', paddingHorizontal: 16, paddingTop: 12, gap: 14 },
   commentHeader: { flexDirection: 'row', alignItems: 'center', gap: 10 },

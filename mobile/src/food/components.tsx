@@ -74,8 +74,8 @@ export function FoodIconButton({ name, onPress, label, color, backgroundColor = 
   const unavailable = !!disabled || !!busy;
   const iconBackground = theme.isDark && backgroundColor === 'white' ? theme.palette.surface : backgroundColor;
   return <SpringPressable accessibilityRole="button" accessibilityLabel={t(label)} accessibilityHint={busy ? t('Дождитесь завершения оформления заказа') : undefined} accessibilityState={{ disabled: unavailable, busy: !!busy }} disabled={unavailable} onPress={onPress} hitSlop={6} pressScale={.9} containerStyle={containerStyle}
-    style={[s.iconButton, { backgroundColor: iconBackground }, style]}>
-    <Ionicons name={name} color={color === palette.ink ? foodColors.ink : color || foodColors.ink} size={size} />
+    style={[s.iconButton, { backgroundColor: iconBackground }, style, (name === 'arrow-back' || name === 'chevron-back') && { backgroundColor: 'transparent', borderWidth: 0, borderRadius: 0, shadowOpacity: 0, elevation: 0 }]}>
+    <Ionicons name={name === 'arrow-back' ? 'chevron-back' : name} color={color === palette.ink ? foodColors.ink : color || foodColors.ink} size={name === 'arrow-back' || name === 'chevron-back' ? 26 : size} />
   </SpringPressable>;
 }
 

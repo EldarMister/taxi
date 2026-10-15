@@ -1,7 +1,7 @@
 import { api, ApiError } from '../api';
-import type { Language } from '../types';
+import type { Language, PlaceCategory } from '../types';
 
-export interface MapPoint { latitude: number; longitude: number; address?: string }
+export interface MapPoint { latitude: number; longitude: number; address?: string; category?: PlaceCategory }
 export type MapAddress = MapPoint & { address: string };
 export const BISHKEK: MapPoint = { latitude: 42.8746, longitude: 74.5698 };
 

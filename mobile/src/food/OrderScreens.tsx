@@ -26,7 +26,7 @@ export function foodOrderTitle(order: FoodOrder) {
 }
 const time = (value: string, language: 'ru' | 'ky' | 'en') => new Date(value).toLocaleTimeString(language === 'ky' ? 'ky-KG' : language === 'en' ? 'en-US' : 'ru-RU', { hour: '2-digit', minute: '2-digit' });
 
-export function FoodOrderScreen({ order, onBack, error, onRetry, relatedOrders = [], onSelectOrder }: { order: FoodOrder; onBack: () => void; error: string; onRetry: () => void; relatedOrders?: FoodOrder[]; onSelectOrder?: (order: FoodOrder) => void }) {
+export function FoodOrderScreen({ order, onBack, error, onRetry, relatedOrders = [], onSelectOrder, onCancel, cancelling = false }: { order: FoodOrder; onBack: () => void; error: string; onRetry: () => void; relatedOrders?: FoodOrder[]; onSelectOrder?: (order: FoodOrder) => void; onCancel?: () => void; cancelling?: boolean }) {
   const t = useFoodT();
   const language = useFoodLanguage();
   const s = useFoodStyles(baseStyles);
@@ -37,7 +37,7 @@ export function FoodOrderScreen({ order, onBack, error, onRetry, relatedOrders =
   const cancelled = order.status === 'CANCELLED';
   const activeStep = Math.max(0, step);
   const labels = ['Принят', 'Подтверждён', 'Готовится', 'В пути', 'Доставлен'];
-  const subtitle = order.status === 'PLACED' ? 'Ресторан принимает ваш заказ' : order.status === 'READY' ? 'Передаём заказ курьеру' : order.status === 'DELIVERING' ? 'Курьер скоро будет у вас' : order.status === 'COMPLETED' ? 'Спасибо за заказ!' : cancelled ? 'Ресторан отменил заказ' : 'Ресторан уже готовит блюда';
+  const subtitle = order.status === 'PLACED' ? 'Ресторан принимает ваш заказ' : order.status === 'READY' ? 'Передаём заказ курьеру' : order.status === 'DELIVERING' ? 'Курьер скоро будет у вас' : order.status === 'COMPLETED' ? 'Спасибо за заказ!' : cancelled ? 'Заказ отменён' : 'Ресторан уже готовит блюда';
   return <SafeAreaView style={s.screen} edges={['top', 'left', 'right']}>
     <FoodHeader title={`${t('Заказ')} #${order.id.slice(-4).toUpperCase()}`} onBack={onBack} />
     {relatedOrders.length > 1 && <ScrollView horizontal testID="food-order-restaurant-tabs" showsHorizontalScrollIndicator={false} style={s.orderTabsRail} contentContainerStyle={s.orderTabs}>
@@ -93,6 +93,7 @@ export function FoodOrderScreen({ order, onBack, error, onRetry, relatedOrders =
         void Linking.openURL(`tel:${phone}`).catch(() => Alert.alert(t('Не удалось позвонить'), phone));
       }} />
       {!!error && <Pressable accessibilityRole="button" onPress={onRetry} style={s.notice}><Text style={{ color: theme.isDark ? '#FF8A8A' : '#B74747', fontFamily: fonts.regular, fontSize: 13, textAlign: 'center' }}>{error}{'\n'}{t('Нажмите, чтобы обновить статус')}</Text></Pressable>}
+      {order.status === 'PLACED' && onCancel && <FoodButton label={t('Отменить заказ')} secondary busy={cancelling} disabled={cancelling} onPress={() => Alert.alert(t('Отменить заказ?'), t('Заказ ещё не подтверждён рестораном.'), [{ text: t('Оставить'), style: 'cancel' }, { text: t('Отменить заказ'), style: 'destructive', onPress: onCancel }])}/>}
       {order.isDemo && <Text style={s.demo}>{t('Тестовый заказ · ресторан из макетов')}</Text>}
     </ScrollView>
   </SafeAreaView>;

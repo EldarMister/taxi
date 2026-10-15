@@ -363,7 +363,7 @@ export class RegistrationAdminService {
     const modes=courierTransportModes(data),approved=application.roles.filter(item=>item.status==='APPROVED'),approvedRoles=new Set(approved.map(item=>item.role as PerformerRoleValue));
     const previouslyProjected=application.roles.some(item=>Boolean(item.projectedAt));
     const user=application.user;
-    if(user.role==='ADMIN')throw new ConflictException('Администратора нельзя зарегистрировать исполнителем');
+    if(user.role!=='DRIVER')throw new ConflictException('Войдите в приложение водителя, чтобы перенести анкету исполнителя.');
 
     if(!approved.length) {
       const projectionChanged=application.roles.some(item=>item.projectedAt||item.projectionIssueCode);
@@ -426,8 +426,9 @@ export class RegistrationAdminService {
     const personal=record(data.personal),name=[text(personal?.firstName),text(personal?.lastName)].filter(Boolean).join(' ')||user.name;
     const avatar=application.uploads.find(item=>item.slotKey==='profile_photo'&&approvedDocumentStatuses.has(item.status)&&item.mimeType.startsWith('image/'));
     const avatarChanged=Boolean(avatar&&(user.avatarMime!==avatar!.mimeType||!user.avatarData||!Buffer.from(user.avatarData).equals(Buffer.from(avatar!.data))));
-    const identityChanged=Boolean(name&&name!==user.name)||avatarChanged;
-    if(identityChanged)await tx.user.update({where:{id:user.id},data:{...(name&&name!==user.name?{name}:{}),...(avatarChanged?{avatarData:avatar!.data,avatarMime:avatar!.mimeType,avatarUpdatedAt:new Date()}:{})}});
+    const firstName=text(personal?.firstName),lastName=text(personal?.lastName);
+    const identityChanged=Boolean(name&&name!==user.name)||firstName!==user.firstName||lastName!==user.lastName||avatarChanged;
+    if(identityChanged)await tx.user.update({where:{id:user.id},data:{firstName,lastName,...(name&&name!==user.name?{name}:{}),...(avatarChanged?{avatarData:avatar!.data,avatarMime:avatar!.mimeType,avatarUpdatedAt:new Date()}:{})}});
     if(!operational.size) {
       const profileChanged=profile?.registrationManaged?await this.revokeLegacy(tx,user.id):false;
       return {changed:projectionChanged||profileChanged||identityChanged,operationalRoles:[] as PerformerRoleValue[]};

@@ -1,14 +1,15 @@
 import React, { PropsWithChildren, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { BackHandler, Keyboard, KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, useWindowDimensions, View, type LayoutChangeEvent } from 'react-native';
+import { BackHandler, FlatList, Keyboard, KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, useWindowDimensions, View, type FlatListProps, type LayoutChangeEvent, type StyleProp, type ViewStyle } from 'react-native';
 import Animated, { measure, useAnimatedRef, useAnimatedScrollHandler, useAnimatedStyle, useSharedValue, runOnJS } from 'react-native-reanimated';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useMotionPreference } from './design/motion';
 import { useTheme } from './design/theme';
 import { useSheetDragToClose } from './useSheetDragToClose';
+import { measureInScreen } from './measureInScreen';
 
 /** A panel in the map screen's own view tree; the map and draft stay mounted. */
-export function BottomPanel({ children, onClose, expanded = false, topGap, bottomPadding, edgeToEdge = false, handlePlacement = 'outside', label = 'Закрыть панель', closeRequested = false }: PropsWithChildren<{ onClose: () => void; expanded?: boolean; topGap?: number; bottomPadding?: number; edgeToEdge?: boolean; handlePlacement?: 'outside' | 'inside'; label?: string; closeRequested?: boolean }>) {
+export function BottomPanel({ children, onClose, expanded = false, topGap, bottomPadding, edgeToEdge = false, handlePlacement = 'outside', handleStyle, surfaceStyle, backdropOpacity = .28, label = 'Закрыть панель', closeRequested = false }: PropsWithChildren<{ onClose: () => void; expanded?: boolean; topGap?: number; bottomPadding?: number; edgeToEdge?: boolean; handlePlacement?: 'outside' | 'inside'; handleStyle?: StyleProp<ViewStyle>; surfaceStyle?: StyleProp<ViewStyle>; backdropOpacity?: number; label?: string; closeRequested?: boolean }>) {
   const { isDark, palette } = useTheme();
   const insets = useSafeAreaInsets();
   const reducedMotion = useMotionPreference();
@@ -17,13 +18,16 @@ export function BottomPanel({ children, onClose, expanded = false, topGap, botto
   const [screenTop, setScreenTop] = useState(0);
   const [keyboardLift, setKeyboardLift] = useState(0);
   const keyboardScreenY = useRef<number | null>(null);
+  const keyboardMeasurement = useRef(0);
   const [panelTravel, setPanelTravel] = useState(windowHeight);
   const [layoutReady, setLayoutReady] = useState(false);
   const opened = useRef(false);
   const { close, open, gesture, animatedStyle, position, travel, dragging, startDrag, updateDrag, settle } = useSheetDragToClose(onClose, layoutReady, panelTravel);
   const closePanel = useCallback(() => { Keyboard.dismiss(); close(); }, [close]);
   const measureHost = useCallback(() => {
-    host.current?.measureInWindow((_x, y, _width, height) => {
+    const keyboardY = keyboardScreenY.current, revision = ++keyboardMeasurement.current;
+    measureInScreen(host.current, (_x, y, _width, height) => {
+      if (keyboardMeasurement.current !== revision || keyboardScreenY.current !== keyboardY) return;
       setScreenTop(current => Math.abs(current - y) > 1 ? y : current);
       if (Platform.OS !== 'android' || keyboardScreenY.current === null) return;
       // Only compensate the keyboard overlap left after Android adjustResize.
@@ -39,9 +43,12 @@ export function BottomPanel({ children, onClose, expanded = false, topGap, botto
     });
     const hidden = Keyboard.addListener('keyboardDidHide', () => {
       keyboardScreenY.current = null;
+      keyboardMeasurement.current++;
       setKeyboardLift(0);
     });
-    return () => { shown.remove(); hidden.remove(); };
+    const existing = Keyboard.metrics?.();
+    if (existing) { keyboardScreenY.current = existing.screenY; measureHost(); }
+    return () => { shown.remove(); hidden.remove(); keyboardScreenY.current = null; keyboardMeasurement.current++; };
   }, [measureHost]);
   useEffect(() => {
     if (!layoutReady || reducedMotion === null || opened.current || closeRequested) return;
@@ -99,20 +106,20 @@ export function BottomPanel({ children, onClose, expanded = false, topGap, botto
     .onStart(startDrag).onUpdate(event => updateDrag(event.translationY))
     .onEnd((event, success) => settle(event.velocityY, success)).onFinalize(() => settle(0, false)),
   [layoutReady, nativeScroll, scrollRef, hasScrollChild, scrollY, touchX, touchY, beganAtTop, dragging, startDrag, updateDrag, settle]);
-  const backdropStyle = useAnimatedStyle(() => ({ opacity: .28 * (1 - Math.min(1, Math.max(0, position.get()) / travel.get())) }));
+  const backdropStyle = useAnimatedStyle(() => ({ opacity: backdropOpacity * (1 - Math.min(1, Math.max(0, position.get()) / travel.get())) }));
   // Most panels keep the handle above their content; the photo chooser embeds it.
   const content = wrapScrollChild(children, scrollChild, nativeScroll, scroll, setScrollRef);
   const keyboardOffset = screenTop + (Platform.OS === 'android' ? insets.top : 0);
-  return <View ref={host} onLayout={measureHost} style={p.host}><KeyboardAvoidingView behavior="padding" enabled={Platform.OS === 'ios'} keyboardVerticalOffset={keyboardOffset} style={p.keyboard}>
+  return <View ref={host} collapsable={false} onLayout={measureHost} style={p.host}><KeyboardAvoidingView behavior="padding" enabled={Platform.OS === 'ios'} keyboardVerticalOffset={keyboardOffset} style={p.keyboard}>
     <Animated.View style={[StyleSheet.absoluteFill, p.backdrop, isDark && { backgroundColor: palette.background }, backdropStyle]}>
       <Pressable accessibilityRole="button" accessibilityLabel={label} onPress={closePanel} style={StyleSheet.absoluteFill}/>
     </Animated.View>
     <View testID="bottom-panel-dock" pointerEvents="box-none" style={[p.panelDock, { paddingTop: topGap ?? insets.top + 24, paddingBottom: keyboardLift }]}>
       <Animated.View testID="bottom-panel" onLayout={handlePanelLayout} accessibilityViewIsModal style={[p.panel, handlePlacement === 'inside' && { paddingTop: 0 }, expanded && p.expanded, { opacity: layoutReady && reducedMotion !== null ? 1 : 0 }, animatedStyle]}>
         {!edgeToEdge && <GestureDetector gesture={gesture}><View collapsable={false} style={p.handleTouch}>
-          <Pressable accessibilityRole="button" accessibilityLabel={label} onPress={closePanel} style={p.handleButton}><View style={[p.handle, isDark && { backgroundColor: palette.line }]}/></Pressable>
+          <Pressable accessibilityRole="button" accessibilityLabel={label} onPress={closePanel} style={p.handleButton}><View style={[p.handle, isDark && { backgroundColor: palette.line }, handleStyle]}/></Pressable>
         </View></GestureDetector>}
-        <GestureDetector gesture={contentPan}><View collapsable={false} testID="bottom-panel-drag-area" style={[p.content, handlePlacement === 'inside' && !edgeToEdge && { paddingTop: 24 }, expanded && p.expanded, edgeToEdge && p.edgeToEdge, { backgroundColor: palette.surface, paddingBottom: bottomPadding ?? Math.max(insets.bottom, 10) }]}>{content}</View></GestureDetector>
+        <GestureDetector gesture={contentPan}><View collapsable={false} testID="bottom-panel-drag-area" style={[p.content, handlePlacement === 'inside' && !edgeToEdge && { paddingTop: 24 }, expanded && p.expanded, edgeToEdge && p.edgeToEdge, { backgroundColor: palette.surface, paddingBottom: bottomPadding ?? Math.max(insets.bottom, 10) }, surfaceStyle]}>{content}</View></GestureDetector>
       </Animated.View>
     </View>
   </KeyboardAvoidingView></View>;
@@ -123,7 +130,7 @@ function findScrollChild(children: React.ReactNode): ScrollElement | undefined {
   let found: ScrollElement | undefined;
   React.Children.forEach(children, child => {
     if (found || !React.isValidElement<{ children?: React.ReactNode }>(child)) return;
-    if (child.type === ScrollView) { found = child as ScrollElement; return; }
+    if (child.type === ScrollView || child.type === FlatList) { found = child as ScrollElement; return; }
     if (child.type === View || child.type === React.Fragment) {
       found = findScrollChild(child.props.children);
     }
@@ -133,6 +140,7 @@ function findScrollChild(children: React.ReactNode): ScrollElement | undefined {
 function wrapScrollChild(children: React.ReactNode, target: ScrollElement | undefined, gesture: ReturnType<typeof Gesture.Native>, onScroll: ReturnType<typeof useAnimatedScrollHandler>, ref: (node: ScrollView | null) => void): React.ReactNode {
   return React.Children.map(children, child => {
     if (!React.isValidElement<{ children?: React.ReactNode }>(child)) return child;
+    if (child === target && target.type === FlatList) return <GestureDetector gesture={gesture}><Animated.FlatList {...target.props as unknown as Omit<FlatListProps<unknown>, 'CellRendererComponent'>} ref={node => ref((node?.getNativeScrollRef() as ScrollView | null) ?? null)} onScroll={onScroll} scrollEventThrottle={16}/></GestureDetector>;
     if (child === target) return <GestureDetector gesture={gesture}><Animated.ScrollView {...target.props} ref={ref} onScroll={onScroll} scrollEventThrottle={16}/></GestureDetector>;
     if (child.type === View || child.type === React.Fragment) return React.cloneElement(child, {}, wrapScrollChild(child.props.children, target, gesture, onScroll, ref));
     return child;
@@ -143,7 +151,7 @@ export const panelStyle = StyleSheet.create({
   handle: { width: 34, height: 4, borderRadius: 3, backgroundColor: '#D4D6DA', alignSelf: 'center', marginVertical: 7 },
 });
 const p = StyleSheet.create({
-  host: { ...StyleSheet.absoluteFillObject, zIndex: 40 },
+  host: { ...StyleSheet.absoluteFillObject, zIndex: 40, elevation: 40 },
   keyboard: { flex: 1 },
   backdrop: { backgroundColor: '#14243A' },
   panelDock: { flex: 1, justifyContent: 'flex-end' },

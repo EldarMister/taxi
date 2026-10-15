@@ -24,7 +24,7 @@ export function FoodSwitch({ value, onValueChange, accessibilityLabel, disabled 
   }, [value, reduced, progress]);
   const inactiveColor = isDark ? '#3D3D3D' : '#EEEEEE';
   const track = useAnimatedStyle(() => ({
-    backgroundColor: interpolateColor(progress.get(), [0, 1], [inactiveColor, '#FFE500']),
+    backgroundColor: interpolateColor(progress.get(), [0, 1], [inactiveColor, '#3478F6']),
   }), [inactiveColor]);
   const thumb = useAnimatedStyle(() => ({ transform: [{ translateX: progress.get() * 18 }] }));
   return <Pressable accessibilityRole="switch" accessibilityLabel={accessibilityLabel}

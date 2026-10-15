@@ -1,0 +1,12 @@
+const fs = require('node:fs');
+const path = require('node:path');
+const { nextReleaseVersion } = require('../config/release-version.cjs');
+const root = path.resolve(__dirname, '..');
+const expoPath = path.join(root, 'app.config.ts'), androidPath = path.join(root, 'android/app/build.gradle');
+const expo = fs.readFileSync(expoPath, 'utf8'), android = fs.readFileSync(androidPath, 'utf8');
+const version = /version: '([^']+)'/.exec(expo)?.[1], code = Number(/versionCode: (\d+)/.exec(expo)?.[1]);
+if (!version || /versionName "([^"]+)"/.exec(android)?.[1] !== version || Number(/versionCode (\d+)/.exec(android)?.[1]) !== code) throw new Error('Expo and Android versions must match before preparing a release');
+const next = nextReleaseVersion(version, code);
+fs.writeFileSync(expoPath, expo.replace(`version: '${version}'`, `version: '${next.version}'`).replace(`versionCode: ${code}`, `versionCode: ${next.versionCode}`));
+fs.writeFileSync(androidPath, android.replace(`versionName "${version}"`, `versionName "${next.version}"`).replace(`versionCode ${code}`, `versionCode ${next.versionCode}`));
+console.log(`Prepared release ${next.version} (${next.versionCode}). Build both app variants with this version before preparing the next release.`);

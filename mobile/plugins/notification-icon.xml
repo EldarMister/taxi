@@ -1,0 +1,7 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp" android:height="24dp"
+    android:viewportWidth="24" android:viewportHeight="24">
+    <!-- Atlas mark from logo1.png. Android tints notification icons using alpha. -->
+    <path android:fillColor="#FFFFFFFF"
+        android:pathData="M12,3 L22,18 L17.8,18 L12,9.1 L6.2,18 L2,18 Z" />
+</vector>

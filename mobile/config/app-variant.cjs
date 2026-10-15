@@ -8,7 +8,7 @@ const APP_VARIANTS = Object.freeze({
     name: 'Atlas',
     slug: 'taxi-go',
     scheme: 'taxi-go',
-    androidPackage: 'kg.taxigo.app',
+    androidPackage: 'atlas.kg',
     iosBundleIdentifier: 'kg.taxigo.app',
     easProjectEnv: 'EXPO_PUBLIC_CLIENT_EAS_PROJECT_ID',
     googleServicesEnv: 'CLIENT_GOOGLE_SERVICES_FILE',
@@ -20,7 +20,7 @@ const APP_VARIANTS = Object.freeze({
     name: 'Atlas pro',
     slug: 'taxi-go-driver',
     scheme: 'taxi-go-driver',
-    androidPackage: 'kg.taxigo.driver',
+    androidPackage: 'atlas.pro',
     iosBundleIdentifier: 'kg.taxigo.driver',
     easProjectEnv: 'EXPO_PUBLIC_DRIVER_EAS_PROJECT_ID',
     googleServicesEnv: 'DRIVER_GOOGLE_SERVICES_FILE',
@@ -31,7 +31,7 @@ const APP_VARIANTS = Object.freeze({
 function resolveAppVariant(value) {
   const variant = String(value || 'client').trim().toLowerCase();
   if (!Object.hasOwn(APP_VARIANTS, variant)) {
-    throw new Error(`APP_VARIANT must be "client" or "driver", received ${JSON.stringify(value)}. Atlas Restaurant is a standalone project in restaurant-mobile.`);
+    throw new Error(`APP_VARIANT must be "client" or "driver", received ${JSON.stringify(value)}. Atlas Restaurant is a standalone project in apps/atlas-restaurant.`);
   }
   return variant;
 }
@@ -83,25 +83,30 @@ function roleMismatchCopy(value, language = 'ru') {
     return variant === 'driver'
       ? {
           title: 'Бул аккаунт башка колдонмо үчүн',
-          message: 'Бул номер жүргүнчүнүн аккаунтуна таандык. Кардарлар үчүн Atlas колдонмосун ачыңыз. Бул жердеги сессия тазаланды.',
-          action: 'Башка номер менен кирүү',
+          message: 'Сакталган аккаунт кардарлар үчүн Atlas колдонмосуна таандык. Бул жердеги сессия тазаланды. Өз телефон номериңиз менен кайра кириңиз.',
+          action: 'Кайра кирүү',
         }
       : {
           title: 'Бул аккаунт башка колдонмо үчүн',
-          message: 'Бул номер айдоочунун аккаунтуна таандык. Atlas pro колдонмосун ачыңыз. Бул жердеги сессия тазаланды.',
-          action: 'Башка номер менен кирүү',
+          message: 'Сакталган аккаунт Atlas pro колдонмосуна таандык. Бул жердеги сессия тазаланды. Өз телефон номериңиз менен кайра кириңиз.',
+          action: 'Кайра кирүү',
         };
   }
+  if (language === 'en') return {
+    title: 'Sign in again',
+    message: `The saved account belongs to ${variant === 'driver' ? 'Atlas' : 'Atlas pro'}. This session has been cleared. Sign in again using your phone number.`,
+    action: 'Sign in again',
+  };
   return variant === 'driver'
     ? {
         title: 'Этот аккаунт для другого приложения',
-        message: 'Номер зарегистрирован как пассажир. Откройте клиентское приложение Atlas. Сессия в приложении водителя очищена.',
-        action: 'Войти с другим номером',
+        message: 'Сохранённый аккаунт относится к клиентскому приложению Atlas. Сессия в приложении водителя очищена. Войдите снова с вашим номером телефона.',
+        action: 'Войти снова',
       }
     : {
         title: 'Этот аккаунт для другого приложения',
-        message: 'Номер зарегистрирован как водитель. Откройте приложение Atlas pro. Сессия в клиентском приложении очищена.',
-        action: 'Войти с другим номером',
+        message: 'Сохранённый аккаунт относится к приложению Atlas pro. Сессия в клиентском приложении очищена. Войдите снова с вашим номером телефона.',
+        action: 'Войти снова',
       };
 }
 

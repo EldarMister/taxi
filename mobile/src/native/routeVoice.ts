@@ -34,22 +34,32 @@ let generation = 0;
 let active: ActiveSpeech | undefined;
 let audioMode: Promise<void> | undefined;
 
-// Guidance distances are below 550 m. Silero must receive words rather than
-// relying on the model to verbalize digits; keep street names/numbers intact.
+// Early maneuver previews can be several kilometres away. Give Silero the
+// complete distance in words while keeping street names/numbers intact.
 export function sileroNavigationText(text: string): string {
   const ones = ['ноль', 'один', 'два', 'три', 'четыре', 'пять', 'шесть', 'семь', 'восемь', 'девять'];
   const teens = ['десять', 'одиннадцать', 'двенадцать', 'тринадцать', 'четырнадцать', 'пятнадцать', 'шестнадцать', 'семнадцать', 'восемнадцать', 'девятнадцать'];
   const tens = ['', '', 'двадцать', 'тридцать', 'сорок', 'пятьдесят', 'шестьдесят', 'семьдесят', 'восемьдесят', 'девяносто'];
   const hundreds = ['', 'сто', 'двести', 'триста', 'четыреста', 'пятьсот', 'шестьсот', 'семьсот', 'восемьсот', 'девятьсот'];
-  return text.replace(/^(Через\s+)(\d{1,3})(\s+метр(?:ов|а)?)(?=\s|[,.!?;:]|$)/iu, (_match, prefix, digits, unit) => {
-    const value = Number(digits), rest = value % 100;
+  const belowThousand = (value: number, feminine = false) => {
+    const rest = value % 100;
     const words = [hundreds[Math.floor(value / 100)]];
     if (rest >= 10 && rest < 20) words.push(teens[rest - 10]);
     else {
       words.push(tens[Math.floor(rest / 10)]);
-      if (rest % 10 || value === 0) words.push(ones[rest % 10]);
+      if (rest % 10 || value === 0) words.push(feminine && rest % 10 === 1 ? 'одна' : feminine && rest % 10 === 2 ? 'две' : ones[rest % 10]);
     }
-    return `${prefix}${words.filter(Boolean).join(' ')}${unit}`;
+    return words.filter(Boolean).join(' ');
+  };
+  return text.replace(/^(Через\s+)(\d{1,6})(\s+метр(?:ов|а)?)(?=\s|[,.!?;:]|$)/iu, (_match, prefix, digits, unit) => {
+    const value = Number(digits), thousands = Math.floor(value / 1000), words = [];
+    if (thousands) {
+      const last = thousands % 100;
+      const ending = last >= 11 && last <= 14 ? 'тысяч' : last % 10 === 1 ? 'тысяча' : last % 10 >= 2 && last % 10 <= 4 ? 'тысячи' : 'тысяч';
+      words.push(belowThousand(thousands, true), ending);
+    }
+    if (value % 1000 || !thousands) words.push(belowThousand(value % 1000));
+    return `${prefix}${words.join(' ')}${unit}`;
   });
 }
 

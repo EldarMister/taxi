@@ -6,7 +6,7 @@ import { Alert, AppState, Linking, Platform } from 'react-native';
 import { api, ApiError } from '../api';
 import { isRoleAllowed } from '../appVariant';
 import type { DriverLocationUpdate, Language, Order, Point } from '../types';
-import { DrivingRoute, NavigationFix, NavigationProgress, PreparedRoute, PreviousRouteProgress, bestVoiceForLanguage, distanceBetween, guidanceCue, navigationDestination, offRouteThreshold, prepareRoute, routeProgress, shouldReroute, unsupportedRouteOptions, usableNavigationFix } from '../navigation';
+import { DrivingRoute, NavigationFix, NavigationProgress, PreparedRoute, PreviousRouteProgress, bestVoiceForLanguage, distanceBetween, guidanceCue, guidanceDistanceStillRelevant, navigationDestination, offRouteThreshold, prepareRoute, routeProgress, shouldReroute, unsupportedRouteOptions, usableNavigationFix } from '../navigation';
 import { DriverGpsFilter, DRIVER_GPS_CONFIG } from '../driverGps';
 import { routeVoice } from './routeVoice';
 import { getTrackingRecording, recordTrackingEvent, startTrackingRecording, stopTrackingRecording } from './trackingRecorder';
@@ -179,12 +179,21 @@ export async function startDriverBackgroundTracking(): Promise<boolean> {
   try { return await pending; }
   finally { if (starting === pending) starting = null; }
 }
-export async function requestDriverBackgroundAccess(): Promise<boolean> {
+export async function requestDriverBackgroundAccess(language: Language = 'ru'): Promise<boolean> {
   if (Platform.OS === 'web' || !isRoleAllowed('DRIVER')) return false;
   if ((await Location.getBackgroundPermissionsAsync()).granted) return true;
-  const proceed = await new Promise<boolean>(resolve => Alert.alert('Геолокация в фоне',
-    'Когда вы на линии, Atlas pro обновляет ваше местоположение с выключенным экраном, чтобы находить заказы рядом. Во время поездки это также нужно для навигации. В настройках выберите «Разрешить всегда».',
-    [{ text: 'Позже', style: 'cancel', onPress: () => resolve(false) }, { text: 'Продолжить', onPress: () => resolve(true) }], { cancelable: true, onDismiss: () => resolve(false) }));
+  const copy = language === 'ky' ? {
+    title: 'Фондогу геолокация', later: 'Кийин', continue: 'Улантуу',
+    message: 'Линияда болгондо же буюртманы аткарганда, Atlas pro экран өчүк болсо да жайгашкан жериңизди жаңыртып турат. Бул жакын жердеги буюртмаларды табууга, маршрут түзүүгө жана буюртма учурунда кардарга жайгашкан жериңизди көрсөтүүгө керек. Фондук жетүүгө уруксатты кийин телефондун жөндөөлөрүнөн өзгөртө аласыз.',
+  } : language === 'en' ? {
+    title: 'Background location', later: 'Later', continue: 'Continue',
+    message: 'While you are online or completing an order, Atlas pro updates your location even with the screen off. This helps find nearby orders, provide navigation and show your position to the customer during an order. You can change background location access later in your phone settings.',
+  } : {
+    title: 'Геолокация в фоне', later: 'Позже', continue: 'Продолжить',
+    message: 'Когда вы на линии или выполняете заказ, Atlas pro обновляет ваше местоположение даже с выключенным экраном. Это нужно для поиска заказов рядом, навигации и показа вашей позиции клиенту во время заказа. Фоновый доступ можно изменить позже в настройках телефона.',
+  };
+  const proceed = await new Promise<boolean>(resolve => Alert.alert(copy.title, copy.message,
+    [{ text: copy.later, style: 'cancel', onPress: () => resolve(false) }, { text: copy.continue, onPress: () => resolve(true) }], { cancelable: true, onDismiss: () => resolve(false) }));
   if (!proceed) return false;
   const permission = await Location.getBackgroundPermissionsAsync();
   if (!permission.canAskAgain) { await Linking.openSettings(); return false; }
@@ -265,7 +274,7 @@ async function backgroundGuidance(fix: NavigationFix, current: Session, version:
         const latestProgress = routeProgress(bgRoute, lastReliableFix, previous, language);
         const atStart = guidanceCue(latestProgress, language, routeVersion, legIndex);
         return !!atStart && atStart.key === cue.key
-          && (cue.stage !== 100 || Math.abs(latestProgress.maneuverDistance - refreshedProgress!.maneuverDistance) <= 20);
+          && guidanceDistanceStillRelevant(cue.stage, refreshedProgress!.maneuverDistance, latestProgress.maneuverDistance);
       },
       onStart: () => {
         if (version !== generation || routeVersion !== bgRouteVersion || !usableNavigationFix(lastReliableFix)

@@ -22,10 +22,12 @@ vm.runInNewContext(compile('roadMatch.ts'), { exports: roadMatchExports, require
 } });
 const followCameraExports = {};
 vm.runInNewContext(compile('followCamera.ts'), { exports: followCameraExports });
+const mapRoadFeatureExports = {};
+vm.runInNewContext(compile('mapRoadFeatures.ts'), { exports: mapRoadFeatureExports });
 const feature = (latitude, longitude, properties = {}) => ({ type: 'Feature', geometry: { type: 'Point', coordinates: [longitude, latitude] }, properties });
 
 async function mountMap(t, initialProps, options = {}) {
-  const timers = new Map(), frames = new Map(), cameraCalls = [], bounds = [], requests = [], headers = [], nativeShapes = new Map(), appListeners = new Set();
+  const timers = new Map(), timerDurations = new Map(), frames = new Map(), cameraCalls = [], bounds = [], requests = [], headers = [], nativeShapes = new Map(), appListeners = new Set();
   const animationClock = options.animationClock || { now: Date.now() };
   // UI fixtures default to a real 1 Hz moving GPS sample; motion-specific cases
   // explicitly supply measurement time, speed, accuracy and course.
@@ -45,6 +47,7 @@ async function mountMap(t, initialProps, options = {}) {
   const NativeMap = React.forwardRef((mapProps, ref) => { React.useImperativeHandle(ref, () => ({
     getCenter: async () => options.mapCenter || null,
     getVisibleBounds: async () => options.mapBounds || [[74.6, 42.9], [74.58, 42.88]],
+    queryRenderedFeaturesInRect: async () => options.renderedRoads || { type: 'FeatureCollection', features: [] },
   })); return React.createElement('MapView', mapProps); });
   const exports = {};
   const api = { baseUrl: 'https://api.example.test/api', request: async (url, init) => {
@@ -74,22 +77,26 @@ async function mountMap(t, initialProps, options = {}) {
     throw Error(id);
   } });
   vm.runInNewContext(compile('TaxiMap.tsx'), { ...runtime, exports, process: { env: options.env || {} },
-    setTimeout: (callback, delay) => { options.timerDelays?.push(delay); const id = ++next; timers.set(id, callback); return id; }, clearTimeout: id => timers.delete(id),
+    setTimeout: (callback, delay) => { options.timerDelays?.push(delay); const id = ++next; timers.set(id, callback); timerDurations.set(id, delay); return id; }, clearTimeout: id => { timers.delete(id); timerDurations.delete(id); },
     require: id => {
       if (id === 'react' || id === 'react/jsx-runtime') return require(id);
       if (id === 'expo-device') return { isDevice: false };
       if (id === 'react-native-svg') return { __esModule: true, default: 'Svg', Path: 'SvgPath' };
       if (id === 'react-native') return { AppState, View: 'View', Image: 'Image', Text: 'Text', Pressable: 'Pressable', ActivityIndicator: 'Spinner', StyleSheet: { create: s => s }, Linking: { openURL: async () => {} } };
-      if (id === '../../assets/tracking-car-white.png') return 'tracking-car-white.png';
+      if (id === '../../assets/tracking-car-white.webp') return 'tracking-car-white.webp';
       if (id === '../../assets/driver-navigation-arrow.png') return 'driver-navigation-arrow.png';
-      if (id === '../../assets/road-signs/traffic-light.png') return 'traffic-light.png';
+      if (id === '../../assets/road-signs/traffic-light.webp') return 'traffic-light.webp';
+      if (id === '../../assets/road-signs/speed-camera.webp') return 'speed-camera.webp';
+      if (id === '../../assets/road-signs/pedestrian-crossing.png') return 'pedestrian-crossing.png';
       if (id === '../../assets/map-crossing-zebra.png') return 'map-crossing-zebra.png';
-      if (id === 'react-native-reanimated') return { __esModule: true, default: { View: 'View' }, useAnimatedStyle: fn => ({ evaluate: fn }) };
+      if (id === 'react-native-reanimated') return { __esModule: true, default: { View: 'View' }, useAnimatedStyle: fn => ({ evaluate: fn }),
+        useSharedValue: initial => React.useRef({ current: initial, get() { return this.current; }, set(value) { this.current = value; } }).current,
+        useReducedMotion: () => !!options.reducedMotion, withSpring: value => value, withTiming: (value, config) => { options.timingCalls?.push({ value, config }); return value; }, Easing: { bezier: (...values) => values }, ReduceMotion: { System: 'system' } };
       if (id === 'react-native-safe-area-context') return { useSafeAreaInsets: () => ({ top: 24, bottom: 24 }) };
-      if (id === '../ui') return { Button: 'Button', Icon: 'Icon', PickupIcon: 'PickupIcon', colors: {}, shortAddress: x => x || '', tr: () => value => value };
-      if (id === '@maplibre/maplibre-react-native') return { Camera, MapView: NativeMap, PointAnnotation: 'PointAnnotation', MarkerView: 'MarkerView', ShapeSource, LineLayer: 'LineLayer', SymbolLayer: 'SymbolLayer', FillLayer: 'FillLayer', UserLocation: 'UserLocation', addCustomHeader: (...args) => headers.push(args) };
+      if (id === '../ui') return { Button: 'Button', Icon: 'Icon', PickupIcon: 'PickupIcon', colors: { blue: '#087FFF', ink: '#101D38' }, shortAddress: x => x || '', tr: () => value => value };
+      if (id === '@maplibre/maplibre-react-native') return { Camera, MapView: NativeMap, PointAnnotation: 'PointAnnotation', MarkerView: 'MarkerView', ShapeSource, LineLayer: 'LineLayer', CircleLayer: 'CircleLayer', SymbolLayer: 'SymbolLayer', FillLayer: 'FillLayer', UserLocation: 'UserLocation', addCustomHeader: (...args) => headers.push(args) };
       if (id === '../api') return { api };
-      if (id === './mapkit') return { BISHKEK: { latitude: 42.87, longitude: 74.57 }, reverseGeocode: async point => ({ ...point, address: 'Выбранная улица' }) };
+      if (id === './mapkit') return { BISHKEK: { latitude: 42.87, longitude: 74.57 }, reverseGeocode: async point => options.reverseGeocode ? options.reverseGeocode(point) : ({ ...point, address: 'Выбранная улица' }) };
       if (id === './location') return { getCurrentPosition: async () => {
         if (options.getPosition) return options.getPosition();
         if (options.locationError) throw options.locationError;
@@ -100,6 +107,7 @@ async function mountMap(t, initialProps, options = {}) {
       if (id === './roadMatch') return roadMatchExports;
       if (id === './DriverTrackingMarker') return markerExports;
       if (id === './followCamera') return followCameraExports;
+      if (id === './mapRoadFeatures') return mapRoadFeatureExports;
       if (id === './taxiMapStyle') return styles;
       throw Error(id);
     },
@@ -123,7 +131,11 @@ async function mountMap(t, initialProps, options = {}) {
   const settle = async (duration = 1800) => { for (let i = 0; i < duration; i += 40) await advanceFrame(40); };
   const shape = id => nativeShapes.get(id) || renderer.root.findByProps({ id }).props.shape;
   const background = async state => { AppState.currentState = state; await act(async () => { for (const listener of appListeners) listener(state); }); };
-  return { renderer, map, update, ready, cameraCalls, bounds, requests, headers, timers, frames, advanceFrame, settle, shape, background, appListeners };
+  const flushTimers = async delay => act(async () => { for (const [id, callback] of [...timers]) {
+    if (delay != null && timerDurations.get(id) !== delay) continue;
+    timers.delete(id); timerDurations.delete(id); callback();
+  } });
+  return { renderer, map, update, ready, cameraCalls, bounds, requests, headers, timers, frames, advanceFrame, settle, shape, background, appListeners, flushTimers };
 }
 
 test('food map uses the shared arrival marker and hides its initial hint after two seconds', async t => {
@@ -136,6 +148,8 @@ test('food map uses the shared arrival marker and hides its initial hint after t
   assert.ok(timerDelays.includes(2000));
   const pin = h.renderer.root.findByProps({ accessibilityLabel: 'Адрес доставки' });
   assert.equal(pin.findAllByType('PickupIcon').length, 0, 'food uses the arrival marker instead of taxi pickup');
+  assert.equal(pin.findAllByProps({ testID: 'dropoff-pin-loading' }).length, 0, 'settling the map must not flash a loading icon');
+  await act(async () => { for (const [id, callback] of [...h.timers]) { h.timers.delete(id); callback(); } });
   const arrivalIcon = pin.findByType('Icon');
   assert.equal(arrivalIcon.props.name, 'flag');
   assert.equal(arrivalIcon.props.size, 24, 'the arrival flag uses the square pin size');
@@ -174,25 +188,27 @@ test('delivery pickup selection rises with its panel while the pin stays at the 
   const h = await mountMap(t, { passengerView: true, pickup, browsePickup: true, centerInVisibleArea: true, contentBottomInset: 350 });
   await h.ready();
   assert.equal(h.renderer.root.findByProps({ testID: 'map-viewport' }).props.style[1].bottom, 210);
-  assert.equal(h.renderer.root.findByProps({ accessibilityLabel: 'Метка места подачи' }).props.style[0].top, '50%');
+  assert.equal(h.renderer.root.findByProps({ accessibilityLabel: 'Метка места подачи' }).props.style.top, '50%');
   await h.update({ contentBottomInset: 400 });
   assert.equal(h.renderer.root.findByProps({ testID: 'map-viewport' }).props.style[1].bottom, 240);
 });
 
-test('one zoom step loads traffic lights and cross-road markings for a passenger', async t => {
+test('ordinary crossings and real traffic lights are visible at the initial map zoom, without signs', async t => {
   const mapped = [
     { id: '1:traffic_light', kind: 'traffic_light', latitude: 42.885, longitude: 74.59 },
     { id: '2:pedestrian_crossing', kind: 'pedestrian_crossing', latitude: 41.1963546, longitude: 72.1795808, bearing: 89 },
     { id: '3:pedestrian_crossing', kind: 'pedestrian_crossing', latitude: 41.1963556, longitude: 72.179758, bearing: 90 },
     { id: '4:pedestrian_crossing', kind: 'pedestrian_crossing', latitude: 41.1962771, longitude: 72.1796587, bearing: 360 },
     { id: '5:pedestrian_crossing', kind: 'pedestrian_crossing', latitude: 41.1964142, longitude: 72.1796581, bearing: 360 },
+    { id: '6:speed_camera', kind: 'speed_camera', latitude: 41.1965, longitude: 72.1797 },
+    { id: '7:speed_limit', kind: 'speed_limit', latitude: 41.1966, longitude: 72.1797, speedLimit: 40 },
   ];
   const h = await mountMap(t, { passengerView: true }, { request: async url => {
     if (url.startsWith('/routes/map-features?')) return { features: mapped };
     throw Error(url);
   } });
   await h.ready();
-  await act(async () => h.map().props.onRegionDidChange(feature(42.89, 74.59, { zoomLevel: 15 })));
+  await act(async () => h.map().props.onRegionDidChange(feature(42.89, 74.59, { zoomLevel: 14 })));
   await act(async () => {
     for (const [id, callback] of [...h.timers]) { h.timers.delete(id); callback(); }
   });
@@ -201,23 +217,65 @@ test('one zoom step loads traffic lights and cross-road markings for a passenger
   assert.deepEqual(source.props.shape.features.map(item => item.properties.kind),
     ['traffic_light', 'pedestrian_crossing', 'pedestrian_crossing', 'pedestrian_crossing', 'pedestrian_crossing']);
   assert.ok(source.props.shape.features.every(item => item.geometry.type === 'Point'));
-  assert.deepEqual(source.props.shape.features.slice(1).map(item => item.properties.bearing), [89, 90, 0, 0]);
-  assert.equal(h.renderer.root.findByProps({ id: 'map-traffic-lights' }).props.style.iconImage, 'traffic-light.png');
-  assert.equal(h.renderer.root.findByProps({ id: 'map-traffic-lights' }).props.minZoomLevel, 14.5);
+  assert.deepEqual(source.props.shape.features.slice(1, 5).map(item => item.properties.bearing), [89, 90, 0, 0]);
+  assert.equal(h.renderer.root.findByProps({ id: 'map-traffic-lights' }).props.style.iconImage, 'traffic-light.webp');
+  assert.equal(h.renderer.root.findByProps({ id: 'map-traffic-lights' }).props.minZoomLevel, 14);
   assert.equal(h.renderer.root.findByProps({ id: 'map-traffic-lights' }).props.style.iconAllowOverlap, true);
   const crossing = h.renderer.root.findByProps({ id: 'map-pedestrian-crossings' });
-  assert.equal(crossing.props.minZoomLevel, 14.5);
-  assert.equal(crossing.props.style.iconImage, 'map-crossing-zebra.png');
-  assert.equal(crossing.props.style.iconRotationAlignment, 'map');
-  assert.deepEqual(Array.from(crossing.props.style.iconRotate), ['get', 'bearing']);
-  assert.deepEqual(JSON.parse(JSON.stringify(crossing.props.style.iconSize)),
-    ['interpolate', ['linear'], ['zoom'], 14.5, .22, 16, .34, 19, .62],
-    'crosswalk shrinks with the road when zooming out and remains bounded when zooming in');
-  assert.equal(crossing.props.style.iconAllowOverlap, true, 'all four crossings remain visible at a signalized junction');
-  assert.equal(crossing.props.belowLayerID, 'current-osm-street-major', 'street labels should give way to road markings');
-  const bitmap = fs.readFileSync(path.join(__dirname, '../assets/map-crossing-zebra.png'));
-  assert.equal(bitmap.readUInt32BE(16), 32);
-  assert.equal(bitmap.readUInt32BE(20), 32);
+  assert.equal(crossing.props.minZoomLevel, 14);
+  assert.equal(crossing.type, 'FillLayer');
+  const markings = h.shape('map-crossing-markings').features;
+  assert.equal(new Set(markings.map(item => item.properties.crossingId)).size, 4, 'all four crossings remain visible at a junction');
+  assert.ok(markings.every(item => item.geometry.type === 'Polygon'));
+  assert.equal(crossing.props.belowLayerID, 'current-osm-street-major');
+  assert.equal(h.renderer.root.findAllByProps({ id: 'map-speed-cameras' }).length, 0);
+  assert.equal(h.renderer.root.findAllByProps({ id: 'map-speed-limits' }).length, 0);
+});
+
+test('map feature coverage expires, shows updates in the same viewport and survives a failed refresh', async t => {
+  const clock = { now: 100000 }, crossing = { id: 'old', kind: 'pedestrian_crossing', latitude: 42.885, longitude: 74.59, bearing: 0 };
+  let data = [crossing], fail = false;
+  const h = await mountMap(t, { passengerView: true }, { animationClock: clock,
+    request: async () => { if (fail) throw Error('offline'); return { features: data }; } });
+  const refresh = async () => {
+    await act(async () => h.map().props.onRegionDidChange(feature(42.89, 74.59, { zoomLevel: 15 })));
+    await h.flushTimers(250);
+  };
+  await h.ready(); await refresh();
+  assert.equal(h.shape('map-road-features').features[0].id, 'old');
+  const calls = h.requests.length;
+  data = [{ ...crossing, id: 'new' }]; await refresh();
+  assert.equal(h.requests.length, calls, 'moving inside fresh coverage reuses the request');
+  clock.now += 60001; await refresh();
+  assert.equal(h.shape('map-road-features').features[0].id, 'new');
+  fail = true; clock.now += 60001; await refresh();
+  assert.equal(h.shape('map-road-features').features[0].id, 'new', 'network loss must not erase known crossings');
+});
+
+test('map fits a crossing to rendered road geometry instead of keeping its stale source angle and offset', async t => {
+  const mapped = { id: 'crossing', kind: 'pedestrian_crossing', latitude: 42.885, longitude: 74.59, bearing: 12 };
+  const options = {
+    renderedRoads: { type: 'FeatureCollection', features: [
+      { type: 'Feature', properties: { kind: 'secondary' }, geometry: { type: 'LineString', coordinates: [[74.59003, 42.88], [74.59003, 42.89]] } },
+    ] },
+    request: async url => url.startsWith('/routes/map-features?') ? { features: [mapped] } : Promise.reject(Error(url)),
+  };
+  const h = await mountMap(t, { passengerView: true }, options);
+  await h.ready();
+  await act(async () => h.map().props.onRegionDidChange(feature(42.89, 74.59, { zoomLevel: 18 })));
+  await act(async () => { for (const [id, callback] of [...h.timers]) { h.timers.delete(id); callback(); } });
+  const fitted = h.shape('map-road-features').features[0];
+  assert.equal(fitted.properties.bearing, 0);
+  assert.equal(fitted.geometry.coordinates[0], 74.59003);
+  assert.equal(mapped.longitude, 74.59);
+  options.renderedRoads = { type: 'FeatureCollection', features: [
+    { type: 'Feature', properties: { kind: 'secondary' }, geometry: { type: 'LineString', coordinates: [[74.59004, 42.88], [74.59004, 42.89]] } },
+  ] };
+  await act(async () => h.map().props.onRegionDidChange(feature(42.89, 74.59, { zoomLevel: 18 })));
+  await act(async () => { for (const [id, callback] of [...h.timers]) { h.timers.delete(id); callback(); } });
+  assert.equal(h.shape('map-road-features').features[0].geometry.coordinates[0], 74.59004);
+  assert.equal(h.requests.filter(request => request.url.startsWith('/routes/map-features?')).length, 1,
+    'new visible geometry corrects cached crossings without another API request');
 });
 
 test('wider map view still requests road features within the server area limit', async t => {
@@ -276,6 +334,8 @@ test('food map interactions distinguish camera animation and preserve newer choi
   assert.equal(h.cameraCalls.length, callsAfterDrag, 'the stale GPS request must not recenter after a map gesture');
   assert.equal(selection().point.latitude, dragged.latitude);
   assert.equal(selection().point.longitude, dragged.longitude);
+  assert.equal(selection().ready, false, 'confirmation also waits for the new point address');
+  await h.flushTimers();
   assert.equal(selection().ready, true);
   assert.ok(!interactions.includes('locate-success'), 'a discarded GPS fix must not count as a successful choice');
 
@@ -317,6 +377,8 @@ test('center pin confirms the settled camera point, switches endpoints and brows
   await act(async () => h.map().props.onRegionWillChange(feature(42.87, 74.57, { isUserInteraction: true })));
   assert.equal(confirm().props.disabled, true);
   await act(async () => h.map().props.onRegionDidChange(feature(42.881, 74.583)));
+  assert.equal(confirm().props.disabled, true, 'settling the map still waits for reverse geocoding');
+  await h.flushTimers();
   assert.equal(confirm().props.disabled, false);
   await act(async () => confirm().props.onPress());
   assert.equal(selected[0].latitude, 42.881); assert.equal(selected[0].longitude, 74.583);
@@ -324,6 +386,7 @@ test('center pin confirms the settled camera point, switches endpoints and brows
   assert.equal(h.cameraCalls.at(-1).centerCoordinate[1], 42.9);
   await h.update({ focusPoint: { latitude: 42.91, longitude: 74.61 } });
   assert.equal(h.cameraCalls.at(-1).centerCoordinate[1], 42.91); assert.equal(selected.length, 1);
+  await h.flushTimers();
   await act(async () => confirm().props.onPress()); assert.equal(selected[1].latitude, 42.91);
   await h.update({ selectionMode: null });
   const markers = h.renderer.root.findAllByType('MarkerView');
@@ -333,11 +396,280 @@ test('center pin confirms the settled camera point, switches endpoints and brows
   await h.update({ browsePickup: true, dropoff: null, focusPoint: null, onPickupChange: p => browsed.push(p) });
   assert.equal(h.renderer.root.findAllByType('Button').length, 0);
   assert.equal(h.renderer.root.findAllByType('MarkerView').length, 0, 'home has only the fixed center pin');
+  await act(async () => h.map().props.onRegionWillChange(feature(42.88, 74.58, { isUserInteraction: true })));
   await act(async () => h.map().props.onRegionDidChange(feature(42.88, 74.58)));
   await act(async () => { for (const [id, callback] of [...h.timers]) { h.timers.delete(id); callback(); } });
   assert.equal(browsed.at(-1).latitude, 42.88);
   assert.equal(browsed.at(-1).address, 'Выбранная улица');
   assert.equal(selected.length, 2);
+});
+
+test('pickup marker lifts above its anchored shadow and only displays a server ETA after the address resolves', async t => {
+  const movement = [], preview = [], requests = [];
+  const h = await mountMap(t, { passengerView: true, browsePickup: true, pickup: { latitude: 42.87, longitude: 74.57 },
+    pickupEtaMinutes: 9.2, onMapMovingChange: value => movement.push(value), onSelectionPreview: value => preview.push(value),
+  }, { reverseGeocode: point => new Promise(resolve => requests.push({ point, resolve })) });
+  await h.ready();
+  const pin = () => h.renderer.root.findByProps({ testID: 'pickup-pin-visual' });
+  const head = () => h.renderer.root.findByProps({ testID: 'pickup-pin-head' }).props.style.at(-1).evaluate();
+  const metrics = () => pin().findByProps({ testID: 'pickup-pin-metrics' });
+  assert.equal(metrics().props.style.at(-1).evaluate().opacity, 0, 'a pending address must not show an estimate for the previous point');
+  assert.equal(pin().findAllByType('Spinner').length, 0, 'debouncing a stopped map is not network loading');
+  await h.flushTimers(350);
+  assert.equal(pin().findAllByType('Spinner').length, 0, 'network requests get a grace period');
+  await h.flushTimers(150);
+  assert.equal(pin().findAllByType('Spinner').length, 1, 'a slow address lookup displays its loading state');
+  await act(async () => requests[0].resolve({ ...requests[0].point, address: 'улица Ленина, 39' }));
+  assert.deepEqual(pin().findAllByType('Text').map(node => node.children.join('')), ['Подача', '10 мин']);
+  assert.equal(pin().findByType('PickupIcon').props.color, '#FFFFFF');
+  assert.equal(pin().findByProps({ testID: 'pickup-pin-icon' }).props.style[0].backgroundColor, '#087FFF');
+  assert.equal(metrics().props.style.at(-1).evaluate().opacity, 1);
+  assert.equal(preview.at(-1).pending, false);
+  await act(async () => h.map().props.onRegionWillChange(feature(42.88, 74.58, { isUserInteraction: true })));
+  await act(async () => h.map().props.onRegionIsChanging(feature(42.881, 74.581, { isUserInteraction: true })));
+  assert.deepEqual(movement, [true], 'the native per-frame event emits one state transition');
+  assert.equal(head().transform[0].translateY, -12);
+  const shadow = h.renderer.root.findByProps({ testID: 'pickup-pin-shadow' });
+  assert.equal(shadow.props.style[0].bottom, 0, 'shadow is a stationary sibling of the lifted marker');
+  assert.equal(shadow.props.style.at(-1).evaluate().transform[0].scale, 1.32);
+  assert.equal(pin().findAllByType('Spinner').length, 0, 'dragging keeps the original icon');
+  assert.equal(metrics().props.style.at(-1).evaluate().opacity, 0);
+  await act(async () => h.map().props.onRegionDidChange(feature(42.881, 74.581)));
+  assert.ok(head().transform[0].translateY === 0, 'the stem lands before the network request finishes');
+  assert.deepEqual(movement, [true, false]);
+  await h.flushTimers();
+  await act(async () => requests[1].resolve({ ...requests[1].point, address: 'улица Ленина, 40' }));
+  assert.equal(pin().findAllByType('Spinner').length, 0);
+  assert.equal(preview.at(-1).address, 'улица Ленина, 40');
+});
+
+test('an obsolete reverse response cannot update the marker or pickup after movement starts', async t => {
+  const requests = [], browsed = [], previews = [];
+  const h = await mountMap(t, { browsePickup: true, pickup: { latitude: 42.87, longitude: 74.57 },
+    onPickupChange: point => browsed.push(point), onSelectionPreview: value => previews.push(value),
+  }, { reverseGeocode: point => new Promise((resolve, reject) => requests.push({ point, resolve, reject })) });
+  await h.ready(); await h.flushTimers();
+  await act(async () => {
+    h.map().props.onRegionWillChange(feature(42.9, 74.6, { isUserInteraction: true }));
+    requests[0].resolve({ ...requests[0].point, address: 'Старый адрес' });
+  });
+  assert.equal(browsed.length, 0, 'invalidate synchronously, before React flushes the next effect');
+  assert.equal(previews.at(-1).pending, true);
+  await act(async () => h.map().props.onRegionDidChange(feature(42.9, 74.6)));
+  await h.flushTimers();
+  await act(async () => requests[1].reject(Error('Network unavailable')));
+  assert.equal(h.renderer.root.findAllByProps({ testID: 'pickup-pin-loading' }).length, 0, 'an error restores the pickup icon');
+  assert.equal(previews.at(-1).pending, false);
+  assert.equal(previews.at(-1).address, 'Точка на карте');
+  assert.equal(browsed.at(-1).latitude, 42.9);
+});
+
+test('destination marker uses route minutes and fare without manufacturing missing estimates', async t => {
+  const h = await mountMap(t, { selectionMode: 'dropoff', pickup: { latitude: 42.87, longitude: 74.57 }, dropoff: { latitude: 42.88, longitude: 74.58 } });
+  await h.ready(); await h.flushTimers();
+  const pin = () => h.renderer.root.findByProps({ testID: 'dropoff-pin-visual' });
+  assert.equal(pin().findAllByType('Text').length, 0);
+  assert.equal(pin().findByType('Icon').props.name, 'flag');
+  await h.update({ dropoffEstimate: { durationMinutes: 3.4, price: 277 } });
+  assert.deepEqual(pin().findAllByType('Text').map(node => node.children.join('')), ['Ехать 4 мин', '277 сом']);
+  await h.update({ dropoffEstimate: { durationMinutes: NaN, price: 277 } });
+  assert.equal(pin().findByProps({ testID: 'dropoff-pin-metrics' }).props.style.at(-1).evaluate().opacity, 0, 'previous content remains only for its fade-out');
+});
+
+test('instant reverse responses never display a loading icon while slow responses wait 150 ms', async t => {
+  const requests = [];
+  let slow = false;
+  const h = await mountMap(t, { selectionMode: 'dropoff', pickup: { latitude: 42.87, longitude: 74.57 },
+    dropoff: { latitude: 42.9, longitude: 74.6 },
+  }, { reverseGeocode: point => slow ? new Promise(resolve => requests.push({ point, resolve })) : Promise.resolve({ ...point, address: 'Быстрый ответ' }) });
+  await h.ready();
+  const spinner = () => h.renderer.root.findAllByProps({ testID: 'dropoff-pin-loading' }).length;
+  assert.equal(spinner(), 0);
+  await h.flushTimers(350);
+  assert.equal(spinner(), 0);
+  await h.flushTimers(150);
+  assert.equal(spinner(), 0, 'an instant reply cancels the grace timer');
+  slow = true;
+  await act(async () => h.map().props.onRegionWillChange(feature(42.91, 74.61, { isUserInteraction: true })));
+  await h.flushTimers(150);
+  assert.equal(spinner(), 0, 'movement never spins');
+  await act(async () => h.map().props.onRegionDidChange(feature(42.91, 74.61)));
+  await h.flushTimers(350);
+  assert.equal(spinner(), 0, 'only the actual pending request starts the 150 ms timer');
+  await h.flushTimers(150);
+  assert.equal(spinner(), 1);
+  await act(async () => requests[0].resolve({ ...requests[0].point, address: 'Медленный ответ' }));
+  assert.equal(spinner(), 0);
+});
+
+test('old camera events cannot replace a newly opened destination or a tapped map point', async t => {
+  const pickup = { latitude: 42.87, longitude: 74.57, address: 'Посадка' };
+  const dropoff = { latitude: 42.90, longitude: 74.61, address: 'Назначение' };
+  const tapped = { latitude: 42.94, longitude: 74.65 };
+  const previews = [], lookups = [], selected = [], browsed = [];
+  const h = await mountMap(t, { passengerView: true, browsePickup: true, pickup, dropoff,
+    preferPickupCenter: true, onSelectionPreview: value => previews.push(value), onSelectPoint: point => selected.push(point),
+    onPickupChange: point => browsed.push(point),
+  }, { reverseGeocode: point => { lookups.push(point); return Promise.resolve({ ...point, address: 'Выбранный адрес' }); } });
+  await h.ready(); await h.flushTimers(350);
+  const browseCount = browsed.length;
+  await h.update({ selectionMode: 'dropoff', browsePickup: false });
+  assert.equal(h.renderer.root.findByProps({ testID: 'map-viewport' }).props.style[1].bottom, 0, 'taxi selection never resizes the native map');
+  await act(async () => h.map().props.onRegionDidChange(feature(pickup.latitude, pickup.longitude)));
+  await h.flushTimers(350);
+  assert.equal(previews.at(-1).field, 'dropoff');
+  assert.equal(previews.at(-1).point.latitude, dropoff.latitude);
+  assert.equal(lookups.at(-1).longitude, dropoff.longitude);
+  await act(async () => h.renderer.root.findByType('Button').props.onPress());
+  assert.equal(selected.at(-1).latitude, dropoff.latitude);
+  await act(async () => h.map().props.onPress(feature(tapped.latitude, tapped.longitude)));
+  await act(async () => h.map().props.onRegionDidChange(feature(dropoff.latitude, dropoff.longitude)));
+  await h.flushTimers(350);
+  await act(async () => h.renderer.root.findByType('Button').props.onPress());
+  assert.equal(selected.at(-1).latitude, tapped.latitude);
+  assert.equal(selected.at(-1).longitude, tapped.longitude);
+  assert.equal(browsed.length, browseCount, 'destination editing cannot publish a pickup');
+  assert.deepEqual([...h.renderer.root.findByProps({ testID: 'pickup' }).props.coordinate], [pickup.longitude, pickup.latitude]);
+});
+
+test('pin metric badges animate on a fixed ground anchor and leave the other endpoint in place', async t => {
+  const timingCalls = [];
+  const pickup = { latitude: 42.87, longitude: 74.57 }, dropoff = { latitude: 42.9, longitude: 74.6 };
+  const h = await mountMap(t, { passengerView: true, pickup, dropoff, pickupEtaMinutes: 10 }, { timingCalls });
+  await h.ready();
+  const marker = () => h.renderer.root.findByProps({ testID: 'pickup' });
+  const frame = () => marker().findByProps({ testID: 'pickup-pin-visual' });
+  const anchor = { ...marker().props.anchor };
+  const footprint = { ...frame().props.style };
+  const nativeChild = () => marker().children[0];
+  const nativeFootprint = { ...nativeChild().props.style };
+  const head = () => frame().findByProps({ testID: 'pickup-pin-head' }).props.style[0];
+  assert.equal(nativeFootprint.width, 160, 'the immediate JNI child has an explicit width rather than stretching to the map');
+  assert.equal(nativeFootprint.height, 96);
+  assert.equal(anchor.x, 26 / 160, 'native anchor uses the explicitly measured child width');
+  assert.equal(anchor.x * nativeFootprint.width, 26);
+  assert.equal(anchor.y * nativeFootprint.height, 90);
+  assert.equal(nativeChild().props.collapsable, false);
+  await h.update({ pickupEtaMinutes: undefined, selectionMode: 'dropoff' });
+  assert.deepEqual({ ...marker().props.anchor }, anchor);
+  assert.deepEqual({ ...frame().props.style }, footprint);
+  assert.equal(head().left, 0);
+  await act(async () => h.map().props.onRegionWillChange(feature(42.94, 74.64, { isUserInteraction: true })));
+  await h.update({ pickupEtaMinutes: null, pickupAvailability: 'unavailable' });
+  assert.deepEqual([...marker().props.coordinate], [pickup.longitude, pickup.latitude]);
+  assert.deepEqual({ ...frame().props.style }, footprint);
+  const badge = frame().findByProps({ testID: 'pickup-pin-metrics' });
+  assert.deepEqual(badge.findAllByType('Text').map(node => node.children.join('')), ['Подача', 'Нет машин']);
+  assert.equal(badge.props.style[0].left, 28, 'badge extends to the right within the constant marker footprint');
+  assert.ok(timingCalls.some(call => call.value === 1 && call.config.duration === 200));
+  assert.ok(timingCalls.some(call => call.value === 0 && call.config.duration === 200));
+  assert.deepEqual(Array.from(timingCalls.at(-1).config.easing), [.23, 1, .32, 1]);
+});
+
+test('passenger back and location share one level, white backgrounds and the browse panel animation', async t => {
+  let offset = 0;
+  let backCount = 0;
+  const sharedOffset = { get: () => offset };
+  const h = await mountMap(t, { passengerView: true, browsePickup: true, pickup: { latitude: 42.87, longitude: 74.57 },
+    contentBottomInset: 180, onBack: () => backCount++, backLabel: 'На главный экран', browseControlsOffset: sharedOffset });
+  await h.ready();
+  const row = () => h.renderer.root.findByProps({ testID: 'passenger-map-bottom-controls' });
+  assert.equal(row().props.style[1].bottom, 196);
+  const back = h.renderer.root.findByProps({ testID: 'passenger-map-back' });
+  const locate = h.renderer.root.findByProps({ accessibilityLabel: 'Моё местоположение' });
+  assert.equal(back.parent, locate.parent, 'both controls occupy the same horizontal row');
+  assert.equal(back.props.style({ pressed: false })[0].backgroundColor, '#FFFFFF');
+  assert.equal(locate.props.style({ pressed: false })[0].backgroundColor, '#FFFFFF');
+  assert.equal(back.props.style({ pressed: false })[0].width, 48);
+  assert.equal(back.props.style({ pressed: false })[0].height, 48);
+  assert.equal(locate.props.style({ pressed: false })[0].width, 48);
+  assert.equal(locate.props.style({ pressed: false })[0].height, 48);
+  const animation = row().props.style.at(-1);
+  offset = 148;
+  assert.equal(animation.evaluate().transform[0].translateY, 148);
+  await act(async () => back.props.onPress());
+  assert.equal(backCount, 1);
+  await h.update({ browsePickup: false, selectionMode: 'dropoff' });
+  await act(async () => h.renderer.root.findByType('Button').parent.props.onLayout({ nativeEvent: { layout: { height: 240 } } }));
+  assert.equal(row().props.style[1].bottom, 256);
+  assert.equal(row().props.style.at(-1).evaluate().transform[0].translateY, 0, 'point selection ignores the previous browse shift');
+});
+
+test('reduced motion retains slow loading state without translating or scaling the pin', async t => {
+  const h = await mountMap(t, { browsePickup: true, pickup: { latitude: 42.87, longitude: 74.57 } }, { reducedMotion: true,
+    reverseGeocode: () => new Promise(() => {}),
+  });
+  await h.ready();
+  await act(async () => h.map().props.onRegionWillChange(feature(42.9, 74.6, { isUserInteraction: true })));
+  assert.ok(h.renderer.root.findByProps({ testID: 'pickup-pin-head' }).props.style.at(-1).evaluate().transform[0].translateY === 0);
+  assert.equal(h.renderer.root.findByProps({ testID: 'pickup-pin-shadow' }).props.style.at(-1).evaluate().transform[0].scale, 1);
+  assert.equal(h.renderer.root.findByProps({ testID: 'pickup-pin-icon' }).findByType('PickupIcon').props.color, '#FFFFFF', 'movement retains the pickup icon');
+  await act(async () => h.map().props.onRegionDidChange(feature(42.9, 74.6)));
+  await h.flushTimers(350); await h.flushTimers(150);
+  assert.equal(h.renderer.root.findByProps({ testID: 'pickup-pin-icon' }).findByType('Icon').props.name, 'ellipsis-horizontal');
+});
+
+test('cancelling endpoint selection restores committed pickup while confirming keeps the new pickup', async t => {
+  const pickup = { latitude: 42.87, longitude: 74.57, address: 'Текущая посадка' };
+  const moved = { latitude: 42.91, longitude: 74.61, address: 'Новая посадка' };
+  const browsed = [], movement = [];
+  const h = await mountMap(t, { browsePickup: true, pickup, preferPickupCenter: true,
+    onPickupChange: point => browsed.push(point), onMapMovingChange: value => movement.push(value) });
+  await h.ready(); await h.flushTimers();
+  for (const field of ['dropoff', 'pickup']) {
+    await h.update({ browsePickup: false, selectionMode: field });
+    await act(async () => h.map().props.onRegionWillChange(feature(moved.latitude, moved.longitude, { isUserInteraction: true })));
+    await act(async () => h.map().props.onRegionDidChange(feature(moved.latitude, moved.longitude)));
+    await h.update({ selectionMode: null, browsePickup: true });
+    await h.flushTimers();
+    assert.deepEqual([...h.cameraCalls.at(-1).centerCoordinate], [pickup.longitude, pickup.latitude]);
+    assert.equal(browsed.at(-1).latitude, pickup.latitude, `cancel ${field} must not publish the abandoned candidate as pickup`);
+  }
+  await h.update({ browsePickup: false, selectionMode: 'pickup' });
+  await act(async () => h.map().props.onRegionWillChange(feature(moved.latitude, moved.longitude, { isUserInteraction: true })));
+  await h.update({ selectionMode: null, browsePickup: true, pickup: moved, recenterKey: 1 });
+  await h.flushTimers();
+  assert.deepEqual([...h.cameraCalls.at(-1).centerCoordinate], [moved.longitude, moved.latitude]);
+  assert.equal(browsed.at(-1).latitude, moved.latitude, 'confirmation restores the newly committed pickup');
+  assert.equal(movement.at(-1), false, 'closing selection while moving restores the booking panel');
+});
+
+test('a manually selected pickup remains the browse center after a search recenter and late GPS', async t => {
+  const chosen = { latitude: 42.95, longitude: 74.65, address: 'Выбранный адрес' };
+  const h = await mountMap(t, { passengerView: true, showUserPosition: true, browsePickup: true,
+    pickup: { latitude: 42.87, longitude: 74.57 }, preferPickupCenter: false });
+  await h.ready();
+  await h.update({ pickup: chosen, preferPickupCenter: true, recenterKey: 1 });
+  assert.deepEqual([...h.cameraCalls.at(-1).centerCoordinate], [chosen.longitude, chosen.latitude]);
+  await act(async () => h.renderer.root.findByType('UserLocation').props.onUpdate({ timestamp: Date.now(), coords: { latitude: 42.89, longitude: 74.59, accuracy: 8 } }));
+  assert.deepEqual([...h.cameraCalls.at(-1).centerCoordinate], [chosen.longitude, chosen.latitude]);
+});
+
+test('taxi confirmation waits for GPS and a GPS result from a closed selection cannot move the next selection', async t => {
+  const requests = [], selected = [];
+  const h = await mountMap(t, { selectionMode: 'pickup', pickup: { latitude: 42.87, longitude: 74.57 }, onSelectPoint: value => selected.push(value) },
+    { getPosition: () => new Promise(resolve => requests.push(resolve)) });
+  await h.ready(); await h.flushTimers();
+  const confirm = () => h.renderer.root.findByType('Button');
+  const locate = async () => act(async () => h.renderer.root.findByProps({ accessibilityLabel: 'Моё местоположение' }).props.onPress());
+  assert.equal(confirm().props.disabled, false);
+  await locate();
+  assert.equal(confirm().props.disabled, true);
+  await act(async () => confirm().props.onPress());
+  assert.equal(selected.length, 0, 'a pending GPS lookup cannot confirm its previous address');
+  await h.update({ selectionMode: 'dropoff', dropoff: { latitude: 42.91, longitude: 74.61 } });
+  await h.flushTimers();
+  await locate();
+  const before = h.cameraCalls.length;
+  await act(async () => requests[0]({ latitude: 41.0, longitude: 73.0 }));
+  assert.equal(h.cameraCalls.length, before, 'closed selection request is invalidated');
+  assert.equal(confirm().props.disabled, true, 'the old finally handler cannot clear the new GPS loading state');
+  await act(async () => requests[1]({ latitude: 42.95, longitude: 74.65 }));
+  await h.flushTimers();
+  assert.equal(confirm().props.disabled, false);
+  await act(async () => confirm().props.onPress());
+  assert.equal(selected.at(-1).latitude, 42.95);
+  assert.equal(selected.at(-1).address, 'Выбранная улица');
 });
 
 test('food destination uses the shared map with a custom panel and a settled geocoded address', async t => {
@@ -418,8 +750,12 @@ test('dark map keeps vector streets readable, uses monochrome controls and switc
   assert.equal(style.layers.find(layer => layer.id === 'current-osm-road-minor').paint['line-color'], '#575757');
   assert.equal(style.layers.find(layer => layer.id === 'current-osm-road-footways').paint['line-color'], '#777777');
   assert.equal(style.layers.find(layer => layer.id === 'current-osm-buildings').paint['fill-color'], '#353535');
+  const urbanPaint = style.layers.find(layer => layer.id === 'current-osm-urban-areas').paint;
+  assert.ok(Array.isArray(urbanPaint['fill-color']), 'retail and residential grounds must not collapse to one dark fill');
+  assert.notEqual(style.layers.find(layer => layer.id === 'site-kindergarten').paint['fill-color'], '#1E1E1E', 'kindergarten grounds remain distinct from residential land at night');
   assert.ok(JSON.stringify(style.layers.find(layer => layer.id === 'current-osm-green-areas').paint['fill-outline-color']).includes('#66583E'), 'dark playgrounds keep one distinct outline');
-  assert.equal(style.layers.find(layer => layer.id === 'building-housenumber-local').paint['text-color'], '#F0F0F0');
+  assert.equal(style.layers.find(layer => layer.id === 'current-osm-addresses').paint['text-color'], '#ADB5BF');
+  assert.equal(style.layers.find(layer => layer.id === 'current-osm-street-local').paint['text-color'], '#F0F0F0');
   assert.equal(h.renderer.root.findByProps({ testID: 'map-zoom-controls' }).props.style[2].backgroundColor, '#101010');
   assert.equal(h.renderer.root.findByProps({ accessibilityLabel: 'Приблизить карту' }).findByType('Icon').props.color, '#FFFFFF');
   assert.equal(h.renderer.root.findByProps({ accessibilityLabel: 'Моё местоположение' }).findByType('Icon').props.color, '#FFFFFF');
@@ -431,7 +767,7 @@ test('dark map keeps vector streets readable, uses monochrome controls and switc
   await h.update({ language: 'ky' });
   const kyrgyzStreet = h.map().props.mapStyle.layers.find(layer => layer.id === 'current-osm-street-major');
   assert.equal(kyrgyzStreet['source-layer'], 'street_labels');
-  assert.deepEqual(JSON.parse(JSON.stringify(kyrgyzStreet.layout['text-field'][1])), ['get', 'name_ky']);
+  assert.deepEqual(JSON.parse(JSON.stringify(kyrgyzStreet.layout['text-field'][2][1][1])), ['get', 'name_ky'], 'compact street names keep the Kyrgyz name as their first choice');
   assert.equal(h.cameraCalls.length, before, 'switching map language preserves the viewed location');
   await h.update({ theme: 'dark' });
   await act(async () => h.map().props.onDidFailLoadingMap());
@@ -512,7 +848,7 @@ test('offer route badge sits above dropoff only while its distance and time are 
   const dropoff = { latitude: 42.91, longitude: 74.61 };
   const h = await mountMap(t, { pickup, dropoff, geometry: [pickup, dropoff] });
   const marker = id => h.renderer.root.findByProps({ testID: id });
-  assert.equal(marker('dropoff').props.anchor.y, 1, 'an ordinary trip anchors the pin stem to the destination');
+  assert.equal(marker('dropoff').props.anchor.y, 90 / 96, 'the stem and the center of the ground shadow share the destination coordinate');
   assert.equal(marker('dropoff').findAllByType('Text').length, 0);
 
   await h.update({ dropoffRouteLabel: '44 км · 1 ч 10 мин' });
@@ -520,12 +856,20 @@ test('offer route badge sits above dropoff only while its distance and time are 
   assert.equal(badgeMarker.props.coordinate[0], dropoff.longitude);
   assert.equal(badgeMarker.props.coordinate[1], dropoff.latitude);
   assert.equal(badgeMarker.props.anchor.y, 1, 'the pin stem stays anchored to the destination coordinate');
-  assert.equal(marker('pickup').props.anchor.y, 1, 'pickup marker is unaffected');
+  const nativeBadgeBounds = badgeMarker.children[0].props.style;
+  assert.equal(nativeBadgeBounds.width, 174, 'driver offer badge sizes its immediate native child');
+  assert.equal(nativeBadgeBounds.height, 121);
+  assert.equal(nativeBadgeBounds.width * badgeMarker.props.anchor.x, 87, 'the driver destination stem is centered in its real native bounds');
+  assert.equal(nativeBadgeBounds.height * badgeMarker.props.anchor.y, 121, 'the stem ends at the geographic coordinate');
+  const pickupBounds = marker('pickup').children[0].props.style;
+  assert.equal(pickupBounds.width * marker('pickup').props.anchor.x, 26,
+    'the differently sized pickup and destination must each use their own native anchor');
+  assert.equal(marker('pickup').props.anchor.y, 90 / 96, 'pickup marker is unaffected');
   assert.equal(badgeMarker.findAll(node => node.props.accessibilityLabel === 'Пункт назначения Б, 44 км · 1 ч 10 мин').length, 1);
   assert.deepEqual(badgeMarker.findAllByType('Text').map(node => node.children.join('')), ['Б', '44 км', '1 ч 10 мин']);
 
   await h.update({ dropoffRouteLabel: undefined });
-  assert.equal(marker('dropoff').props.anchor.y, 1);
+  assert.equal(marker('dropoff').props.anchor.y, 90 / 96);
   assert.equal(marker('dropoff').findAllByType('Text').length, 0, 'regular route markers never retain the offer badge');
 });
 
@@ -587,7 +931,7 @@ test('client tracking keeps the car with no GPS data panel even in diagnostic bu
     driverPosition: { latitude: 42, longitude: 74, courseDeg: 90, speedMps: 4 } },
     { env: { EXPO_PUBLIC_TRACKING_DIAGNOSTICS: '1' } });
   assert.equal(h.renderer.root.findAllByProps({ testID: 'client-tracking-diagnostics' }).length, 0);
-  assert.equal(h.renderer.root.findByProps({ id: 'client-driver-car' }).props.style.iconImage, 'tracking-car-white.png');
+  assert.equal(h.renderer.root.findByProps({ id: 'client-driver-car' }).props.style.iconImage, 'tracking-car-white.webp');
 });
 
 test('driver display corrects a small roadside offset without changing GPS data or measured course', async t => {
@@ -687,7 +1031,7 @@ test('client keeps its original car at rest before course is known and during mo
   assert.equal(h.renderer.root.findAllByProps({ id: 'client-driver-unknown-course' }).length, 0);
   const car = h.renderer.root.findByProps({ id: 'client-driver-car' });
   assert.equal(car.props.filter, undefined, 'the car remains visible without a measured course');
-  assert.equal(car.props.style.iconImage, 'tracking-car-white.png');
+  assert.equal(car.props.style.iconImage, 'tracking-car-white.webp');
   assert.equal(car.props.style.iconSize, .025);
   assert.equal(car.props.style.iconRotationAlignment, 'map');
   assert.deepEqual(JSON.parse(JSON.stringify(car.props.style.iconRotate)), ['+', ['coalesce', ['get', 'bearing'], 0], 0]);
@@ -696,7 +1040,7 @@ test('client keeps its original car at rest before course is known and during mo
   await h.settle();
   assert.equal(h.shape('client-driver-position').properties.hasBearing, true);
   assert.equal(h.shape('client-driver-position').properties.bearing, 90);
-  assert.equal(h.renderer.root.findByProps({ id: 'client-driver-car' }).props.style.iconImage, 'tracking-car-white.png');
+  assert.equal(h.renderer.root.findByProps({ id: 'client-driver-car' }).props.style.iconImage, 'tracking-car-white.webp');
 });
 
 test('driver keeps its original arrow at rest and on movement, including diagnostic builds', async t => {
@@ -802,8 +1146,7 @@ test('the map styles vector roads and places, keeps attribution and can fall bac
   assert.equal(style.layers.find(layer => layer.id === 'water').paint['fill-color'], '#BBDCF4');
   assert.equal(style.layers.find(layer => layer.id === 'building-top').paint['fill-color'], '#E5ECF3');
   assert.equal(style.layers.find(layer => layer.id === 'highway-minor').paint['line-color'], '#FFFFFF');
-  assert.equal(style.layers.find(layer => layer.id === 'building-housenumber-local')['source-layer'], 'housenumber');
-  assert.equal(style.layers.find(layer => layer.id === 'building-housenumber-local').minzoom, 14);
+  assert.equal(style.layers.some(layer => layer['source-layer'] === 'housenumber'), false, 'house numbers do not crowd the overview');
   assert.equal(style.layers.find(layer => layer.id === 'park-name-local')['source-layer'], 'park');
   assert.equal(style.layers.some(layer => layer.id.startsWith('poi_r')), false, 'older POI icons do not repeat current OSM places');
   assert.equal(style.sources.osm_current_labels.type, 'vector');
@@ -823,7 +1166,7 @@ test('the map styles vector roads and places, keeps attribution and can fall bac
   assert.ok(style.layers.findIndex(layer => layer.id === 'current-osm-buildings') < style.layers.findIndex(layer => layer.id === 'current-osm-road-footways'));
   assert.ok(style.layers.findIndex(layer => layer.id === 'current-osm-road-major') < style.layers.findIndex(layer => layer.id === 'current-osm-street-major'));
   assert.ok(style.layers.findIndex(layer => layer.id === 'current-osm-sites') < style.layers.findIndex(layer => layer.id === 'building'), 'current sites stay below buildings and roads');
-  for (const kind of ['stadium', 'pitch', 'track']) {
+  for (const kind of ['kindergarten', 'stadium', 'pitch', 'track']) {
     const layer = style.layers.find(item => item.id === `site-${kind}`);
     assert.equal(layer['source-layer'], 'landuse');
     assert.equal(JSON.stringify(layer.filter), JSON.stringify(['==', ['get', 'class'], kind]));
@@ -855,7 +1198,19 @@ test('the map styles vector roads and places, keeps attribution and can fall bac
   assert.notEqual(style.layers.find(layer => layer.id === 'current-osm-street-local').layout['text-allow-overlap'], true, 'local street names avoid other labels');
   assert.equal(style.layers.find(layer => layer.id === 'current-osm-street-area-names')['source-layer'], 'streets_polygons_labels');
   assert.ok(style.layers.findIndex(layer => layer.id === 'current-osm-street-major') > style.layers.findIndex(layer => layer.id === 'poi_r20'));
-  assert.ok(style.layers.findIndex(layer => layer.id === 'current-osm-street-major') < style.layers.findIndex(layer => layer.id === 'current-osm-road-ref'), 'street names take label priority over route shields');
+  assert.ok(style.layers.findIndex(layer => layer.id === 'current-osm-street-major') > style.layers.findIndex(layer => layer.id === 'current-osm-road-ref'), 'reverse symbol placement gives street names priority over route shields');
+  for (const street of ['overview-street-local', 'current-osm-street-local', 'current-osm-street-major', 'current-osm-street-major-detail', 'current-osm-street-area-names']) {
+    for (const secondary of ['current-osm-addresses', 'current-osm-pois', 'current-osm-transit', 'current-osm-neighborhoods']) {
+      assert.ok(style.layers.findIndex(layer => layer.id === street) > style.layers.findIndex(layer => layer.id === secondary), `${street} reserves space before ${secondary}`);
+    }
+    const layer = style.layers.find(layer => layer.id === street);
+    assert.notEqual(layer.layout['text-allow-overlap'], true, 'readable labels must still avoid overlaps');
+    assert.notEqual(layer.layout['text-ignore-placement'], true, 'street labels reserve their space');
+    if (layer.layout['symbol-placement'] === 'line') {
+      assert.ok(layer.layout['symbol-spacing'] >= 300 && layer.layout['symbol-spacing'] <= 420, 'street names remain present without repeating every 180–200 pixels');
+      assert.ok(layer.layout['text-padding'] >= 5, 'different street names keep a readable gap at intersections');
+    }
+  }
   assert.ok(style.layers.find(layer => layer.id === 'current-osm-pois').layout['icon-image'], 'current organizations have visible icons');
   assert.equal(style.layers.find(layer => layer.id === 'current-osm-transit')['source-layer'], 'public_transport');
   assert.equal(style.layers.find(layer => layer.id === 'current-osm-neighborhoods')['source-layer'], 'place_labels');
@@ -876,12 +1231,19 @@ test('the map styles vector roads and places, keeps attribution and can fall bac
     assert.equal(visible(older, 16), false, `${older} does not double detailed OSM features`);
     assert.equal(visible(current, 16), true, `${current} provides the detailed map`);
   }
-  assert.equal(visible('building-housenumber-local', 14.5), true);
+  assert.equal(visible('overview-street-local', 13.5), true);
+  assert.equal(visible('current-osm-street-local', 14.5), true);
+  assert.equal(visible('current-osm-addresses', 14.5), false);
+  assert.equal(visible('current-osm-addresses', 15.5), true, 'subdued house numbers join street names at neighborhood zoom');
+  assert.equal(visible('building-housenumber-local', 14.5), false);
   assert.equal(visible('building-housenumber-local', 16), false);
   assert.equal(visible('current-osm-addresses', 16), true);
   assert.equal(visible('poi_transit', 16), false);
   assert.equal(visible('current-osm-transit', 16), true);
   assert.equal(visible('site-pitch', 16), true, 'sports grounds absent from the Shortbread fills remain visible');
+  assert.equal(visible('site-kindergarten', 16), true, 'kindergarten polygons missing from Shortbread stay visible through OpenMapTiles');
+  assert.equal(visible('site-retail-overview', 13.5), true, 'retail zones are visible before the detailed source takes over');
+  assert.equal(visible('site-retail-overview', 16), false, 'retail grounds use one polygon source at detailed zoom');
   assert.equal(visible('landcover-sand', 16), true, 'unreplaced landcover remains visible');
   assert.ok(style.layers.every(layer => layer.maxzoom === undefined || layer.maxzoom > (layer.minzoom ?? 0)), 'no impossible zoom ranges');
   assert.equal(h.headers[0][0], 'User-Agent');
@@ -960,15 +1322,18 @@ test('closing a completed trip returns the map to the driver instead of Bishkek'
   assert.equal(h.bounds.length, 1);
 });
 
-test('late client GPS replaces the startup city camera and displays a dot without an accuracy radius', async t => {
+test('late client GPS replaces the startup city camera and uses the native heading puck', async t => {
   const seen = [];
   const h = await mountMap(t, { passengerView: true, showUserPosition: true, onUserLocation: point => seen.push(point) });
   await h.ready();
   const puck = h.renderer.root.findByType('UserLocation');
-  assert.equal(puck.props.visible, false);
+  assert.equal(puck.props.visible, true);
+  assert.equal(puck.props.renderMode, 'native');
+  assert.equal(puck.props.androidRenderMode, 'compass');
+  assert.equal(puck.props.showsUserHeadingIndicator, true);
   await act(async () => puck.props.onUpdate({ timestamp: Date.now(), coords: { latitude: 41.1987, longitude: 72.1802, accuracy: 8 } }));
   assert.deepEqual([...h.cameraCalls.at(-1).centerCoordinate], [72.1802, 41.1987]);
-  assert.equal(h.renderer.root.findByProps({ id: 'client-user-position' }).props.coordinate[1], 41.1987);
+  assert.equal(h.renderer.root.findAllByProps({ id: 'client-user-position' }).length, 0);
   assert.equal(h.renderer.root.findAllByProps({ id: 'driver-accuracy' }).length, 0);
   assert.equal(seen.length, 1);
 });
@@ -986,12 +1351,12 @@ test('following client GPS keeps an explicitly chosen pickup pin unchanged', asy
   assert.equal(changed.length, 0);
 });
 
-test('dark approach route has a distinct amber line alongside the white fare route', async t => {
+test('dark approach route has a distinct amber line alongside the blue fare route', async t => {
   const a = { latitude: 41.1987, longitude: 72.1802 }, b = { latitude: 41.20, longitude: 72.183 };
   const h = await mountMap(t, { theme: 'dark', pickup: a, dropoff: b, geometry: [a, b], approachGeometry: [a, b] });
   await h.ready();
   assert.equal(h.renderer.root.findByProps({ id: 'approach-route-line' }).props.style.lineColor, '#FFBC4B');
-  assert.equal(h.renderer.root.findByProps({ id: 'route-line' }).props.style.lineColor, '#F0F0F0');
+  assert.equal(h.renderer.root.findByProps({ id: 'route-line' }).props.style.lineColor, '#57AAFF');
 });
 
 test('destination Б uses blue in the light theme and white in the dark theme', async t => {
@@ -1009,7 +1374,7 @@ test('passenger sees only the supplied driver and can inspect the route without 
   const source = () => h.shape('client-driver-position');
   const car = () => h.renderer.root.findByProps({ id: 'client-driver-car' });
   assert.deepEqual([...source().geometry.coordinates], [a.longitude, a.latitude]);
-  assert.equal(car().props.style.iconImage, 'tracking-car-white.png');
+  assert.equal(car().props.style.iconImage, 'tracking-car-white.webp');
   assert.equal(car().props.style.iconSize, .025, 'the 1046×1504 source uses a scale, not logical pixels');
   assert.equal(car().props.style.iconAnchor, 'center');
   assert.deepEqual([...car().props.style.iconOffset], [0, 0]);
@@ -1118,6 +1483,19 @@ test('new offer restores overview above tall panel after manual pan and style re
 });
 
 
+test('editing a destination hides the committed fallback route until its new preview arrives', async t => {
+  const pickup = { latitude: 42.87, longitude: 74.57 };
+  const dropoff = { latitude: 42.90, longitude: 74.61 };
+  const h = await mountMap(t, { pickup, dropoff }, { request: async () => ({ geometry: [pickup, dropoff] }) });
+  const route = () => h.renderer.root.findAllByType('ShapeSource').find(node => node.props.id === 'route');
+  assert.ok(route());
+  await h.update({ selectionMode: 'dropoff', geometry: null });
+  assert.equal(route(), undefined, 'the committed route must not masquerade as the pending selection');
+  const candidate = { latitude: 42.92, longitude: 74.62 };
+  await h.update({ geometry: [pickup, candidate] });
+  assert.equal(route().props.shape.coordinates.at(-1)[0], candidate.longitude);
+});
+
 test('driver map controls and camera padding share the sheet animation clock without rerenders', async t => {
   let currentInset = 200;
   const animatedBottomInset = { get: () => currentInset };
@@ -1136,4 +1514,128 @@ test('driver map controls and camera padding share the sheet animation clock wit
   }
   assert.ok(h.cameraCalls.length > cameraCount);
   assert.equal(h.renderer.root.findByProps({ testID: 'map-controls' }), controls, 'the moving panel does not rerender map controls');
+});
+
+test('driver control position stays fixed while a settled sheet height crosses the React and UI runtimes', async t => {
+  let currentInset = 200;
+  const animatedBottomInset = { get: () => currentInset };
+  const h = await mountMap(t, { contentBottomInset: 200, animatedBottomInset, navigationActive: true });
+  await h.ready();
+  const controls = () => h.renderer.root.findByProps({ testID: 'map-controls' });
+  const oldWorklet = controls().props.style.at(-1);
+  currentInset = 420;
+  const beforeCommit = controls().props.style[2].top + oldWorklet.evaluate().transform[0].translateY;
+  await h.update({ contentBottomInset: 420 });
+  const newBase = controls().props.style[2].top;
+  assert.equal(newBase + oldWorklet.evaluate().transform[0].translateY, beforeCommit,
+    'a React layout commit cannot move controls before the new UI worklet is installed');
+  assert.equal(newBase + controls().props.style.at(-1).evaluate().transform[0].translateY, beforeCommit,
+    'installing the new worklet cannot compensate with a second jump');
+  currentInset = 290;
+  const duringDrag = newBase + controls().props.style.at(-1).evaluate().transform[0].translateY;
+  await h.update({ contentBottomInset: 290, theme: 'dark' });
+  assert.equal(controls().props.style[2].top + controls().props.style.at(-1).evaluate().transform[0].translateY, duringDrag);
+});
+
+test('driver controls wait for the incoming order panel measurement before becoming interactive', async t => {
+  const h = await mountMap(t, { cameraReady: false, animatedBottomInset: { get: () => 0 }, contentBottomInset: 0 });
+  await h.ready();
+  const controls = () => h.renderer.root.findByProps({ testID: 'map-controls' });
+  assert.equal(controls().props.pointerEvents, 'none');
+  assert.equal(controls().props.style.at(-1).evaluate().opacity, 0);
+  await h.update({ cameraReady: true, contentBottomInset: 280, animatedBottomInset: { get: () => 280 } });
+  assert.equal(controls().props.pointerEvents, 'auto');
+  assert.equal(controls().props.style.at(-1).evaluate().opacity, 1);
+  await h.update({ cameraReady: false, animatedBottomInset: undefined });
+  assert.equal(controls().props.pointerEvents, 'auto', 'a completed trip without an animated sheet keeps its map controls');
+  assert.equal(controls().props.style.at(-1).evaluate().opacity, 1);
+});
+
+
+test('incoming offer waits for its own measured panel and does not refit on every GPS or route refresh', async t => {
+  const pickup = { latitude: 42.87, longitude: 74.57 };
+  const dropoff = { latitude: 42.90, longitude: 74.61 };
+  const h = await mountMap(t, { pickup, dropoff, geometry: [pickup, dropoff], driverPosition: { latitude: 42.86, longitude: 74.56 }, cameraSession: 'offer-one:SEARCHING', stableOverview: true, cameraReady: false, contentBottomInset: 650 });
+  await h.ready();
+  assert.equal(h.bounds.length, 0, 'old or unmeasured panel must not choose the offer zoom');
+  await h.update({ cameraReady: true, contentBottomInset: 280 });
+  assert.equal(h.bounds.length, 1);
+  for (let index = 1; index <= 6; index++) await h.update({ driverPosition: { latitude: 42.86 + index * .0001, longitude: 74.56 }, geometry: [{ ...pickup }, { ...dropoff }] });
+  assert.equal(h.bounds.length, 1, 'GPS ticks and fresh equivalent geometry objects cannot restart fitBounds');
+  await h.update({ approachGeometry: [{ latitude: 42.86, longitude: 74.56 }, pickup] });
+  assert.equal(h.bounds.length, 2, 'first approach road can complete the overview once');
+  await h.update({ approachGeometry: [{ latitude: 42.861, longitude: 74.56 }, { ...pickup }] });
+  assert.equal(h.bounds.length, 2);
+  await h.update({ contentBottomInset: 450 });
+  assert.equal(h.bounds.length, 3, 'an expanded panel refits once to its actual measured detent');
+  await h.update({ driverPosition: { latitude: 42.862, longitude: 74.56 } });
+  assert.equal(h.bounds.length, 3);
+  await h.update({ cameraSession: 'offer-two:SEARCHING', cameraReady: false, contentBottomInset: 450 });
+  assert.equal(h.bounds.length, 3);
+  await h.update({ cameraReady: true, contentBottomInset: 280 });
+  assert.equal(h.bounds.length, 4, 'new offer can frame once after its own layout');
+  await h.update({ recenterKey: 1 });
+  assert.equal(h.bounds.length, 5, 'explicit recenter remains available');
+});
+
+test('pickup marker distinguishes unavailable cars from a missing ETA and keeps unknown availability neutral', async t => {
+  const pickup = { latitude: 42.87, longitude: 74.57 };
+  const h = await mountMap(t, { pickup, pickupEtaMinutes: null });
+  const texts = () => h.renderer.root.findByProps({ testID: 'pickup-pin-visual' }).findAllByType('Text').map(node => node.children.join(''));
+  const opacity = () => h.renderer.root.findByProps({ testID: 'pickup-pin-metrics' }).props.style.at(-1).evaluate().opacity;
+  assert.deepEqual(texts(), [], 'a null ETA alone cannot claim that no cars exist');
+  await h.update({ pickupAvailability: 'available' });
+  assert.deepEqual(texts(), ['Подача', '—'], 'available cars with a failed route estimate have no invented ETA');
+  await h.update({ pickupAvailability: 'unavailable', pickupEtaMinutes: 2 });
+  assert.deepEqual(texts(), ['Подача', 'Нет машин'], 'current availability overrides a stale ETA');
+  await h.update({ pickupAvailability: 'unknown', pickupEtaMinutes: null });
+  assert.equal(opacity(), 0, 'unknown availability hides a stale no-cars badge');
+});
+
+test('destination marker retains the server trip time with no fare while no cars are available', async t => {
+  const pickup = { latitude: 42.87, longitude: 74.57 }, dropoff = { latitude: 42.9, longitude: 74.6 };
+  const h = await mountMap(t, { pickup, dropoff, dropoffEstimate: { durationMinutes: 1.5167, price: null } });
+  const texts = () => h.renderer.root.findByProps({ testID: 'dropoff-pin-visual' }).findAllByType('Text').map(node => node.children.join(''));
+  assert.deepEqual(texts(), ['Ехать 2 мин', '—']);
+  await h.update({ dropoffEstimate: { durationMinutes: 1.5167, price: 87 } });
+  assert.deepEqual(texts(), ['Ехать 2 мин', '87 сом']);
+});
+
+test('native MarkerView ground uses immediate child bounds through viewport changes, pan and zoom', async t => {
+  const pickup = { latitude: 42.87, longitude: 74.57 }, dropoff = { latitude: 42.9, longitude: 74.6 };
+  const h = await mountMap(t, { pickup, dropoff, pickupEtaMinutes: 4, dropoffEstimate: { durationMinutes: 2, price: 87 } });
+  await h.ready();
+  // Installed MLRNMarkerView.onUpdate subtracts getWidth/getHeight of its
+  // immediate child from Projection.toScreenLocation, in native physical pixels.
+  // A nested fixed frame cannot prevent an auto-width native child stretching.
+  const assertNativeGround = (field, viewportWidth, density, projected) => {
+    const marker = h.renderer.root.findByProps({ testID: field });
+    const directChild = marker.children[0];
+    const visual = marker.findByProps({ testID: `${field}-pin-visual` });
+    const shadow = visual.findByProps({ testID: `${field}-pin-shadow` }).props.style[0];
+    const childWidth = directChild.props.style?.width ?? viewportWidth;
+    const childHeight = directChild.props.style?.height ?? visual.props.style.height;
+    const shadowX = shadow.left + shadow.width / 2;
+    const shadowY = visual.props.style.height - shadow.bottom - shadow.height / 2;
+    const groundX = projected[0] - childWidth * density * marker.props.anchor.x + shadowX * density;
+    const groundY = projected[1] - childHeight * density * marker.props.anchor.y + shadowY * density;
+    assert.ok(Math.abs(groundX - projected[0]) < .01, `${field} ground moved by ${groundX - projected[0]} native pixels`);
+    assert.ok(Math.abs(groundY - projected[1]) < .01, `${field} ground moved by ${groundY - projected[1]} native pixels`);
+    assert.equal(visual.findByProps({ testID: `${field}-pin-icon` }).props.style[0].borderWidth, 2);
+  };
+  for (const [width, height, density, zoom] of [[487, 980, 1.75, 14], [320, 700, 1, 18], [720, 480, 2.625, 12]]) {
+    await act(async () => {
+      h.renderer.root.findByProps({ testID: 'map-viewport' }).props.onLayout({ nativeEvent: { layout: { width, height } } });
+      h.map().props.onRegionWillChange(feature(42.94, 74.64, { isUserInteraction: true, zoomLevel: zoom, heading: 83 }));
+      h.map().props.onRegionDidChange(feature(42.94, 74.64, { zoomLevel: zoom, heading: 83 }));
+    });
+    assertNativeGround('pickup', width, density, [168, 1070]);
+    assertNativeGround('dropoff', width, density, [684, 368]);
+    await h.update({ pickupEtaMinutes: undefined, dropoffEstimate: null });
+    assertNativeGround('pickup', width, density, [333.25, 427.5]);
+    assertNativeGround('dropoff', width, density, [517.8, 102.25]);
+    assert.deepEqual([...h.renderer.root.findByProps({ testID: 'pickup' }).props.coordinate], [pickup.longitude, pickup.latitude]);
+    assert.deepEqual([...h.renderer.root.findByProps({ testID: 'dropoff' }).props.coordinate], [dropoff.longitude, dropoff.latitude]);
+    await h.update({ pickupEtaMinutes: 4, dropoffEstimate: { durationMinutes: 2, price: 87 } });
+  }
 });

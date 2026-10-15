@@ -56,7 +56,7 @@ test('food switch exposes controlled checked state, rejects disabled input and r
   assert.equal(control().props.accessibilityState.checked, false, 'only the owner can commit a controlled setting');
   await act(async () => renderer.update(React.createElement(FoodSwitch, { ...props, value: true })));
   assert.equal(control().props.accessibilityState.checked, true);
-  assert.equal(trackColor(), '#FFE500');
+  assert.equal(trackColor(), '#3478F6');
   assert.equal(timings.at(-1).options.duration, 150);
   await act(async () => renderer.update(React.createElement(FoodSwitch, { ...props, value: true, disabled: true })));
   await act(async () => control().props.onPress());

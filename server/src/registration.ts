@@ -194,18 +194,15 @@ export class RegistrationService {
       if(!operational.length)throw new ConflictException('Начать работу можно после одобрения и подготовки хотя бы одного направления');
       await tx.$queryRaw`SELECT "id" FROM "User" WHERE "id"=${actor.id}::uuid FOR UPDATE`;
       const user=await tx.user.findUniqueOrThrow({where:{id:actor.id},select:{role:true,driverProfile:{include:{vehicle:true}}}});
-      if(user.role==='ADMIN')throw new ForbiddenException('Администратор не может активировать профиль исполнителя');
-      const roleChanged=user.role!=='DRIVER';
-      if(roleChanged&&(await tx.order.findFirst({where:{clientId:actor.id,status:{in:ACTIVE_STATUSES}},select:{id:true}})||await tx.foodOrder.findFirst({where:{clientId:actor.id,status:{in:ACTIVE_FOOD_STATUSES}},select:{id:true}})))throw new ConflictException('Сначала завершите активный заказ');
+      if(user.role!=='DRIVER')throw new ForbiddenException('Войдите в приложение водителя с вашим номером телефона.');
       if(!user.driverProfile?.verified)throw new ConflictException('Профиль исполнителя ещё не подготовлен. Обновите статус анкеты.');
       const hasWorkCapability=[user.driverProfile.acceptsEconomy,user.driverProfile.acceptsComfort,user.driverProfile.acceptsDeliveryCar,user.driverProfile.acceptsDeliveryFood,user.driverProfile.acceptsDeliveryTruck].some(Boolean)||user.driverProfile.courierModes.some(mode=>LIGHT_COURIER_METHODS.has(mode));
       if(!hasWorkCapability)throw new ConflictException('Одобренное направление ещё не подготовлено. Обратитесь в поддержку.');
-      if(roleChanged)await tx.user.update({where:{id:actor.id},data:{role:'DRIVER'}});
       if(!application.activatedAt) {
         await tx.performerApplication.update({where:{id:application.id},data:{activatedAt:new Date()}});
         await this.enqueuePush(tx,actor.id,'registration:activated',application.id);
       }
-      return {applicationId:application.id,changed:roleChanged||!application.activatedAt};
+      return {applicationId:application.id,changed:!application.activatedAt};
     });
     if(outcome.changed) {
       this.events.adminChanged('drivers',actor.id);
@@ -288,7 +285,7 @@ export class RegistrationService {
     return {id:upload.id,slotKey:upload.slotKey,kind:upload.kind,role:upload.role,status:upload.status,mimeType:upload.mimeType,byteSize:upload.byteSize,expiresAt:upload.expiresAt,reasonCode:upload.reasonCode,reasonText:upload.reasonText,canReupload:upload.canReupload,createdAt:upload.createdAt,updatedAt:upload.updatedAt,url:remoteUrl,remoteUrl};
   }
 
-  private assertPerformer(actor:Actor) {if(actor.role!=='CLIENT'&&actor.role!=='DRIVER')throw new ForbiddenException('Анкета доступна только исполнителю');}
+  private assertPerformer(actor:Actor) {if(actor.role!=='DRIVER')throw new ForbiddenException('Войдите в приложение водителя с вашим номером телефона.');}
   private assertSlotKey(slotKey:string) {if(!/^[A-Za-z0-9][A-Za-z0-9._:-]{0,119}$/.test(slotKey))throw registrationError('Некорректный идентификатор файла');}
   private assertEditable(status:RegistrationApplicationStatus,canResubmit:boolean) {
     if(!editableStatuses.includes(status))throw new ConflictException('Анкета сейчас недоступна для редактирования');

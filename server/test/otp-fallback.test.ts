@@ -10,7 +10,7 @@ import { PrismaService } from '../src/prisma.service';
 const phone='+996700123456',code='654321',codeHash='test-code-hash';
 const config={smsProvider:'messaggio',telegramGatewayToken:'gateway-secret',otpSecret:'another-32-character-secret-for-otp'} as AppConfig;
 
-function harness(options:{whatsapp?:()=>Promise<string>;status?:()=>Promise<'delivered'|'pending'|'failed'>;telegram?:()=>Promise<string>}={}) {
+function harness(options:{whatsapp?:()=>Promise<string>;status?:()=>Promise<'delivered'|'pending'|'failed'>;telegram?:()=>Promise<string>;config?:AppConfig}={}) {
   const jobs=new Map<string,any>(),calls:string[]=[];
   const challenge={codeHash,consumedAt:null as Date|null,expiresAt:new Date(Date.now()+300000)};
   function matches(job:any,where:any):boolean {
@@ -38,7 +38,7 @@ function harness(options:{whatsapp?:()=>Promise<string>;status?:()=>Promise<'del
     whatsappStatus:async()=>{calls.push('status');return options.status?options.status():'pending';},
     sendTelegram:async(receivedPhone:string,receivedCode:string,ttl:number)=>{calls.push('telegram');assert.equal(receivedPhone,phone);assert.equal(receivedCode,code);assert.ok(ttl>=30&&ttl<=300);return options.telegram?options.telegram():'tg-id';},
   } as unknown as OtpDelivery;
-  const service=new OtpFallback(db as unknown as PrismaService,config,delivery);
+  const service=new OtpFallback(db as unknown as PrismaService,options.config??config,delivery);
   return {service,db,delivery,challenge,calls,job:()=>[...jobs.values()][0]};
 }
 
@@ -48,6 +48,29 @@ test('fallback ciphertext is authenticated and bound to this challenge',()=>{
   assert.equal(value.includes(code),false);
   assert.throws(()=>unsealOtp(value,config.otpSecret,'other-attempt'));
   assert.throws(()=>unsealOtp(value,'wrong-secret','attempt-id'));
+});
+
+test('Cloud rejection with unfunded Gateway never sends Telegram or activates a fake success',async()=>{
+  const cfg={...config,smsProvider:'whatsapp_cloud',telegramGatewayToken:''} as AppConfig;
+  const h=harness({config:cfg,whatsapp:async()=>{throw Error('rejected');}});
+  await assert.rejects(h.service.start(phone,code,codeHash),ServiceUnavailableException);
+  assert.deepEqual(h.calls,['whatsapp']);assert.equal(h.job().state,'failed');assert.equal(h.job().codeCiphertext,'');
+});
+
+test('Cloud-only acceptance remains pending without switching to an unfunded Gateway at 60 seconds',async()=>{
+  const cfg={...config,smsProvider:'whatsapp_cloud',telegramGatewayToken:''} as AppConfig;
+  const h=harness({config:cfg});const receipt=await h.service.start(phone,code,codeHash);
+  h.job().createdAt=new Date(Date.now()-61000);await h.service.processPending();
+  assert.equal(receipt.channel,'whatsapp');assert.equal(h.job().state,'whatsapp_pending');assert.equal(h.calls.includes('telegram'),false);
+  h.job().expiresAt=new Date(Date.now()-1);await h.service.processPending();
+  assert.equal(h.job().state,'expired');assert.equal(h.job().codeCiphertext,'');
+});
+
+test('Confirmed Cloud webhook failure uses the existing durable fallback once when Gateway is configured',async()=>{
+  const cfg={...config,smsProvider:'whatsapp_cloud'} as AppConfig;
+  const h=harness({config:cfg});await h.service.start(phone,code,codeHash);
+  h.job().state='whatsapp_failed';await h.service.processPending();await h.service.processPending();
+  assert.deepEqual(h.calls,['whatsapp','telegram']);assert.equal(h.job().state,'telegram_accepted');
 });
 
 test('WhatsApp is always first; delivered WhatsApp prevents Telegram and removes ciphertext',async()=>{

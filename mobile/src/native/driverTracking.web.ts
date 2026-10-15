@@ -1,7 +1,7 @@
 export const subscribeDriverFix = (_listener: unknown) => () => {};
 export const setDriverTrackingSession = async (_session: unknown) => {};
 export const startDriverBackgroundTracking = async () => false;
-export const requestDriverBackgroundAccess = async () => false;
+export const requestDriverBackgroundAccess = async (_language?: import('../types').Language) => false;
 export const reportDriverPosition = async (_fix: unknown) => {};
 export const ingestDriverLocation = (_fix: unknown) => null;
 import { getTrackingRecording } from './trackingRecorder.web';

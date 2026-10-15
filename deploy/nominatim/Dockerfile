@@ -11,7 +11,8 @@ RUN sed -i 's/--bind :8080/--bind [::]:8080/g' /app/start.sh \
     && ln -s /var/lib/postgresql/16/main/project /nominatim
 COPY start.sh /usr/local/bin/taxi-nominatim-start
 COPY replication.sh /usr/local/bin/taxi-nominatim-replication
-RUN sed -i 's/\r$//' /usr/local/bin/taxi-nominatim-start /usr/local/bin/taxi-nominatim-replication \
+COPY replication.py /usr/local/bin/taxi-nominatim-replication.py
+RUN sed -i 's/\r$//' /usr/local/bin/taxi-nominatim-start /usr/local/bin/taxi-nominatim-replication /usr/local/bin/taxi-nominatim-replication.py \
     && chmod +x /usr/local/bin/taxi-nominatim-start /usr/local/bin/taxi-nominatim-replication
 ENV PBF_URL=https://download.geofabrik.de/asia/kyrgyzstan-latest.osm.pbf \
     REPLICATION_URL=https://download.geofabrik.de/asia/kyrgyzstan-updates/ \

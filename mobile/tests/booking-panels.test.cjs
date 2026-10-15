@@ -12,6 +12,7 @@ let pendingSheetExits = [];
 let deferRootExit = false;
 let pendingRootExits = [];
 let openedUrl = '';
+let hardwareBackHandler = null;
 class AnimatedValue {
   constructor(value) { this.value = value; }
   setValue(value) { this.value = value; }
@@ -29,6 +30,7 @@ const native = {
   PanResponder: { create: handlers => ({ panHandlers: handlers }) },
   Easing: { in: x => x, out: x => x, cubic: 'cubic' }, Platform: { OS: 'android' },
   StyleSheet: { create: x => x, absoluteFill: {}, absoluteFillObject: {}, hairlineWidth: 1 }, Keyboard: { dismiss() {} }, Linking: { openURL(url) { openedUrl = url; } }, useWindowDimensions: () => windowDimensions,
+  BackHandler: { addEventListener(_event, callback) { hardwareBackHandler = callback; return { remove() { if (hardwareBackHandler === callback) hardwareBackHandler = null; } }; } },
 };
 let pickedContact = null;
 const contacts = { isAvailableAsync: async () => true, requestPermissionsAsync: async () => ({ granted: true }), presentContactPickerAsync: async () => pickedContact };
@@ -79,8 +81,11 @@ function load(file) {
     if (id === './RoadFeatureAlerts') return { RoadFeatureAlerts: 'RoadFeatureAlerts' };
     if (id === './native/driverTracking') return { getDriverTrackingDiagnostics: () => ({ raw: null, processed: null, ageMs: null,
       trackingSessionId: null, sequence: 0, transportStatus: 'idle', lastDropReason: '' }), stopDriverGpsDiagnostic() {} };
-    if (id === 'react-native-safe-area-context') return { useSafeAreaInsets: () => ({ top: 24, bottom: 24 }) };
+    if (id === 'react-native-safe-area-context') return { useSafeAreaInsets: () => ({ top: 24, bottom: 24, left: 0, right: 0 }) };
     if (id === './ui') return ui;
+    if (id === './api') return { api: { baseUrl: 'http://local.test/api', getTokens: () => null } };
+    if (id === './TripContactButton') return load('TripContactButton.tsx');
+    if (id === './design/typography') return { fonts: { regular: 'Inter_400Regular', medium: 'Inter_500Medium', semibold: 'Inter_600SemiBold', bold: 'Inter_700Bold', extraBold: 'Inter_800ExtraBold' } };
     if (id === './BottomPanel') return { BottomPanel: function BottomPanel({ closeRequested, onClose, children, ...props }) {
       React.useEffect(() => { if (closeRequested) { if (deferSheetExit) pendingSheetExits.push(onClose); else onClose(); } }, [closeRequested]);
       return React.createElement('BottomPanel', { ...props, closeRequested, onClose }, children);
@@ -88,11 +93,11 @@ function load(file) {
     if (id === './design/motion') return { useMotionPreference: () => false };
     if (id === './design/theme') return { useTheme: () => ({ isDark: darkTheme, palette: darkTheme ? darkPalette : lightPalette }) };
     if (id === './design/themeStyles') return { useThemeStyles: base => base };
-    if (id === './design/tokens') return { motion: { sheet: 320 } };
+    if (id === './design/tokens') return load('design/tokens.ts');
     if (id === './usePanelTransition') return load('usePanelTransition.ts');
     if (id === './useParametersSwipe') return load('useParametersSwipe.ts');
     if (id === './clientMapPanelStyle') return load('clientMapPanelStyle.ts');
-    if (id === './DriverRideSheet') return { DriverRideSheet: function Sheet({ header, details, compactDetails, footer, style, onExpanded, onHeight, visible = true, testID = 'driver-ride-sheet', handleLabel, handleStyle, handleTouchStyle }) {
+    if (id === './DriverRideSheet') return { DriverRideSheet: function Sheet({ header, details, compactDetails, footer, style, onExpanded, onHeight, visible = true, showHandle = true, testID = 'driver-ride-sheet', handleLabel, handleStyle, handleTouchStyle }) {
       const [open, setOpen] = React.useState(false);
       const [height, setHeight] = React.useState(0);
       React.useEffect(() => { onHeight?.(visible ? height : 0); }, [visible, height]);
@@ -101,16 +106,23 @@ function load(file) {
       return React.createElement('PanGestureHandler', { enabled: true, activeOffsetY: [-8, 8], failOffsetX: [-12, 12],
         onHandlerStateChange: event => { if (event.nativeEvent.state === 5) change(event.nativeEvent.translationY < 0); } },
         React.createElement('View', { testID, style, onLayout: event => setHeight(event.nativeEvent.layout.height) },
-          React.createElement('Pressable', { testID: 'driver-panel-handle', accessibilityLabel: handleLabel(open), accessibilityState: { expanded: open }, style: handleTouchStyle || { height: 24, position: 'absolute', top: 0 }, onPress: toggle }, React.createElement('View', { style: handleStyle })),
-          typeof header === 'function' ? header(open, toggle) : header, open ? details : compactDetails, footer));
+          showHandle && React.createElement('Pressable', { testID: 'driver-panel-handle', accessibilityLabel: handleLabel(open), accessibilityState: { expanded: open }, style: handleTouchStyle || { height: 24, position: 'absolute', top: 0 }, onPress: toggle }, React.createElement('View', { style: handleStyle })),
+          showHandle ? typeof header === 'function' ? header(open, toggle) : header : React.createElement('Pressable', { testID: 'driver-sheet-header-toggle', accessibilityRole: 'button', accessibilityLabel: handleLabel(open), accessibilityState: { expanded: open }, onPress: toggle }, typeof header === 'function' ? header(open, toggle) : header), open ? details : compactDetails, footer));
     } };
     if (id === './waiting') return load('waiting.ts');
     if (id === './useSheetStageTransition') return load('useSheetStageTransition.ts');
     if (id === './useSheetDragToClose') return load('useSheetDragToClose.ts');
     if (id === './ClientCompletionPanel') return load('ClientCompletionPanel.tsx');
+    if (id === './ClientOrderEndPanel') return load('ClientOrderEndPanel.tsx');
+    if (id === '../assets/order-cancelled-red-3d.webp') return 'order-cancelled-red-3d.webp';
     if (id === './DriverCompletionPanel') return load('DriverCompletionPanel.tsx');
+    if (id === './DriverOfferAcceptButton') return { DriverOfferAcceptButton: function AcceptButton({ offer, language, busy, onAccept }) {
+      return React.createElement('Pressable', { testID: 'driver-offer-accept', accessibilityRole: 'button', accessibilityLabel: ui.tr(language)('Принять'),
+        accessibilityState: { disabled: busy }, disabled: busy, onPress: () => { if (!busy) onAccept(offer); } },
+        React.createElement('Text', null, ui.money(offer.price)), React.createElement('Text', null, ui.tr(language)('Принять')));
+    } };
     if (id === './SuccessCelebration') return { SuccessCelebration: 'SuccessCelebration' };
-    if (id === './TripPanel') return { statusText: { SEARCHING: 'Ищем водителя', COMPLETED: 'Поездка завершена', ARRIVED: 'Водитель приехал' } };
+    if (id === './TripPanel') return { statusText: { SEARCHING: 'Ищем водителя', ASSIGNED: 'Водитель выехал к вам', COMPLETED: 'Поездка завершена', ARRIVED: 'Водитель приехал', IN_PROGRESS: 'Поездка началась' } };
     return {};
   } });
   return exports;
@@ -123,8 +135,14 @@ const { DriverNavigation } = load('DriverNavigation.tsx');
 const { DeliveryPanel, emptyDeliveryDetails } = load('DeliveryPanel.tsx');
 const { waitingAt } = load('waiting.ts');
 const point = address => ({ address, latitude: 42.87, longitude: 74.59 });
-const textOf = node => typeof node === 'string' ? node : node.children?.map(textOf).join('') || '';
+const textOf = node => typeof node === 'string' ? node.replace(/\u00a0/g, ' ') : node.children?.map(textOf).join('') || '';
 const routeLetters = renderer => renderer.root.findAllByProps({ testID: 'driver-route-letter' }).map(textOf).join('');
+const assertOfferFareOnlyInButton = (renderer, price) => {
+  const accept = renderer.root.findByProps({ testID: 'driver-offer-accept' });
+  const priceNodes = renderer.root.findAllByType('Text').filter(node => textOf(node) === String(price));
+  assert.equal(priceNodes.length, 1, 'the offer fare is shown once');
+  assert.ok(accept.findAllByType('Text').includes(priceNodes[0]), 'the offer fare is inside the accept button');
+};
 const button = (r, label) => r.root.findAllByType('Pressable').find(n => n.props.accessibilityLabel === label || textOf(n) === label);
 const tap = async (r, label) => { const target = button(r, label); assert.ok(target, label); await act(async () => target.props.onPress()); };
 const slide = async (r, label) => {
@@ -143,6 +161,41 @@ const sliderGesture = async (r, label, gesture) => {
   assert.equal(handler.props.activeOffsetX.join(','), '-2,2');
   await act(async () => handler.props.onHandlerStateChange({ nativeEvent: { state: 5, translationX: gesture.dx || 0 } }));
 };
+
+test('driver cancellation is available only in expanded details and still requires confirmation at every active stage', async () => {
+  for (const kind of ['RIDE', 'DELIVERY_CAR', 'DELIVERY_TRUCK']) for (const status of ['ASSIGNED', 'ARRIVED', 'IN_PROGRESS']) {
+    const actions = [];
+    const order = { id: `cancel-${kind}-${status}`, kind, status, pickup: point('A'), dropoff: point('B'), price: 120, distanceMeters: 1000, durationSeconds: 300 };
+    const props = { order, offer: null, user: { role: 'DRIVER', language: 'ru', driverProfile: {} }, busy: false, coming: false,
+      onAction: action => actions.push(action), onAccept() {}, onRateClient() {}, onOnline() {}, onChat() {}, onDone() {} };
+    let renderer;
+    await act(async () => { renderer = create(React.createElement(DriverPanel, props)); });
+    try {
+      assert.equal(renderer.root.findAllByProps({ testID: 'driver-trip-details' }).length, 0);
+      assert.equal(renderer.root.findAllByProps({ testID: 'driver-cancel-order' }).length, 0, 'cancellation cannot reserve space below the collapsed slider');
+      await act(async () => renderer.root.findByProps({ testID: 'driver-panel-handle' }).props.onPress());
+      const cancel = renderer.root.findByProps({ testID: 'driver-cancel-order' });
+      assert.equal(renderer.root.findByProps({ testID: 'driver-trip-details' }).findAllByProps({ testID: 'driver-cancel-order' }).length, 1);
+      assert.ok(cancel.props.style.minHeight >= 44);
+      await tap(renderer, 'Отменить заказ');
+      assert.deepEqual(actions, [], 'opening the confirmation must not cancel');
+      await tap(renderer, 'Назад');
+      assert.deepEqual(actions, [], 'back keeps the trip active');
+      await tap(renderer, 'Отменить заказ');
+      const confirmation = renderer.root.findByType('BottomPanel');
+      const confirm = confirmation.findAllByType('Pressable').find(node => textOf(node) === 'Отменить заказ');
+      await act(async () => confirm.props.onPress());
+      assert.deepEqual(actions, ['cancel']);
+      await act(async () => renderer.update(React.createElement(DriverPanel, { ...props, order: { ...order, status: 'CANCELLED' } })));
+      assert.equal(renderer.root.findAllByType('BottomPanel').length, 0);
+      assert.equal(renderer.root.findAllByProps({ testID: 'driver-cancel-order' }).length, 0);
+      assert.match(textOf(renderer.root), /Заказ отменён/);
+      await act(async () => renderer.update(React.createElement(DriverPanel, { ...props, busy: true })));
+      await act(async () => renderer.root.findByProps({ testID: 'driver-panel-handle' }).props.onPress());
+      assert.equal(renderer.root.findByProps({ testID: 'driver-cancel-order' }).props.disabled, true);
+    } finally { await act(async () => renderer.unmount()); }
+  }
+});
 test('client and driver waiting countdowns agree with the billed fare at minute boundaries', () => {
   const arrivedAt = '2026-09-24T06:00:00.000Z';
   const order = { status: 'ARRIVED', price: 100, waiting: { arrivedAt, graceMinutes: 1, freeMinutes: 5, pricePerMinute: 4 } };
@@ -237,7 +290,8 @@ test('detail sheets keep the route and saved requests; closing discards an unsav
   assert.ok(button(renderer, 'Заказ другому человеку'));
   await tap(renderer, 'Комментарий водителю');
   await act(async () => renderer.root.findByType('TextInput').props.onChangeText('У ворот'));
-  await tap(renderer, 'Закрыть');
+  assert.equal(button(renderer, 'Закрыть'), undefined, 'editor closes through the common sheet handle/backdrop');
+  await act(async () => renderer.root.findByType('BottomPanel').props.onClose());
   assert.equal(saved.comment, '');
   await tap(renderer, 'Комментарий водителю');
   assert.equal(renderer.root.findByType('TextInput').props.value, '');
@@ -340,6 +394,35 @@ test('address search opens only after the booking panel has moved down', async t
   await act(async () => pendingRootExits.shift()());
   assert.deepEqual(opened, ['dropoff']);
 });
+test('map movement leaves a small taxi home edge, restores it, and preserves route controls', async t => {
+  let renderer;
+  const props = { pickup: point('A'), dropoff: null, tariffs: [], tariffId: '', quote: null, quotes: {}, language: 'ru', details: emptyRideDetails, onDetails() {}, onAddress() {}, onTariff() {}, onSwap() {}, onHeight() {}, onBook() {} };
+  await act(async () => { renderer = create(React.createElement(BookingPanel, props)); });
+  t.after(async () => act(async () => renderer.unmount()));
+  const panel = () => renderer.root.findByProps({ testID: 'client-booking-panel' });
+  const browse = () => renderer.root.findByProps({ testID: 'taxi-map-browse-surface' });
+  await act(async () => panel().props.onLayout({ nativeEvent: { layout: { height: 170 } } }));
+  await act(async () => renderer.update(React.createElement(BookingPanel, { ...props, mapMoving: true })));
+  assert.equal(browse().props.style.at(-1).evaluate().transform[0].translateY, 138);
+  assert.equal(browse().props.pointerEvents, 'none');
+  assert.equal(panel().props.accessibilityElementsHidden, true);
+  assert.equal(panel().props.importantForAccessibility, 'no-hide-descendants');
+  await act(async () => renderer.update(React.createElement(BookingPanel, { ...props, mapMoving: false })));
+  assert.equal(browse().props.style.at(-1).evaluate().transform[0].translateY, 0);
+  assert.equal(panel().props.accessibilityElementsHidden, false);
+  let synchronizedOffset = 110;
+  const sharedOffset = { get: () => synchronizedOffset };
+  await act(async () => renderer.update(React.createElement(BookingPanel, { ...props, mapMoving: true, browseOffset: sharedOffset })));
+  assert.equal(browse().props.style.at(-1).evaluate().transform[0].translateY, 110);
+  synchronizedOffset = 52;
+  assert.equal(browse().props.style.at(-1).evaluate().transform[0].translateY, 52, 'the sheet follows the shared map-button clock without a render');
+  await act(async () => renderer.update(React.createElement(BookingPanel, { ...props, dropoff: point('B'), mapMoving: true })));
+  assert.equal(browse().props.style.at(-1).evaluate().transform[0].translateY, 0);
+  await tap(renderer, 'Детали поездки');
+  assert.equal(panel().props.accessibilityElementsHidden, true);
+  assert.equal(panel().props.importantForAccessibility, 'no-hide-descendants');
+});
+
 test('active-order details replace the order summary and restore it after closing', async t => {
   deferSheetExit = true;
   pendingSheetExits = [];
@@ -436,6 +519,79 @@ test('missing ride and delivery quotes wait for automatic pricing without a refr
   }
 });
 
+test('no pickup cars suppress every fare and block ordering in summary and details, then recover with availability', async t => {
+  let renderer, bookings = 0;
+  const currentQuote = { price: 187, distanceMeters: 1100, durationSeconds: 91 };
+  const comfortQuote = { ...currentQuote, price: 249 };
+  const props = { pickup: point('A'), dropoff: point('B'), quote: currentQuote, previewQuote: currentQuote,
+    quotes: { eco: currentQuote, comfort: comfortQuote }, calculating: true, busy: false, pickupAvailability: 'unavailable',
+    tariffs: [{ id: 'eco', name: 'Эконом' }, { id: 'comfort', name: 'Комфорт' }], tariffId: 'eco', language: 'ru',
+    details: emptyRideDetails, onDetails() {}, onAddress() {}, onTariff() {}, onSwap() {}, onHeight() {}, onBook() { bookings++; } };
+  await act(async () => { renderer = create(React.createElement(BookingPanel, props)); });
+  t.after(async () => act(async () => renderer.unmount()));
+  for (const id of ['eco', 'comfort']) {
+    assert.equal(textOf(renderer.root.findByProps({ testID: 'booking-tariff-price-' + id })), '—');
+  }
+  const tariffLabels = renderer.root.findAllByType('Pressable').filter(node => node.props.accessibilityRole === 'radio').map(node => node.props.accessibilityLabel);
+  assert.deepEqual(tariffLabels, ['Эконом, Нет машин', 'Комфорт, Нет машин']);
+  assert.doesNotMatch(textOf(renderer.root), /187|249/);
+  const assertUnavailable = async () => {
+    for (const action of renderer.root.findAllByProps({ testID: 'book-ride' })) {
+      assert.equal(action.props.disabled, true);
+      assert.equal(action.props.accessibilityState.disabled, true);
+      assert.equal(textOf(action), 'Нет машин');
+      assert.equal(action.findAllByType('Spinner').length, 0, 'an unavailable fare does not display a pricing spinner');
+      await act(async () => action.props.onPress());
+    }
+    assert.equal(bookings, 0, 'even a stale/direct handler cannot book while no cars are available');
+  };
+  await assertUnavailable();
+  await tap(renderer, 'Детали поездки');
+  assert.match(textOf(renderer.root.findByProps({ testID: 'booking-detail-price' })), /^— ·/);
+  assert.doesNotMatch(textOf(renderer.root), /187|249/);
+  await assertUnavailable();
+  await act(async () => renderer.update(React.createElement(BookingPanel, { ...props, pickupAvailability: 'available', calculating: false })));
+  assert.match(textOf(renderer.root.findByProps({ testID: 'booking-detail-price' })), /^187 ·/);
+  const expandedAction = renderer.root.findByType('BottomPanel').findByProps({ testID: 'book-ride' });
+  assert.equal(expandedAction.props.disabled, false);
+  assert.equal(textOf(expandedAction), 'Заказать');
+  await act(async () => expandedAction.props.onPress());
+  assert.equal(bookings, 1);
+  await tap(renderer, 'Свернуть детали поездки');
+  assert.equal(textOf(renderer.root.findByProps({ testID: 'booking-tariff-price-eco' })), '187');
+  assert.equal(textOf(renderer.root.findByProps({ testID: 'booking-tariff-price-comfort' })), '249');
+  assert.equal(renderer.root.findByProps({ testID: 'book-ride' }).props.disabled, false);
+});
+
+test('booking route and details use the shared rounded-up minute formatter', async t => {
+  const formatterSource = fs.readFileSync(path.join(__dirname, '../src/ui.tsx'), 'utf8').match(/^export const mins = .*;$/m)?.[0];
+  assert.ok(formatterSource, 'load the actual shared UI duration formatter');
+  const formatterExports = {};
+  vm.runInNewContext(ts.transpileModule(formatterSource, { compilerOptions: { module: ts.ModuleKind.CommonJS } }).outputText, { exports: formatterExports });
+  const previous = ui.mins;
+  ui.mins = formatterExports.mins;
+  let renderer;
+  t.after(async () => { ui.mins = previous; if (renderer) await act(async () => renderer.unmount()); });
+  assert.equal(ui.mins(61, 'ru'), '2 мин');
+  assert.equal(ui.mins(91, 'ru'), '2 мин');
+  const currentQuote = { price: 187, distanceMeters: 1100, durationSeconds: 91 };
+  const props = { pickup: point('A'), dropoff: point('B'), quote: currentQuote, quotes: { eco: currentQuote },
+    tariffs: [{ id: 'eco', name: 'Эконом' }], tariffId: 'eco', language: 'ru', details: emptyRideDetails,
+    onDetails() {}, onAddress() {}, onTariff() {}, onSwap() {}, onHeight() {}, onBook() {} };
+  await act(async () => { renderer = create(React.createElement(BookingPanel, props)); });
+  assert.match(textOf(renderer.root.findByProps({ testID: 'booking-route-time' })), /2 мин в пути$/);
+  await tap(renderer, 'Детали поездки');
+  assert.match(textOf(renderer.root.findByProps({ testID: 'booking-detail-price' })), /2 мин в пути$/);
+  await act(async () => renderer.update(React.createElement(BookingPanel, { ...props, routeDurationSeconds: 121 })));
+  assert.match(textOf(renderer.root.findByProps({ testID: 'booking-detail-price' })), /^187 · ≈ 3 мин в пути$/,
+    'the selected quote keeps its fare while both surfaces use the same marker route duration');
+  await tap(renderer, 'Свернуть детали поездки');
+  assert.match(textOf(renderer.root.findByProps({ testID: 'booking-route-time' })), /3 мин в пути$/);
+  await act(async () => renderer.update(React.createElement(BookingPanel, { ...props, routeDurationSeconds: NaN })));
+  assert.match(textOf(renderer.root.findByProps({ testID: 'booking-route-time' })), /2 мин в пути$/,
+    'a missing or invalid map estimate falls back to the valid quote duration');
+});
+
 test('assigned driver sees and calls the selected passenger while chat stays with the booking client', async t => {
   openedUrl = '';
   let renderer;
@@ -458,6 +614,34 @@ test('client trip panel omits the generic live-tracking banner', async t => {
   assert.doesNotMatch(textOf(renderer.root), /Ваш водитель на карте|в реальном времени|Ожидаем сигнал GPS|Обновляем положение водителя/);
   assert.equal(renderer.root.findByProps({ testID: 'client-vehicle-plate' }).props.accessibilityLabel, 'Номер автомобиля 01 KG 777 AAA');
   assert.match(textOf(renderer.root.findByProps({ testID: 'client-vehicle-plate' })), /01.*KG.*777 AAA/s);
+});
+
+test('trip contacts retain current driver, passenger and order actions across stages and themes', async t => {
+  let renderer, chats = 0;
+  const order = { id: 'live-contact-order', status: 'ASSIGNED', kind: 'RIDE', pickup: point('Pickup'), dropoff: point('Destination'), price: 130,
+    driver: { id: 'real-driver', name: 'Current driver', phone: '+996555654321', driverProfile: { carPlate: '08 452 BCH', carMake: 'Hyundai Sonata', carColor: 'Серый', rating: 4.9 } },
+    client: { id: 'current-client', phone: '+996700987654' }, passenger: { name: 'Other passenger', phone: '+996555112233' } };
+  const props = { order, user: { role: 'CLIENT', language: 'ru' }, busy: false, onAction() {}, onChat: () => { chats++; }, onDone() {}, onRating: async () => true, onHeight() {} };
+  t.after(async () => { darkTheme = false; await act(async () => renderer?.unmount()); });
+  await act(async () => { renderer = create(React.createElement(ClientTripPanel, props)); });
+  assert.match(textOf(renderer.root), /Водитель выехал к вам.*Водитель направляется к месту подачи.*08.*452 BCH.*Hyundai Sonata.*Current driver.*4\.9/s);
+  for (const status of ['ASSIGNED', 'ARRIVED', 'IN_PROGRESS']) {
+    await act(async () => renderer.update(React.createElement(ClientTripPanel, { ...props, order: { ...order, status } })));
+    await tap(renderer, 'Позвонить'); assert.equal(openedUrl, 'tel:+996555654321');
+    await tap(renderer, 'Чат');
+  }
+  assert.equal(chats, 3);
+  const clientPaths = renderer.root.findAllByType('Path').map(n => n.props.d);
+  assert.equal(clientPaths.length, 2);
+  await act(async () => renderer.update(React.createElement(ClientTripPanel, { ...props, order: { ...order, driver: { ...order.driver, phone: '' } } })));
+  assert.equal(button(renderer, 'Позвонить').props.disabled, true);
+  darkTheme = true;
+  await act(async () => renderer.update(React.createElement(DriverPanel, { ...props, user: { role: 'DRIVER', language: 'ru' }, onAccept() {}, onRateClient: async () => true, onOnline() {} })));
+  const driverPaths = renderer.root.findAllByType('Path');
+  assert.deepEqual(driverPaths.map(n => n.props.d), clientPaths, 'the same outlines render for each side');
+  assert.ok(driverPaths.every(n => n.props.stroke === '#FFFFFF'), 'outlines remain visible in dark mode');
+  await tap(renderer, 'Позвонить пассажиру'); assert.equal(openedUrl, 'tel:+996555112233');
+  await tap(renderer, 'Чат с заказчиком'); assert.equal(chats, 4);
 });
 
 test('client plate keeps the region separate and waiting matches the clock-and-fare card in both themes', async t => {
@@ -497,7 +681,7 @@ test('client renders old Kyrgyz plates with a red flag and keeps other formats u
   assert.equal(plate().props.accessibilityLabel, 'Номер автомобиля B777AE');
   const flag = renderer.root.findByProps({ testID: 'client-old-plate-flag' }).findByType('Image');
   assert.equal(flag.props.accessibilityLabel, 'Флаг Кыргызстана');
-  assert.equal(flag.props.style.borderRadius, 4);
+  assert.equal(flag.props.style.borderRadius, 2);
   assert.equal(flag.props.style.width / flag.props.style.height, 1.6);
   darkTheme = true;
   await act(async () => renderer.update(React.createElement(ClientTripPanel, props)));
@@ -573,36 +757,45 @@ test('client trip, completion, rating and thanks use dark surfaces when selected
   assert.equal(card.props.style[1].backgroundColor, '#111111');
 });
 
-test('driver keeps contacts and the stage slider visible while trip details collapse', async t => {
+test('driver accepts an offer by button and keeps active stage sliders visible while details collapse', async t => {
   let renderer; const accepted = [], actions = [], ratings = [], closedOrders = []; let done = 0;
-  const offer = { id: 'offer', status: 'SEARCHING', pickup: point('A'), dropoff: point('B'), price: 321, distanceMeters: 4800, durationSeconds: 720, tariff: { name: 'Эконом' }, clientRating: 4.75 };
+  const offer = { id: 'offer', status: 'SEARCHING', pickup: point('A'), dropoff: point('B'), price: 321, distanceMeters: 4800, durationSeconds: 720, tariff: { name: 'Эконом' }, clientRating: 4.75, searchExpiresAt: new Date(Date.now() + 30000).toISOString() };
   const approach = { route: { distanceMeters: 2500, durationSeconds: 420 } };
   const props = { user: { role: 'DRIVER', language: 'ru', driverProfile: { verified: true, online: true } }, order: null, offer, approach, busy: false, coming: false, navigation: { progress: { remainingSeconds: 60, remainingMeters: 490, arrived: false }, gpsStatus: '', loading: false }, onAccept: x => accepted.push(x.id), onRateClient: async score => { ratings.push(score); return true; }, onAction: x => actions.push(x), onOnline() {}, onChat() {}, onDone(id) { done++; closedOrders.push(id); } };
   await act(async () => { renderer = create(React.createElement(DriverPanel, props)); });
   t.after(async () => act(async () => renderer.unmount()));
   assert.equal(renderer.root.findAllByType('ScrollView').length, 0, 'offer details fit their content without scrolling');
   assert.equal(button(renderer, 'Позвонить пассажиру'), undefined, 'an unaccepted offer has no private contact');
-  assert.equal(button(renderer, 'Пропустить'), undefined, 'skip lives above the map, not beneath the accept slider');
+  assert.equal(button(renderer, 'Пропустить'), undefined, 'skip lives above the map');
   assert.doesNotMatch(textOf(renderer.root), /Новый заказ/);
-  assert.match(textOf(renderer.root), /До клиента.*2500/s, 'pickup distance leads the offer panel');
+  assert.match(textOf(renderer.root.findByProps({ testID: 'driver-offer-approach' })), /2500\s*·\s*420.*Средняя подача.*Эконом/s, 'pickup distance, duration and tags lead the offer panel');
+  assert.doesNotMatch(textOf(renderer.root), /До клиента|До отправителя|Осталось|Взять заказ|Маршрут поездки|Время поездки|4800|720/);
   assert.doesNotMatch(textOf(renderer.root), /прибытие ≈/, 'offer omits the arrival chip');
   assert.equal(renderer.root.findAllByProps({ testID: 'driver-offer-approach' }).length, 1);
   assert.equal(renderer.root.findAllByProps({ testID: 'driver-trip-details' }).length, 0, 'offer starts compact to leave room for the map');
-  assert.match(textOf(renderer.root.findByProps({ testID: 'driver-compact-summary' })), /Эконом.*321/s);
+  assert.equal(routeLetters(renderer), 'АБ', 'compact offer includes both route addresses');
+  assert.equal(renderer.root.findByProps({ testID: 'driver-route-pins' }).children.length, 2, 'offer contains only the two address rows, without a connector between them');
+  assert.equal(textOf(renderer.root.findByProps({ testID: 'driver-route-pickup' })), 'АA');
+  assert.equal(textOf(renderer.root.findByProps({ testID: 'driver-route-dropoff' })), 'БB');
+  assert.ok(renderer.root.findByProps({ testID: 'driver-route-pins' }).findAllByType('Text').filter(node => ['A', 'B'].includes(textOf(node))).every(node => node.props.numberOfLines === 2));
+  assert.equal(renderer.root.findAllByProps({ testID: 'driver-stage-slider' }).length, 0, 'offer acceptance does not require sliding');
+  assertOfferFareOnlyInButton(renderer, offer.price);
   await tap(renderer, 'Раскрыть детали поездки');
   assert.equal(renderer.root.findAllByType('ScrollView').length, 0, 'expanded offer also grows to fit its addresses');
   assert.equal(routeLetters(renderer), 'АБ');
-  assert.match(textOf(renderer.root), /2500.*Средняя подача.*Эконом/s, 'approach distance and category are shown separately from trip metrics');
+  assert.match(textOf(renderer.root.findByProps({ testID: 'driver-offer-approach' })), /2500\s*·\s*420.*Средняя подача.*Эконом/s, 'expanded offer preserves pickup metrics and tags');
   assert.doesNotMatch(textOf(renderer.root), /прибытие ≈/, 'expanded offer also omits the arrival chip');
-  assert.match(textOf(renderer.root), /4800.*Маршрут поездки.*720.*Время поездки/s);
+  assert.doesNotMatch(textOf(renderer.root), /Маршрут поездки|Время поездки|4800|720|Осталось/);
+  assertOfferFareOnlyInButton(renderer, offer.price);
   assert.match(textOf(renderer.root), /Пассажир.*4,75/s);
   assert.doesNotMatch(textOf(renderer.root), /Кресло/);
   await tap(renderer, 'Свернуть детали поездки');
   assert.equal(renderer.root.findAllByProps({ testID: 'driver-trip-details' }).length, 0);
-  await sliderGesture(renderer, 'Взять заказ', { dx: 15, vx: 2 }); assert.deepEqual(accepted, [], 'a short fast flick is not a confirmation');
-  await sliderGesture(renderer, 'Взять заказ', { dx: 214 }); assert.deepEqual(accepted, [], 'less than 72% returns the thumb');
-  await sliderGesture(renderer, 'Взять заказ', { dx: 216 }); assert.deepEqual(accepted, ['offer']);
-  await sliderGesture(renderer, 'Взять заказ', { dx: 304 }); assert.deepEqual(accepted, ['offer'], 'completed slider must not dispatch twice');
+  await act(async () => renderer.update(React.createElement(DriverPanel, { ...props, busy: true })));
+  assert.equal(button(renderer, 'Принять').props.disabled, true, 'busy state reaches the offer button');
+  await tap(renderer, 'Принять'); assert.deepEqual(accepted, [], 'busy offer cannot be accepted');
+  await act(async () => renderer.update(React.createElement(DriverPanel, props)));
+  await tap(renderer, 'Принять'); assert.deepEqual(accepted, ['offer'], 'a button tap accepts the current offer');
   async function status(value, stageBusy = false) { await act(async () => renderer.update(React.createElement(DriverPanel, { ...props, busy: stageBusy, offer: null, order: { ...offer, status: value, client: { name: 'Жылдыз', phone: '+996700000001', photoUrl: 'https://example.test/client.jpg' } } }))); }
   await status('ASSIGNED');
   assert.doesNotMatch(textOf(renderer.root), /Жылдыз/);
@@ -629,13 +822,17 @@ test('driver keeps contacts and the stage slider visible while trip details coll
   assert.match(textOf(renderer.root.findByProps({ testID: 'driver-trip-details' })), /A.*B.*321/s);
   assert.doesNotMatch(textOf(renderer.root.findByProps({ testID: 'driver-trip-details' })), /4800|720|мин|Время поездки/, 'expanded pickup shows price and addresses without a second trip-duration metric');
   await tap(renderer, 'Отменить заказ'); await tap(renderer, 'Назад'); assert.deepEqual(actions, []);
-  await slide(renderer, 'Приехал'); assert.deepEqual(actions, ['arrive']);
+  await sliderGesture(renderer, 'Приехал', { dx: 15, vx: 2 }); assert.deepEqual(actions, [], 'a short fast flick is not a stage confirmation');
+  await sliderGesture(renderer, 'Приехал', { dx: 207 }); assert.deepEqual(actions, [], 'less than 72% returns the thumb');
+  await sliderGesture(renderer, 'Приехал', { dx: 208 }); assert.deepEqual(actions, ['arrive']);
+  await sliderGesture(renderer, 'Приехал', { dx: 304 }); assert.deepEqual(actions, ['arrive'], 'completed stage slider must not dispatch twice');
   await status('ASSIGNED', true); await slide(renderer, 'Приехал'); assert.deepEqual(actions, ['arrive'], 'busy request blocks duplicate swipes');
   await status('ASSIGNED'); await slide(renderer, 'Приехал'); assert.deepEqual(actions, ['arrive', 'arrive'], 'failed request resets the thumb for a retry');
   await status('ARRIVED');
   assert.equal(renderer.root.findAllByProps({ testID: 'driver-route-pins' }).length, 0);
   assert.equal(button(renderer, 'Отменить заказ'), undefined);
   await tap(renderer, 'Раскрыть детали поездки');
+  assert.ok(button(renderer, 'Отменить заказ'));
   assert.equal(routeLetters(renderer), 'АБ');
   await slide(renderer, 'Начать поездку'); assert.deepEqual(actions, ['arrive', 'arrive', 'start']);
   await status('IN_PROGRESS');
@@ -643,7 +840,7 @@ test('driver keeps contacts and the stage slider visible while trip details coll
   await tap(renderer, 'Раскрыть детали поездки');
   assert.match(textOf(renderer.root), /490 м.*до цели/s);
   assert.equal(routeLetters(renderer), 'АБ');
-  assert.equal(button(renderer, 'Отменить заказ'), undefined);
+  assert.ok(button(renderer, 'Отменить заказ'));
   await slide(renderer, 'Завершить поездку'); assert.deepEqual(actions, ['arrive', 'arrive', 'start', 'complete']);
   assert.equal(renderer.root.findAllByType('BottomPanel').length, 0, 'the deliberate completion slider is the confirmation');
   await status('COMPLETED');
@@ -778,8 +975,97 @@ test('cancelled client trip has separate retry and full reset actions', async t 
   await tap(renderer, 'Заказать снова');
   assert.equal(retry, 1);
   assert.equal(reset, 0);
+  await act(async () => renderer.update(React.createElement(ClientTripPanel, {
+    order: { ...order, id: 'another-cancelled-trip' }, user: { role: 'CLIENT', language: 'ru' }, busy: false, coming: false,
+    onAction() {}, onChat() {}, onDone() { retry++; }, onReset() { reset++; }, onRating: async () => true, onHeight() {},
+  })));
   await tap(renderer, 'Закрыть');
   assert.equal(reset, 1);
+});
+
+test('client cancellation uses the red 3D modal, never the no-driver or completion content', async t => {
+  for (const language of ['ru', 'ky']) for (const kind of ['RIDE', 'DELIVERY_CAR', 'DELIVERY_TRUCK']) for (const dark of [false, true]) {
+    darkTheme = dark;
+    let renderer;
+    const order = { id: `${language}-${kind}-${dark}`, kind, status: 'CANCELLED', pickup: point('Улица Ленина, 10'), dropoff: point('Школа № 8'), price: 9057 };
+    await act(async () => { renderer = create(React.createElement(ClientTripPanel, {
+      order, user: { role: 'CLIENT', language }, busy: false, onAction() {}, onChat() {}, onDone() {}, onReset() {}, onRating: async () => true, onHeight() {},
+    })); });
+    const text = textOf(renderer.root);
+    assert.match(text, language === 'ky' ? /Буюртма жокко чыгарылды/ : /Заказ отменён/);
+    assert.doesNotMatch(text, /Водитель не найден|Айдоочу табылган жок|успешно|9057/);
+    assert.equal(renderer.root.findAllByType('SuccessCelebration').length, 0);
+    assert.equal(renderer.root.findByProps({ testID: 'order-cancelled-illustration' }).props.source, 'order-cancelled-red-3d.webp');
+    const sheet = renderer.root.findByProps({ testID: 'client-order-end-sheet' });
+    assert.equal(sheet.props.accessibilityViewIsModal, true);
+    assert.equal(sheet.props.style[1].backgroundColor, dark ? '#111111' : '#FFFFFF');
+    assert.ok(button(renderer, language === 'ky' ? 'Кайра буюртма берүү' : 'Заказать снова'));
+    assert.ok(button(renderer, language === 'ky' ? 'Жабуу' : 'Закрыть'));
+    await act(async () => renderer.unmount());
+  }
+  darkTheme = false;
+});
+
+test('search cancellation replaces its confirmation only after the authoritative status arrives', async t => {
+  let renderer;
+  const actions = [], heights = [];
+  const props = { order: { id: 'search-cancel', status: 'SEARCHING', pickup: point('A'), dropoff: point('B'), price: 100 }, user: { role: 'CLIENT', language: 'ru' }, busy: false,
+    onAction: action => actions.push(action), onChat() {}, onDone() {}, onReset() {}, onRating: async () => true, onHeight: height => heights.push(height) };
+  await act(async () => { renderer = create(React.createElement(ClientTripPanel, props)); });
+  t.after(async () => act(async () => renderer.unmount()));
+  await tap(renderer, 'Отменить заказ');
+  const confirmation = renderer.root.findByType('BottomPanel').findAllByType('Pressable').find(node => textOf(node) === 'Отменить заказ');
+  assert.ok(confirmation);
+  await act(async () => confirmation.props.onPress());
+  assert.deepEqual(actions, ['cancel']);
+  assert.equal(renderer.root.findAllByProps({ testID: 'client-order-end-modal' }).length, 0);
+  await act(async () => renderer.update(React.createElement(ClientTripPanel, { ...props, order: { ...props.order, status: 'CANCELLED' } })));
+  assert.equal(renderer.root.findAllByType('BottomPanel').length, 0, 'old cancellation confirmation is unmounted');
+  assert.equal(renderer.root.findAllByProps({ testID: 'client-trip-panel' }).length, 0, 'old summary cannot show underneath the modal');
+  const sheet = renderer.root.findByProps({ testID: 'client-order-end-sheet' });
+  await act(async () => sheet.props.onLayout({ nativeEvent: { layout: { height: 450 } } }));
+  assert.equal(heights.at(-1), 450);
+  assert.equal(renderer.root.findByType('GestureDetector').props.gesture.config.enabled, true);
+});
+
+test('an exhausted search stays distinct from cancellation', async t => {
+  let renderer;
+  const props = { order: { id: 'no-driver', status: 'NO_DRIVER', pickup: point('A'), dropoff: point('B'), price: 100 }, user: { role: 'CLIENT', language: 'ru' }, busy: false,
+    onAction() {}, onChat() {}, onDone() {}, onReset() {}, onRating: async () => true, onHeight() {} };
+  await act(async () => { renderer = create(React.createElement(ClientTripPanel, props)); });
+  t.after(async () => act(async () => renderer.unmount()));
+  assert.match(textOf(renderer.root), /Водитель не найден.*нет свободных водителей/);
+  assert.doesNotMatch(textOf(renderer.root), /Заказ отменён/);
+  await act(async () => renderer.update(React.createElement(ClientTripPanel, { ...props, order: { ...props.order, status: 'CANCELLED' } })));
+  assert.match(textOf(renderer.root), /Заказ отменён/);
+  assert.doesNotMatch(textOf(renderer.root), /Водитель не найден/);
+});
+
+test('terminal modal blocks busy actions, closes once and handles Android back', async t => {
+  for (const intent of ['retry', 'close', 'back', 'drag']) {
+    let renderer, retries = 0, closed = 0;
+    const props = { order: { id: `cancel-${intent}`, status: 'CANCELLED', pickup: point('A'), dropoff: point('B'), price: 100 }, user: { role: 'CLIENT', language: 'ru' }, busy: true,
+      onAction() {}, onChat() {}, onDone() { retries++; }, onReset() { closed++; }, onRating: async () => true, onHeight() {} };
+    await act(async () => { renderer = create(React.createElement(ClientTripPanel, props)); });
+    await act(async () => renderer.root.findByProps({ testID: 'client-order-end-sheet' }).props.onLayout({ nativeEvent: { layout: { height: 450 } } }));
+    assert.equal(button(renderer, 'Заказать снова').props.disabled, true);
+    assert.equal(renderer.root.findByType('GestureDetector').props.gesture.config.enabled, false);
+    await act(async () => { assert.equal(hardwareBackHandler(), true); });
+    assert.equal(closed, 0);
+    await act(async () => renderer.update(React.createElement(ClientTripPanel, { ...props, busy: false })));
+    if (intent === 'back') await act(async () => { hardwareBackHandler(); hardwareBackHandler(); });
+    else if (intent === 'drag') await act(async () => {
+      const pan = renderer.root.findByType('GestureDetector').props.gesture;
+      pan.handlers.onStart(); pan.handlers.onUpdate({ translationY: 180 }); pan.handlers.onEnd({ velocityY: 900 }, true);
+    });
+    else {
+      const action = intent === 'retry' ? button(renderer, 'Заказать снова') : renderer.root.findByProps({ testID: 'client-order-end-close' });
+      await act(async () => { action.props.onPress(); action.props.onPress(); });
+    }
+    assert.equal(retries, intent === 'retry' ? 1 : 0);
+    assert.equal(closed, intent === 'retry' ? 0 : 1);
+    await act(async () => renderer.unmount());
+  }
 });
 
 test('legacy driver trip panel also masks client name and photo', async t => {
@@ -857,7 +1143,7 @@ test('delivery redesign has two price choices, a payment selector and only three
   assert.match(source, /truckImage: \{ width: 112, height: 112 \}/);
   assert.doesNotMatch(source, /scaleX: 1\.38/);
   assert.doesNotMatch(source, /deliveryMark/);
-  assert.match(source, /car-economy\.png/);
+  assert.match(source, /car-economy\.webp/);
   assert.doesNotMatch(source, /delivery-van-blue\.png/);
   assert.doesNotMatch(source, /taxi-yellow\.png/);
   assert.match(source, /backgroundColor: colors\.blue/);
@@ -880,11 +1166,71 @@ test('delivery payment and simplified details open from the new main panel', asy
   assert.equal(swapped, 1);
   await tap(renderer, 'Способы оплаты');
   assert.match(textOf(renderer.root), /Наличные.*Оплата водителю после поездки/);
-  await tap(renderer, 'Закрыть');
+  assert.equal(button(renderer, 'Закрыть'), undefined, 'payment has no extra X button');
+  await tap(renderer, 'Готово');
   await tap(renderer, 'Параметры доставки');
   assert.equal(renderer.root.findByType('BottomPanel').props.expanded, undefined);
   assert.match(textOf(renderer.root), /Запланировать поездку.*От двери до двери.*Комментарий водителю/);
   assert.doesNotMatch(textOf(renderer.root), /Тип кузова|Грузчики|Что нужно доставить/);
+});
+
+test('delivery waits for each outgoing panel and preserves saved comments across return and payment', async t => {
+  let renderer, saved = emptyDeliveryDetails;
+  function Probe() {
+    const [details, setDetails] = React.useState(emptyDeliveryDetails);
+    return React.createElement(DeliveryPanel, { pickup: point('A'), dropoff: point('B'), tariffs: [],
+      selectedKind: 'DELIVERY_CAR', quote: { price: 100 }, quotes: {}, details,
+      onDetails: next => { saved = next; setDetails(next); }, onKind() {}, onAddress() {}, onSwap() {}, onBook() {}, onHeight() {} });
+  }
+  await act(async () => { renderer = create(React.createElement(Probe)); });
+  t.after(async () => { deferRootExit = false; deferSheetExit = false; pendingRootExits = []; pendingSheetExits = []; await act(async () => renderer.unmount()); });
+  deferRootExit = true;
+  await tap(renderer, 'Параметры доставки');
+  assert.equal(renderer.root.findAllByType('BottomPanel').length, 0, 'details cannot mount before the summary leaves');
+  await tap(renderer, 'Параметры доставки');
+  assert.equal(pendingRootExits.length, 1, 'repeated taps do not enqueue duplicate panels');
+  await act(async () => pendingRootExits.shift()());
+  deferRootExit = false;
+  assert.equal(renderer.root.findByProps({ testID: 'client-delivery-panel' }).props.pointerEvents, 'none');
+  deferSheetExit = true;
+  await tap(renderer, 'Комментарий водителю');
+  assert.equal(renderer.root.findAllByType('TextInput').length, 0, 'the editor waits for details to leave');
+  await act(async () => pendingSheetExits.shift()());
+  await act(async () => renderer.root.findByProps({ testID: 'delivery-comment' }).props.onChangeText('  Забрать у двери  '));
+  await tap(renderer, 'Готово');
+  assert.equal(saved.comment, 'Забрать у двери');
+  assert.equal(renderer.root.findAllByType('TextInput').length, 1, 'the editor remains mounted during its exit');
+  await act(async () => pendingSheetExits.shift()());
+  assert.equal(renderer.root.findAllByType('TextInput').length, 0);
+  await tap(renderer, 'Способы оплаты');
+  await act(async () => pendingSheetExits.shift()());
+  await act(async () => renderer.root.findByType('BottomPanel').props.onClose());
+  assert.ok(button(renderer, 'Комментарий водителю'), 'swiping payment down returns to details');
+  await tap(renderer, 'Комментарий водителю');
+  await act(async () => pendingSheetExits.shift()());
+  assert.equal(renderer.root.findByType('TextInput').props.value, 'Забрать у двери');
+  await act(async () => renderer.root.findByType('TextInput').props.onChangeText('Не сохранять'));
+  await act(async () => renderer.root.findByType('BottomPanel').props.onClose());
+  assert.equal(saved.comment, 'Забрать у двери', 'swipe dismissal discards an unsaved edit');
+});
+
+test('delivery waits for summary exit before address picker and resumes when it closes', async t => {
+  let renderer, address = null, registered;
+  const props = { pickup: point('A'), dropoff: point('B'), tariffs: [], selectedKind: 'DELIVERY_CAR', quote: { price: 100 }, quotes: {},
+    details: emptyDeliveryDetails, onDetails() {}, onKind() {}, onAddress: field => { address = field; },
+    registerAddressOpener: open => { registered = open; }, onSwap() {}, onBook() {}, onHeight() {} };
+  await act(async () => { renderer = create(React.createElement(DeliveryPanel, props)); });
+  t.after(async () => { deferRootExit = false; pendingRootExits = []; await act(async () => renderer.unmount()); });
+  deferRootExit = true;
+  await act(async () => registered('dropoff'));
+  assert.equal(address, null);
+  await act(async () => pendingRootExits.shift()());
+  assert.equal(address, 'dropoff');
+  deferRootExit = false;
+  await act(async () => renderer.update(React.createElement(DeliveryPanel, { ...props, hidden: true })));
+  assert.equal(renderer.root.findAllByProps({ testID: 'client-delivery-panel' }).length, 0);
+  await act(async () => renderer.update(React.createElement(DeliveryPanel, props)));
+  assert.equal(renderer.root.findByProps({ testID: 'client-delivery-panel' }).props.pointerEvents, 'auto');
 });
 
 test('delivery comment stays outside scroll and collapsed details; hidden root releases map inset', async t => {
@@ -901,9 +1247,12 @@ test('delivery comment stays outside scroll and collapsed details; hidden root r
   assert.equal(renderer.root.findByProps({ testID: 'driver-trip-details' }).findAllByProps({ testID: 'driver-client-comment' }).length, 0);
   assert.equal(renderer.root.findAllByType('Text').filter(node => textOf(node) === 'Доставка').length, 1);
   assert.match(textOf(renderer.root), /От двери до двери/);
-  await tap(renderer, 'Свернуть детали доставки');
+  await tap(renderer, 'Свернуть детали поездки');
   assert.equal(renderer.root.findAllByProps({ testID: 'driver-trip-details' }).length, 0);
-  assert.match(textOf(renderer.root.findByProps({ testID: 'driver-compact-summary' })), /Доставка.*От двери до двери.*100/);
+  assert.equal(routeLetters(renderer), 'АБ', 'collapsed delivery offer keeps both addresses');
+  assert.match(textOf(renderer.root.findByProps({ testID: 'driver-route-pins' })), /АAБB/);
+  assert.match(textOf(renderer.root.findByProps({ testID: 'driver-offer-approach' })), /Доставка/);
+  assertOfferFareOnlyInButton(renderer, offer.price);
   assert.match(textOf(renderer.root.findByProps({ testID: 'driver-client-comment' })), /Коробка кийим/);
   const sheetGesture = renderer.root.findAllByType('PanGestureHandler').find(node => node.props.enabled && node.props.activeOffsetY);
   await act(async () => sheetGesture.props.onHandlerStateChange({ nativeEvent: { state: 5, translationY: -85, velocityY: -200 } }));
@@ -930,8 +1279,16 @@ test('narrow offer keeps the action visible and shows full addresses when expand
   t.after(async () => { await act(async () => renderer.unmount()); windowDimensions = { width: 412, height: 914 }; });
   assert.equal(renderer.root.findAllByType('ScrollView').length, 0);
   assert.equal(renderer.root.findAllByProps({ testID: 'driver-trip-details' }).length, 0);
-  assert.match(textOf(renderer.root), /До клиента.*88 м.*Близкая подача.*Стандарт.*90.*Пассажир.*4,23.*Взять заказ/s);
-  assert.equal(renderer.root.findByProps({ testID: 'driver-panel-handle' }).props.style.height, 24, 'handle touch strip stays above the content rather than reserving a white gap');
+  assert.match(textOf(renderer.root.findByProps({ testID: 'driver-offer-approach' })), /88 м\s*·\s*60.*Близкая подача.*Стандарт/s);
+  assert.match(textOf(renderer.root), /Ленина.*Чынгыза Айтматова.*Пассажир.*4,23.*90.*Принять/s);
+  assert.doesNotMatch(textOf(renderer.root), /До клиента|До отправителя|Маршрут поездки|Время поездки|Взять заказ|240/);
+  const compactAddresses = renderer.root.findByProps({ testID: 'driver-route-pins' }).findAllByType('Text').filter(node => textOf(node).startsWith('улица '));
+  assert.equal(compactAddresses.length, 2);
+  assert.ok(compactAddresses.every(node => node.props.numberOfLines === 2), 'both compact addresses are limited to two lines');
+  assertOfferFareOnlyInButton(renderer, offer.price);
+  assert.equal(renderer.root.findAllByProps({ testID: 'driver-stage-slider' }).length, 0);
+  assert.equal(renderer.root.findAllByProps({ testID: 'driver-panel-handle' }).length, 0, 'new offers have no top handle');
+  assert.equal(renderer.root.findByProps({ testID: 'driver-sheet-header-toggle' }).props.accessibilityState.expanded, false, 'header remains an accessible way to reveal full addresses');
   await tap(renderer, 'Раскрыть детали поездки');
   const details = renderer.root.findByProps({ testID: 'driver-trip-details' });
   assert.equal(details.type, 'View', 'expanded offer measures its content rather than a fixed scroll viewport');
@@ -940,8 +1297,13 @@ test('narrow offer keeps the action visible and shows full addresses when expand
   assert.ok(addressNodes.every(node => node.props.numberOfLines === undefined), 'both addresses can wrap fully');
   assert.equal(textOf(details.findByProps({ testID: 'driver-route-pickup' })), `А${offer.pickup.address}`);
   assert.equal(textOf(details.findByProps({ testID: 'driver-route-dropoff' })), `Б${offer.dropoff.address}`, 'destination stays attached to its own letter regardless of wrapping');
-  assert.match(textOf(details), /Ленина.*Чынгыза Айтматова.*Маршрут поездки.*Время поездки.*Наличные/s);
-  assert.ok(renderer.root.findAll(node => node.props.testID === 'driver-stage-slider' && node.props.accessibilityLabel === 'Взять заказ').length);
+  assert.match(textOf(details), /Ленина.*Чынгыза Айтматова/s);
+  assert.doesNotMatch(textOf(details), /Маршрут поездки|Время поездки|240|90/);
+  assert.match(textOf(renderer.root.findByProps({ testID: 'driver-offer-approach' })), /88 м\s*·\s*60.*Близкая подача.*Стандарт/s);
+  assertOfferFareOnlyInButton(renderer, offer.price);
+  assert.ok(button(renderer, 'Принять'), 'expanded details keep the accept button visible');
+  assert.equal(details.findAllByProps({ testID: 'driver-offer-accept' }).length, 0, 'accept remains outside the expandable details');
+  assert.equal(renderer.root.findAllByProps({ testID: 'driver-stage-slider' }).length, 0);
   await tap(renderer, 'Свернуть детали поездки');
   assert.equal(renderer.root.findAllByProps({ testID: 'driver-trip-details' }).length, 0);
 });
@@ -999,7 +1361,7 @@ test('narrow driver waiting and travelling panels keep contacts and confirmation
   const absent = id => assert.equal(renderer.root.findAllByProps({ testID: id }).length, 0);
   const handle = () => find('driver-panel-handle');
   const panelGesture = () => renderer.root.findAllByType('PanGestureHandler').find(node => node.props.activeOffsetY && node.props.enabled);
-  const checkCompact = () => { for (const id of ['driver-trip-details', 'driver-trip-metrics', 'driver-compact-summary', 'driver-client-comment', 'driver-current-destination']) absent(id); };
+  const checkCompact = () => { for (const id of ['driver-trip-details', 'driver-trip-metrics', 'driver-compact-summary', 'driver-client-comment', 'driver-current-destination', 'driver-cancel-order']) absent(id); };
   checkCompact();
   assert.equal(find('driver-panel-surface').props.pointerEvents, 'box-none', 'transparent sheet envelope passes taps to the map');
   assert.equal(handle().props.accessibilityState.expanded, false);
@@ -1016,6 +1378,12 @@ test('narrow driver waiting and travelling panels keep contacts and confirmation
   assert.equal(panelGesture().props.failOffsetX[1], 12, 'vertical panel gesture gives way to horizontal slider travel');
   const label = find('driver-stage-slider').findByType('AnimatedText');
   assert.equal(label.props.numberOfLines, undefined, 'confirmation label may wrap on a narrow screen');
+  const labelStyle = Object.assign({}, ...label.props.style);
+  assert.equal(labelStyle.textAlign, 'center');
+  assert.ok(labelStyle.marginHorizontal > 0, 'equal space beside the text keeps its center aligned with the track');
+  assert.equal(labelStyle.marginLeft, undefined);
+  assert.equal(labelStyle.marginRight, undefined);
+  assert.equal(labelStyle.includeFontPadding, false, 'Android font padding must not shift the baseline');
   await act(async () => handle().props.onPress());
   assert.equal(find('driver-panel-surface').props.pointerEvents, 'box-none', 'the map stays touchable after opening');
   assert.match(textOf(find('driver-trip-details')), /Ожидайте пассажира.*Эконом.*Pickup address.*Destination address/s);

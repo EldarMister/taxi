@@ -1,5 +1,5 @@
-type Token = { id: string; token: string };
-type Message = { title: string; body: string; sound: string; channelId: string; ttl: number; priority: 'high'; data: Record<string, string> };
+type Token = { id: string; token: string; platform?: string; driverOfferActions?: boolean };
+type Message = { title: string; body: string; sound: string; channelId: string; categoryId?: string; ttl: number; priority: 'high'; data: Record<string, string> };
 type Report = { delivered: number; invalidIds: string[]; failures: string[] };
 
 function safeCode(value: unknown, fallback: string) {
@@ -9,11 +9,19 @@ function safeCode(value: unknown, fallback: string) {
 /** Each Expo project must be sent separately; one stale token must not reject every device. */
 export async function sendExpoPushIndividually(tokens: Token[], message: Message, accessToken?: string,
   fetcher: typeof fetch = fetch): Promise<Report> {
-  const results = await Promise.all(tokens.map(async ({ id, token }) => {
+  const results = await Promise.all(tokens.map(async ({ id, token, platform, driverOfferActions }) => {
     try {
+      // A notification-message is rendered by FCM in the background and loses
+      // app-defined actions. Updated Android drivers receive only data; their
+      // native service builds the same Expo card, even without a JS runtime.
+      const outgoing = platform === 'android' && driverOfferActions && message.data.event === 'order:offer' && message.categoryId
+        ? { to: token, ttl: message.ttl, priority: message.priority, data: {
+            ...message.data, atlasOfferVersion: '2', atlasTitle: message.title, atlasMessage: message.body,
+          } }
+        : { ...message, to: token };
       const response = await fetcher('https://exp.host/--/api/v2/push/send', {
         method: 'POST', headers: { 'Content-Type': 'application/json', ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}) },
-        body: JSON.stringify({ ...message, to: token }), signal: AbortSignal.timeout(10000),
+        body: JSON.stringify(outgoing), signal: AbortSignal.timeout(10000),
       });
       const payload = await response.json().catch(() => null) as {
         data?: { status?: string; details?: { error?: unknown } } | { status?: string; details?: { error?: unknown } }[];

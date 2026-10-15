@@ -13,9 +13,26 @@ import { selectedLanguage } from './auth/languageStore';
 export { shortAddress } from './address';
 
 export const colors = { blue: '#087FFF', blueDark: '#0067D9', ink: '#101D38', muted: '#7A8CA8', pale: '#F1F7FD', line: '#E5EDF6', green: '#19B66A', white: '#FFFFFF', danger: '#CA4149' };
+export const ratingStarColor = '#FFBE12';
 export const tr = (language: Language) => (text: string) => language === 'ky' ? (ky[text] || text) : language === 'en' ? (en[text] || text) : text;
 export const localize = (language: Language, russian: string, kyrgyz: string) => language === 'ky' ? kyrgyz : tr(language)(russian);
 const ky: Record<string, string> = {
+  'Нет машин': 'Унаа жок',
+  'Уточняем…': 'Тактап жатабыз…',
+  'Подача': 'Келүү',
+  'Ехать': 'Жолдо',
+  'На главный экран': 'Башкы экранга',
+  'Введите имя и фамилию': 'Атыңызды жана фамилияңызды киргизиңиз',
+  'Имя и фамилия вместе — не более 80 символов': 'Атыңыз менен фамилияңыз чогуу 80 белгиден ашпашы керек',
+  'Фамилия': 'Фамилиясы',
+  'Далее': 'Кийинки',
+  'Предыдущие дни': 'Мурунку күндөр',
+  'Следующие дни': 'Кийинки күндөр',
+  'Весь период': 'Бардык мезгил',
+  'Номер заказа': 'Буюртманын номери',
+  'Оценка пассажира': 'Жүргүнчүнүн баасы',
+  'Платное ожидание': 'Акы төлөнүүчү күтүү',
+  'Время в пути': 'Жолдогу убакыт',
   'Месяц': 'Ай',
   'Картой': 'Карта менен',
   'Наличными': 'Накталай',
@@ -109,6 +126,7 @@ const ky: Record<string, string> = {
   'Стоп': 'Токто',
   'Уступи дорогу': 'Жол бер',
   'Ограничение 60': 'Ылдамдык чеги 60',
+  'Ограничение скорости': 'Ылдамдык чеги',
   'Пешеходный переход': 'Жөө адамдар өтүүчү жер',
   'Камера скорости': 'Ылдамдык камерасы',
   'Светофор': 'Светофор',
@@ -321,9 +339,30 @@ const ky: Record<string, string> = {
   "Карта": "Карта",
   "Ваше местоположение": "Сиздин жайгашкан жериңиз",
   "Определим по GPS": "GPS аркылуу аныктайбыз",
+  "Находим заказы рядом. На линии геолокация может работать в фоне с вашего разрешения.": "Жакын жердеги буюртмаларды табабыз. Линияда геолокация сиздин уруксатыңыз менен фондо иштей алат.",
+  "Определим место подачи и вашу точку на карте.": "Унаа келчү жерди жана картадагы жайгашкан жериңизди аныктайбыз.",
   "Разрешите доступ к геолокации": "Жайгашкан жерге кирүүгө уруксат бериңиз",
   "Так мы быстрее найдём место подачи и покажем вашу точку на карте. Геолокация используется только во время работы приложения.": "Ошентип унаа келчү жерди тезирээк таап, картадан жайгашкан жериңизди көрсөтөбүз. Геолокация тиркеме иштеп турганда гана колдонулат.",
-  "Так вы сможете быстро увидеть своё положение на карте. Геолокация используется только во время работы приложения.": "Ошентип картадан жайгашкан жериңизди тез көрө аласыз. Геолокация тиркеме иштеп турганда гана колдонулат.",
+  "Геолокация помогает получать заказы рядом, строить маршрут и показывать ваше положение клиенту. Когда вы на линии или выполняете заказ, она может работать в фоне, в том числе с выключенным экраном, если вы разрешите фоновый доступ.": "Геолокация жакын жердеги буюртмаларды алууга, маршрут түзүүгө жана кардарга жайгашкан жериңизди көрсөтүүгө жардам берет. Линияда болгондо же буюртманы аткарып жатканда, фондук жетүүгө уруксат берсеңиз, ал экран өчүк болсо да фондо иштей алат.",
+  "Настройки устройства недоступны. Обновите приложение и попробуйте снова.": "Түзмөктүн жөндөөлөрү жеткиликсиз. Тиркемени жаңыртып, кайра аракет кылыңыз.",
+  "Не удалось проверить разрешение всплывающих окон.": "Калкыма терезелердин уруксатын текшерүү мүмкүн болгон жок.",
+  "Не удалось проверить энергосбережение.": "Энергия үнөмдөөнү текшерүү мүмкүн болгон жок.",
+  "Не удалось открыть настройки устройства.": "Түзмөктүн жөндөөлөрүн ачуу мүмкүн болгон жок.",
+  "Не удалось проверить разрешение на уведомления. Попробуйте ещё раз.": "Билдирүүлөрдүн уруксатын текшерүү мүмкүн болгон жок. Кайра аракет кылыңыз.",
+  "Не удалось запросить разрешение на уведомления. Попробуйте ещё раз.": "Билдирүүлөргө уруксат сурай алган жокпуз. Кайра аракет кылыңыз.",
+  "Разрешите уведомления": "Билдирүүлөргө уруксат бериңиз",
+  "Разрешите отображение всплывающих окон": "Калкыма терезелерди көрсөтүүгө уруксат бериңиз",
+  "Отключите энергосбережение": "Энергия үнөмдөөнү өчүрүңүз",
+  "Энергосбережение": "Энергия үнөмдөө",
+  "Разрешить в любом режиме": "Бардык режимде уруксат берүү",
+  "При использовании приложения": "Тиркемени колдонгондо",
+  "Новые заказы и важные уведомления будут видны поверх других приложений.": "Жаңы буюртмалар жана маанилүү билдирүүлөр башка тиркемелердин үстүндө көрүнөт.",
+  "Иначе вы можете пропустить новый заказ, а приложение может работать некорректно.": "Болбосо жаңы буюртманы өткөрүп жиберишиңиз мүмкүн жана тиркеме туура эмес иштеши мүмкүн.",
+  "Находим заказы рядом и показываем вашу точку клиенту. На линии и во время заказа геолокация может работать в фоне, даже с выключенным экраном, с вашего разрешения.": "Жакын жердеги буюртмаларды таап, жайгашкан жериңизди кардарга көрсөтөбүз. Линияда жана буюртманы аткарууда геолокация сиздин уруксатыңыз менен, экран өчүк болсо да, фондо иштей алат.",
+  "Шаг 1 из 4": "4 кадамдын 1-кадамы",
+  "Шаг 2 из 4": "4 кадамдын 2-кадамы",
+  "Шаг 3 из 4": "4 кадамдын 3-кадамы",
+  "Шаг 4 из 4": "4 кадамдын 4-кадамы",
   "Не пропустите важное": "Маанилүү билдирүүлөрдү өткөрүп жибербеңиз",
   "Сообщим, когда водитель назначен, приехал, написал вам и завершил поездку.": "Айдоочу дайындалганда, келгенде, сизге жазганда жана сапарды аяктаганда билдиребиз.",
   "Сообщим о новом заказе, сообщении пассажира, когда пассажир выходит, и о завершении поездки.": "Жаңы буюртма, жүргүнчүнүн билдирүүсү, жүргүнчү чыгып жатканы жана сапардын аякташы жөнүндө билдиребиз.",
@@ -406,20 +445,23 @@ export const money = (value: number) => `${Number(value).toLocaleString(selected
 export const km = (meters: number) => Number(meters) < 1000
   ? `${Math.round(Number(meters))} ${selectedLanguage() === 'en' ? 'm' : 'м'}`
   : `${(Number(meters) / 1000).toFixed(1).replace('.', selectedLanguage() === 'en' ? '.' : ',')} ${selectedLanguage() === 'en' ? 'km' : 'км'}`;
-export const mins = (seconds: number, language: Language = 'ru') => `${Math.max(1, Math.round(Number(seconds) / 60))} ${language === 'ky' ? 'мүн' : language === 'en' ? 'min' : 'мин'}`;
+export const mins = (seconds: number, language: Language = 'ru') => `${Math.max(1, Math.ceil(Number(seconds) / 60))} ${language === 'ky' ? 'мүн' : language === 'en' ? 'min' : 'мин'}`;
 export const tripTime = (seconds: number, language: Language = 'ru') => {
-  const totalMinutes = Math.max(1, Math.round(Number(seconds) / 60));
+  const totalMinutes = Math.max(1, Math.ceil(Number(seconds) / 60));
   if (totalMinutes < 60) return `${totalMinutes} ${language === 'ky' ? 'мүн' : language === 'en' ? 'min' : 'мин'}`;
   const hours = Math.floor(totalMinutes / 60), minutes = totalMinutes % 60;
   return `${hours} ${language === 'ky' ? 'саат' : language === 'en' ? 'h' : 'ч'}${minutes ? ` ${minutes} ${language === 'ky' ? 'мүн' : language === 'en' ? 'min' : 'мин'}` : ''}`;
 };
-export function Icon({ name, size = 22, color }: { name: React.ComponentProps<typeof Ionicons>['name']; size?: number; color?: string }) {
+export function Icon({ name, size = 22, color, purpose = 'rating' }: { name: React.ComponentProps<typeof Ionicons>['name']; size?: number; color?: string; purpose?: 'rating' | 'action' }) {
   const { isDark, palette } = useTheme();
-  const themedColor = !isDark ? color || colors.ink
+  const themedColor = name.startsWith('star') && purpose === 'rating' ? ratingStarColor
+    : name === 'cash' || name === 'cash-outline' ? colors.green
+    : !isDark ? color || colors.ink
     : !color || color === colors.ink ? palette.ink
     : color === colors.blue || color === colors.blueDark ? palette.accent
     : color === colors.muted ? palette.muted
     : color;
+  if (name === 'arrow-back' || name === 'chevron-back') return <Ionicons name="chevron-back" size={26} color={themedColor}/>;
   return <Ionicons name={name} size={size} color={themedColor} />;
 }
 export function ToggleSwitch({ value, onValueChange, disabled = false, label, accentColor, inactiveColor }: { value: boolean; onValueChange: (value: boolean) => void; disabled?: boolean; label: string; accentColor?: string; inactiveColor?: string }) {
@@ -448,7 +490,7 @@ export function Logo({ large = false }: { large?: boolean }) {
     style={{ width: large ? 260 : 176, height: large ? 88 : 60 }}
   />;
 }
-const carImages = { economy: require('../assets/car-economy.png'), comfort: require('../assets/car-comfort.png'), business: require('../assets/car-business.png') };
+const carImages = { economy: require('../assets/car-economy.webp'), comfort: require('../assets/car-comfort.webp'), business: require('../assets/car-business.webp') };
 export function Car({ color = '#E8EEF5', size = 72 }: { color?: string; size?: number }) {
   const variant = ['#253447', '#202B3A'].includes(color) ? 'business' : ['#67788D', '#52657A'].includes(color) ? 'comfort' : 'economy';
   return <Image source={carImages[variant]} resizeMode="contain" style={{ width: size, height: size * .57 }} accessibilityIgnoresInvertColors />;
@@ -467,7 +509,7 @@ export function Button({ label, onPress, secondary, disabled, busy, icon }: { la
 }
 export function IconButton({ name, onPress, label }: { name: React.ComponentProps<typeof Ionicons>['name']; onPress: () => void; label: string }) {
   const { isDark, palette } = useTheme();
-  return <Pressable accessibilityRole="button" accessibilityLabel={label} onPress={onPress} style={({ pressed }) => [s.iconButton, isDark && { backgroundColor: palette.surface, borderColor: palette.line }, pressed && { opacity: .6 }]}><Icon name={name}/></Pressable>;
+  return <Pressable accessibilityRole="button" accessibilityLabel={label} onPress={onPress} style={({ pressed }) => [s.iconButton, (name === 'arrow-back' || name === 'chevron-back') && { backgroundColor: 'transparent', borderWidth: 0, borderRadius: 0 }, isDark && !(name === 'arrow-back' || name === 'chevron-back') && { backgroundColor: palette.surface, borderColor: palette.line }, pressed && { opacity: .6 }]}><Icon name={name}/></Pressable>;
 }
 export function Avatar({ user, size = 60, fallbackBackground, fallbackColor }: { user?: Partial<User> | null; size?: number; fallbackBackground?: string; fallbackColor?: string }) {
   const { isDark, palette } = useTheme();
