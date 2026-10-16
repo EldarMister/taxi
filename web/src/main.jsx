@@ -10,7 +10,7 @@ import './styles.css';
 import './landing.css';
 import Landing, { ProductMark } from './Landing.jsx';
 import { MediaSlot } from './MediaSlot.jsx';
-import LegalPage from './LegalPage.jsx';
+import LegalPage, { legalOperator } from './LegalPage.jsx';
 import AccountDeletionForm from './AccountDeletionForm.jsx';
 
 const links = {
@@ -107,7 +107,7 @@ function SiteFooter() {
       </div>
       <div><strong>Продукт</strong><a href="/#possibilities">Возможности</a><a href="/#download">Скачать Atlas</a><a href="/drivers/">Atlas pro для водителей</a></div>
       <div><strong>Документы</strong><a href="/privacy/">Политика конфиденциальности</a><a href="/terms/">Условия использования</a><a href="/delete-account/">Удаление аккаунта</a><a href="mailto:atlas.delivery.kg@gmail.com">Поддержка</a></div>
-      <div className="footer-note"><span>Atlas · 2026</span><span>Сделано для движения по городу.</span></div>
+      <div className="footer-note"><span>ATLAS · 2026</span><span>{legalOperator.name} · ИНН {legalOperator.inn}</span><a href="/terms/#section-1">Реквизиты и адрес владельца</a></div>
     </div>
   </footer>;
 }

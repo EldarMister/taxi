@@ -49,7 +49,7 @@ test('legal link opens the full document inside the app; document navigation and
   assert.equal(renderer.root.findAllByType('Modal').length, 1);
   const policy = textOf(renderer.toJSON());
   assert.match(policy, /Местоположение и адреса/);
-  assert.match(policy, /Atlas не продаёт персональные данные/);
+  assert.match(policy, /ATLAS не продаёт персональные данные/);
   assert.match(policy, /9\. Сайт, дети и изменения/);
   assert.doesNotMatch(policy, /Проект документов до коммерческого запуска/);
   const terms = renderer.root.findAllByType('Pressable').find(button => textOf(button.props.children) === 'Условия');

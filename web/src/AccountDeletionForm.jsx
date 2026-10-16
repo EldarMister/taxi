@@ -105,7 +105,7 @@ export default function AccountDeletionForm() {
       <p className="delete-account-sent" role="status">Код подтверждения отправлен на {fullPhone}.</p>
       <label htmlFor="delete-code">Код подтверждения</label>
       <input id="delete-code" className="delete-account-code" type="text" inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{6}" maxLength={6} placeholder="6 цифр" value={code} onChange={event => setCode(event.target.value.replace(/\D/g, '').slice(0, 6))} disabled={busy} required />
-      <label className="delete-account-consent"><input type="checkbox" checked={accepted} onChange={event => setAccepted(event.target.checked)} disabled={busy} required /><span>Я понимаю, что аккаунт {variant === 'driver' ? 'Atlas pro' : 'Atlas'} и связанные с ним данные будут удалены без возможности восстановления.</span></label>
+      <label className="delete-account-consent"><input type="checkbox" checked={accepted} onChange={event => setAccepted(event.target.checked)} disabled={busy} required /><span>Я понимаю, что выбранный аккаунт {variant === 'driver' ? 'ATLAS PRO' : 'ATLAS'} и его история будут удалены из рабочей базы без восстановления. Отдельно хранящиеся данные описаны ниже.</span></label>
       <button className="delete-account-danger" type="submit" disabled={busy || code.length !== 6 || !accepted}>{busy ? 'Удаляем…' : 'Удалить аккаунт'}</button>
     </form>}
     {error && <p className="delete-account-error" role="alert">{error}</p>}

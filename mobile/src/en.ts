@@ -1,5 +1,6 @@
 // Local English UI strings. Backend language remains Russian or Kyrgyz.
 export const en: Record<string, string> = {
+  'Выбранный аккаунт и его история будут удалены из рабочей базы без восстановления, сессии перестанут работать. Другой аккаунт ATLAS или ATLAS PRO на том же номере сохранится. Удаление не очищает автоматически резервные копии и данные на других устройствах. Подробности — в правилах удаления. Сначала завершите или отмените активные заказы.': 'The selected account and its history will be deleted from the live database and cannot be restored. Its sessions will stop working. Another ATLAS or ATLAS PRO account using the same number will remain. Deletion does not automatically erase backups or data on other devices. See the deletion policy for details. Finish or cancel active orders first.',
   'Нет машин': 'No cars',
   'Уточняем…': 'Finding address…',
   'Подача': 'Pickup',
