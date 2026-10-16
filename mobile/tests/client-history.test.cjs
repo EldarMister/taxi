@@ -76,7 +76,7 @@ test('history route map allows gestures and keeps endpoint markers above the roa
   const mapExports = {};
   const mapSource = fs.readFileSync(path.join(__dirname, '../src/native/HistoryRouteMap.tsx'), 'utf8');
   const mapCode = ts.transpileModule(mapSource, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX, esModuleInterop: true } }).outputText;
-  vm.runInNewContext(mapCode, { exports: mapExports, require: id => {
+  vm.runInNewContext(mapCode, { exports: mapExports, setTimeout, clearTimeout, require: id => {
     if (id === 'react' || id === 'react/jsx-runtime') return require(id);
     if (id === 'react-native') return { View: 'View', Text: 'Text', Pressable: 'Pressable', StyleSheet: { create: styles => styles, absoluteFill: {} } };
     if (id === '@maplibre/maplibre-react-native') return { Camera: 'Camera', LineLayer: 'LineLayer', MapView: 'MapView', MarkerView: 'MarkerView', ShapeSource: 'ShapeSource' };

@@ -46,4 +46,4 @@ The current Atlas pro cover assets are `atlas-pro-cover-refined.png` and `atlas-
 
 ## Railway source
 
-The independent website service is connected to `EldarMister/taxi`, branch `codex/driver-road-signs`, with Root Directory `/web`. GitHub pushes trigger deployment. The live site is https://atlas-app.up.railway.app/ and its admin panel is `/admin/`. The application API retains its existing separate service and hostname.
+The independent website service is connected to `EldarMister/taxi`, branch `main`, with Root Directory `/web`. GitHub pushes trigger deployment. The live site is https://atlas-app.up.railway.app/ and its admin panel is `/admin/`. The application API retains its existing separate service and hostname.

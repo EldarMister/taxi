@@ -36,7 +36,7 @@ async function mountMap(t, initialProps, options = {}) {
   const gpsProps = value => value.driverPosition ? { ...value, driverPosition: {
     measuredAtMs: animationClock.now, accuracyM: 5, speedMps: value.driverPosition.speed ?? 5, ...value.driverPosition,
   } } : value;
-  let next = 0, renderer, props = gpsProps(initialProps);
+  let next = 0, renderer, roadQueries = 0, props = gpsProps(initialProps);
   const AppState = { currentState: 'active', addEventListener: (_event, callback) => {
     appListeners.add(callback); return { remove: () => appListeners.delete(callback) };
   } };
@@ -53,7 +53,7 @@ async function mountMap(t, initialProps, options = {}) {
   const NativeMap = React.forwardRef((mapProps, ref) => { React.useImperativeHandle(ref, () => ({
     getCenter: async () => options.mapCenter || null,
     getVisibleBounds: async () => options.mapBounds || [[74.6, 42.9], [74.58, 42.88]],
-    queryRenderedFeaturesInRect: async () => options.renderedRoads || { type: 'FeatureCollection', features: [] },
+    queryRenderedFeaturesInRect: async () => { roadQueries++; return options.renderedRoads || { type: 'FeatureCollection', features: [] }; },
   })); return React.createElement('MapView', mapProps); });
   const exports = {};
   const api = { baseUrl: 'https://api.example.test/api', request: async (url, init) => {
@@ -152,7 +152,7 @@ async function mountMap(t, initialProps, options = {}) {
     if (delay != null && timerDurations.get(id) !== delay) continue;
     timers.delete(id); timerDurations.delete(id); callback();
   } });
-  return { renderer, map, update, ready, cameraCalls, bounds, requests, headers, timers, frames, advanceFrame, settle, shape, background, appListeners, flushTimers, annotationRefreshes };
+  return { renderer, map, update, ready, cameraCalls, bounds, requests, headers, timers, frames, advanceFrame, settle, shape, background, appListeners, flushTimers, annotationRefreshes, roadQueries: () => roadQueries };
 }
 
 test('food map uses the shared arrival marker and hides its initial hint after two seconds', async t => {
@@ -267,6 +267,12 @@ test('map feature coverage expires, shows updates in the same viewport and survi
   assert.equal(h.shape('map-road-features').features[0].id, 'new');
   fail = true; clock.now += 60001; await refresh();
   assert.equal(h.shape('map-road-features').features[0].id, 'new', 'network loss must not erase known crossings');
+  const failedAttempts = h.requests.length;
+  await refresh();
+  assert.equal(h.requests.length, failedAttempts, 'offline map feature requests back off instead of retrying every camera update');
+  fail = false; clock.now += 15000; await refresh();
+  assert.ok(h.requests.length > failedAttempts, 'the next camera update retries after the backoff');
+  assert.equal(h.shape('map-road-features').features[0].id, 'new');
 });
 
 test('map fits a crossing to rendered road geometry instead of keeping its stale source angle and offset', async t => {
@@ -293,6 +299,25 @@ test('map fits a crossing to rendered road geometry instead of keeping its stale
   assert.equal(h.shape('map-road-features').features[0].geometry.coordinates[0], 74.59004);
   assert.equal(h.requests.filter(request => request.url.startsWith('/routes/map-features?')).length, 1,
     'new visible geometry corrects cached crossings without another API request');
+});
+
+test('driver camera follow reuses the visible road geometry across GPS frames', async t => {
+  const point = { latitude: 42.89, longitude: 74.59 };
+  const h = await mountMap(t, { followDriver: true, driverPosition: point }, {
+    renderedRoads: { type: 'FeatureCollection', features: [
+      { type: 'Feature', properties: { kind: 'secondary' }, geometry: { type: 'LineString', coordinates: [[74.59003, 42.88], [74.59003, 42.89]] } },
+    ] },
+    request: async url => url.startsWith('/routes/map-features?')
+      ? { features: [{ id: 'crossing', kind: 'pedestrian_crossing', ...point, bearing: 0 }] }
+      : Promise.reject(Error(url)),
+  });
+  await h.ready();
+  for (let index = 0; index < 8; index++) {
+    await act(async () => h.map().props.onRegionDidChange(feature(point.latitude, point.longitude, { zoomLevel: 18 })));
+    await h.flushTimers(250);
+  }
+  assert.equal(h.roadQueries(), 1, 'following GPS does not repeatedly query all road tiles');
+  assert.equal(h.requests.filter(request => request.url.startsWith('/routes/map-features?')).length, 1);
 });
 
 test('wider map view still requests road features within the server area limit', async t => {

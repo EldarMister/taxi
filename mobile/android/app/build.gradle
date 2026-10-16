@@ -176,8 +176,8 @@ android {
         ]
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 151
-        versionName "1.2.39"
+        versionCode 152
+        versionName "1.2.40"
 
           // Include phones and the x86_64 emulator in the direct-install APK.
         ndk {

@@ -16,7 +16,7 @@ import type { PlaybackFrame } from './trackingPlayback';
 import { navigationDisplayMatch, remainingRoad, snapCarToRoad } from './roadMatch';
 import { carMetresBetween as metresBetween } from './carRouteAnimation';
 import { darkRasterMapFallback, mapStyleForLanguage, rasterMapFallback } from './taxiMapStyle';
-import { alignCrossingsToRoads, crossingMarkings, validMapRoadFeature, type MapRoadFeature } from './mapRoadFeatures';
+import { alignCrossingsToRoads, crossingMarkings, sameRenderedRoadGeometry, validMapRoadFeature, type MapRoadFeature } from './mapRoadFeatures';
 import type { Language } from '../types';
 import { EndpointMarker, type EndpointAppearance } from './EndpointMarker';
 import { canLocatePickup, clearRouteFocusCallout, compactPickupForZoom, initialRouteFocus, reconcileRouteFocus, stepRouteFocus } from './routeFocus';
@@ -220,6 +220,7 @@ export default function TaxiMap({
   const [crossingZoom, setCrossingZoom] = useState(14);
   const mapFeatureCoverage = useRef<(MapBounds & { expiresAt: number }) | null>(null);
   const mapFeatureRequest = useRef(0);
+  const mapFeatureRetryAt = useRef(0);
   const mapFeatureTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [locationError, setLocationError] = useState('');
   const [locating, setLocating] = useState(false);
@@ -322,27 +323,35 @@ export default function TaxiMap({
     if (zoomLevel.current < 14) {
       mapFeatureRequest.current++;
       mapFeatureCoverage.current = null;
-      setMapRoadFeatures([]);
+      setMapRoadFeatures(previous => previous.length ? [] : previous);
+      setRenderedRoads(previous => previous.features.length ? { type: 'FeatureCollection', features: [] } : previous);
       return;
     }
+    if (Date.now() < mapFeatureRetryAt.current) return;
     const readVersion = mapFeatureRequest.current;
     let request = readVersion;
     try {
       const [northEast, southWest] = await mapView.current.getVisibleBounds();
       if (readVersion !== mapFeatureRequest.current) return;
-      if (!rasterFallback && viewport.width > 0 && viewport.height > 0) {
-        try {
-          const roads = await mapView.current.queryRenderedFeaturesInRect([0, viewport.width, viewport.height, 0], undefined,
-            ['current-osm-road-major', 'current-osm-road-minor', 'current-osm-road-service']);
-          if (readVersion !== mapFeatureRequest.current) return;
-          setRenderedRoads(roads);
-        } catch { /* Retain the previous geometry while vector tiles load. */ }
-      }
       const visible = { south: southWest[1], west: southWest[0], north: northEast[1], east: northEast[0] };
       if (!Object.values(visible).every(Number.isFinite) || visible.south >= visible.north || visible.west >= visible.east) return;
       const covered = mapFeatureCoverage.current;
-      if (covered && covered.expiresAt > Date.now() && visible.south >= covered.south && visible.west >= covered.west
-        && visible.north <= covered.north && visible.east <= covered.east) return;
+      const insideCoverage = covered && covered.expiresAt > Date.now() && visible.south >= covered.south && visible.west >= covered.west
+        && visible.north <= covered.north && visible.east <= covered.east;
+      if (insideCoverage) {
+        // Keep tile alignment current during deliberate map exploration. GPS
+        // camera follow does not need a full native query on every fix.
+        if (followActive || rasterFallback || !mapRoadFeatures.some(feature => feature.kind === 'pedestrian_crossing')
+          || viewport.width <= 0 || viewport.height <= 0) return;
+        try {
+          if (!mapView.current) return;
+          const roads = await mapView.current.queryRenderedFeaturesInRect([0, viewport.width, viewport.height, 0], undefined,
+            ['current-osm-road-major', 'current-osm-road-minor', 'current-osm-road-service']);
+          if (readVersion === mapFeatureRequest.current)
+            setRenderedRoads(previous => sameRenderedRoadGeometry(previous, roads) ? previous : roads);
+        } catch { /* The API bearings remain available while tiles load. */ }
+        return;
+      }
       const latSpan = visible.north - visible.south, lonSpan = visible.east - visible.west;
       if (latSpan >= .06 || lonSpan >= .08) return;
       const latPad = Math.min(latSpan * .2, (.06 - latSpan) * .49);
@@ -355,9 +364,27 @@ export default function TaxiMap({
       const query = Object.entries(bounds).map(([key, value]) => `${key}=${value.toFixed(6)}`).join('&');
       const result = await api.request<{ features: MapRoadFeature[] }>(`/routes/map-features?${query}`, { headers: { 'X-Atlas-Capabilities': 'road-features-v2' } });
       if (request !== mapFeatureRequest.current) return;
-      setMapRoadFeatures(Array.isArray(result.features) ? result.features.filter(validMapRoadFeature) : []);
+      mapFeatureRetryAt.current = 0;
+      const features = Array.isArray(result.features) ? result.features.filter(validMapRoadFeature) : [];
+      // A full native road query is expensive. Only read the visible tile
+      // geometry when a new feature window actually contains crossings.
+      let roads: GeoJSON.FeatureCollection = { type: 'FeatureCollection', features: [] };
+      if (!rasterFallback && features.some(feature => feature.kind === 'pedestrian_crossing')
+        && viewport.width > 0 && viewport.height > 0) {
+        try {
+          if (!mapView.current) return;
+          roads = await mapView.current.queryRenderedFeaturesInRect([0, viewport.width, viewport.height, 0], undefined,
+            ['current-osm-road-major', 'current-osm-road-minor', 'current-osm-road-service']);
+        } catch { /* Use the API bearing while vector tiles load. */ }
+      }
+      if (request !== mapFeatureRequest.current) return;
+      setRenderedRoads(previous => sameRenderedRoadGeometry(previous, roads) ? previous : roads);
+      setMapRoadFeatures(features);
     } catch {
-      if (request === mapFeatureRequest.current) mapFeatureCoverage.current = null;
+      if (request === mapFeatureRequest.current) {
+        mapFeatureCoverage.current = null;
+        mapFeatureRetryAt.current = Date.now() + 15000;
+      }
     }
   };
   const scheduleMapFeatures = () => {
@@ -789,13 +816,19 @@ export default function TaxiMap({
         onRegionWillChange={onRegionChanging}
         onRegionIsChanging={onRegionChanging}
         onRegionDidChange={feature => {
+          const properties = feature.properties ?? {};
           const regionCenter = pointFromFeature(feature);
-          if (regionCenter && (!followActive || feature.properties.isUserInteraction)) cameraCenter.current = toCoordinate(regionCenter);
-          if ((!followActive || feature.properties.isUserInteraction) && Number.isFinite(feature.properties.heading)) cameraHeading.current = feature.properties.heading;
-          if ((!followActive || feature.properties.isUserInteraction) && Number.isFinite(feature.properties.zoomLevel)) observedZoom.current = zoomLevel.current = feature.properties.zoomLevel;
-          if (Number.isFinite(feature.properties.zoomLevel)) setCrossingZoom(feature.properties.zoomLevel);
-          if (Number.isFinite(feature.properties.zoomLevel)) setCompactPickup(previous => compactPickupForZoom(previous, feature.properties.zoomLevel));
-          if ((!followActive || feature.properties.isUserInteraction) && Number.isFinite(feature.properties.pitch)) observedPitch.current = feature.properties.pitch;
+          if (regionCenter && (!followActive || properties.isUserInteraction)) cameraCenter.current = toCoordinate(regionCenter);
+          if ((!followActive || properties.isUserInteraction) && Number.isFinite(properties.heading)) cameraHeading.current = properties.heading;
+          if ((!followActive || properties.isUserInteraction) && Number.isFinite(properties.zoomLevel)) observedZoom.current = zoomLevel.current = properties.zoomLevel;
+          // The crossing GeoJSON does not need to be rebuilt for every tiny
+          // fractional zoom update during camera follow or map gestures.
+          if (Number.isFinite(properties.zoomLevel)) setCrossingZoom(previous => {
+            const next = Math.round(properties.zoomLevel * 2) / 2;
+            return previous === next ? previous : next;
+          });
+          if (Number.isFinite(properties.zoomLevel)) setCompactPickup(previous => compactPickupForZoom(previous, properties.zoomLevel));
+          if ((!followActive || properties.isUserInteraction) && Number.isFinite(properties.pitch)) observedPitch.current = properties.pitch;
           scheduleMapFeatures();
           if (picking) {
             // Programmatic transitions already carry their selected point. An

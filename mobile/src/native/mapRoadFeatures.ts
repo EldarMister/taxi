@@ -15,6 +15,29 @@ export function validMapRoadFeature(feature: MapRoadFeature): boolean {
     && ['traffic_light', 'pedestrian_crossing'].includes(feature.kind);
 }
 
+/** Avoid regenerating every crossing polygon when MapLibre returns the same roads again. */
+export function sameRenderedRoadGeometry(before: GeoJSON.FeatureCollection, after: GeoJSON.FeatureCollection): boolean {
+  if (before === after) return true;
+  if (before.features.length !== after.features.length) return false;
+  for (let index = 0; index < before.features.length; index++) {
+    const left = before.features[index], right = after.features[index];
+    if (left.properties?.kind !== right.properties?.kind || left.geometry?.type !== right.geometry?.type) return false;
+    const leftLines = left.geometry?.type === 'LineString' ? [left.geometry.coordinates]
+      : left.geometry?.type === 'MultiLineString' ? left.geometry.coordinates : [];
+    const rightLines = right.geometry?.type === 'LineString' ? [right.geometry.coordinates]
+      : right.geometry?.type === 'MultiLineString' ? right.geometry.coordinates : [];
+    if (leftLines.length !== rightLines.length) return false;
+    for (let line = 0; line < leftLines.length; line++) {
+      if (leftLines[line].length !== rightLines[line].length) return false;
+      for (let point = 0; point < leftLines[line].length; point++) {
+        const a = leftLines[line][point], b = rightLines[line][point];
+        if (a.length !== b.length || a.some((coordinate, axis) => coordinate !== b[axis])) return false;
+      }
+    }
+  }
+  return true;
+}
+
 /** Fit markings to the road geometry actually drawn by the current tiles. */
 export function alignCrossingsToRoads(features: MapRoadFeature[], roads: GeoJSON.FeatureCollection): MapRoadFeature[] {
   type Segment = { before: GeoJSON.Position; after: GeoJSON.Position; roadClass?: string };

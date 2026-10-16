@@ -6,9 +6,17 @@ const ts = require('typescript');
 const output = {};
 vm.runInNewContext(ts.transpileModule(fs.readFileSync(require.resolve('../src/native/mapRoadFeatures.ts'), 'utf8'),
   { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText, { exports: output });
-const { crossingMarkings, validMapRoadFeature, alignCrossingsToRoads } = output;
+const { crossingMarkings, validMapRoadFeature, alignCrossingsToRoads, sameRenderedRoadGeometry } = output;
 const crossing = { id: 'ordinary', kind: 'pedestrian_crossing', latitude: 41.196, longitude: 72.179, bearing: 0, roadClass: 'secondary' };
 const road = (coordinates, kind = 'secondary') => ({ type: 'Feature', geometry: { type: 'LineString', coordinates }, properties: { kind } });
+
+test('identical rendered roads do not trigger another crossing geometry update', () => {
+  const first = { type: 'FeatureCollection', features: [road([[72.17903, 41.195], [72.17903, 41.197]])] };
+  const same = { type: 'FeatureCollection', features: [road([[72.17903, 41.195], [72.17903, 41.197]])] };
+  const moved = { type: 'FeatureCollection', features: [road([[72.17904, 41.195], [72.17904, 41.197]])] };
+  assert.equal(sameRenderedRoadGeometry(first, same), true);
+  assert.equal(sameRenderedRoadGeometry(first, moved), false);
+});
 
 test('aligns an offset and skewed crossing with the visible road, without selecting the perpendicular junction road', () => {
   const feature = { ...crossing, bearing: 12 };

@@ -10,12 +10,12 @@
 
 ## Railway
 
-Исходники сайта, админки и их сборка находятся в `web/`; админка — `web/admin/dist`. Автоматическое развёртывание подключено к ветке `codex/driver-road-signs` в GitHub.
+Исходники сайта, админки и их сборка находятся в `web/`; админка — `web/admin/dist`. Автоматическое развёртывание подключено к ветке `main` в GitHub.
 
 Оба сервиса находятся в переданном проекте `taxi-go`, workspace **eldarmister's Projects**.
 
 - `api`: корень репозитория, `Dockerfile.railway`, `PORT=8080`, готовность `/api/health`. Образ содержит только сервер, Prisma и служебные данные. Существующие переменные базы, геосервисов и авторизации сохраняются. `PUBLIC_SITE_URL` задаёт новый адрес сайта для перенаправления старых публичных ссылок.
-- `website`: GitHub `EldarMister/taxi`, ветка `codex/driver-road-signs`, корень `/web`, `Dockerfile`, `PORT=8080`, готовность `/healthz`. Образ содержит сайт, админку и публичные APK. `API_UPSTREAM=api.railway.internal:8080`. Nginx обновляет приватный адрес API через DNS и поддерживает WebSocket Upgrade.
+- `website`: GitHub `EldarMister/taxi`, ветка `main`, корень `/web`, `Dockerfile`, `PORT=8080`, готовность `/healthz`. Образ содержит сайт, админку и публичные APK. `API_UPSTREAM=api.railway.internal:8080`. Nginx обновляет приватный адрес API через DNS и поддерживает WebSocket Upgrade.
 - Для Dockerfile явно задаётся `RAILWAY_DOCKERFILE_PATH`. Эти сервисы можно выпускать независимо: изменения сайта не требуют пересборки API.
 - Адрес сайта добавляется в `CORS_ORIGINS` API с сохранением прежних разрешённых адресов. Установленные приложения продолжают обращаться к прежнему API.
 - Свой домен подключается к **website**, а не к **api**. После подключения нужно обновить `PUBLIC_SITE_URL`, `CORS_ORIGINS` и публичный источник APK.
